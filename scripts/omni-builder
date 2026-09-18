@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # omni-builder — run a task card headless with Claude Code on Ollama (GLM builder).
 #
-# Concurrency policy (updated 2026-09-18, later same day): glm-5.3-flash:cloud remains the default, but
-# glm-5.3:cloud (the larger, faster-per-turn model) is now also approved for direct use — not just as a
-# twice-failed-review escalation — when the user wants faster wall-clock progress. Up to 2 builders may run
-# concurrently (Ollama Pro allows 3 concurrent requests; 1 is kept free for tests/doctor calls). Still avoid
-# deepseek-v4-pro/kimi for routine work — that model burned ~5M input tokens / $26.77 over 71 turns and hit
-# the account's session usage limit before finishing a single card.
+# Model policy (latest, 2026-09-18 evening): glm-5.3-flash:cloud is the default and should be used for
+# essentially every card — the user explicitly wants flash used MORE than glm-5.3:cloud because the full model
+# is noticeably more token-costly. Reach for `--model glm` only for a card that is genuinely hard/large or that
+# flash has already failed on. Up to 2 builders may run concurrently (Ollama Pro allows 3 concurrent requests;
+# 1 is kept free for tests/doctor calls). Avoid deepseek-v4-pro/kimi — that model burned ~5M input tokens /
+# $26.77 over 71 turns and hit the account's session usage limit before finishing a single card.
 #
 # Usage:
 #   omni-builder run <CARD_ID> [--model MODEL] [--max-turns N]   # new run in its own worktree
