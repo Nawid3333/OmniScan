@@ -15,7 +15,7 @@ from omniscan.slicer.bands import RowStats, find_uniform_bands, row_stats
 from omniscan.slicer.cuts import Cut, plan_cuts
 from omniscan.slicer.slice import slice_strip
 from tests.fixtures.strip_layouts import Segment, art_strip, random_strip
-from tests.fixtures.strips import art, solid, stack
+from tests.fixtures.strips import art, gradient, solid, stack
 
 SMALL = SlicerConfig(
     band_min_px=50,
@@ -269,3 +269,25 @@ def test_p12b_chunk_boundary_gutters() -> None:
     assert_tiling(artifact, strip.shape[1])
     for s in artifact.slices:
         assert s.y1 - s.y0 <= DEFAULT.hard_max_height
+
+
+# ---------------------------------------------------------------- P13 (added in review: pins max_drift)
+
+
+def test_p13_hard_colour_edge_splits_bands() -> None:
+    """Two adjacent uniform blocks of different colour are two bands, not one (drift 255 > max_drift)."""
+    strip = stack(art(300, 8, 1), solid(100, 8, (255, 255, 255)), solid(100, 8, (0, 0, 0)), art(300, 8, 2))
+    stats = row_stats(strip, SMALL.uniform_tol)
+    bands = find_uniform_bands(stats, SMALL.band_min_px, SMALL.uniform_tol, SMALL.max_drift)
+    assert [(b.y0, b.y1) for b in bands] == [(300, 400), (400, 500)]
+
+
+def test_p13_drift_boundary_is_inclusive() -> None:
+    """A gradient stepping exactly max_drift per row (2.0) stays one band; stepping 3 per row splits into nothing."""
+    slow = stack(art(100, 8, 3), gradient(100, 8, (0, 0, 0), (198, 198, 198)), art(100, 8, 4))
+    fast = stack(art(100, 8, 5), gradient(80, 8, (0, 0, 0), (237, 237, 237)), art(100, 8, 6))
+    args = (SMALL.band_min_px, SMALL.uniform_tol, SMALL.max_drift)
+    slow_bands = find_uniform_bands(row_stats(slow, SMALL.uniform_tol), *args)
+    fast_bands = find_uniform_bands(row_stats(fast, SMALL.uniform_tol), *args)
+    assert [(b.y0, b.y1, b.is_gradient) for b in slow_bands] == [(100, 200, True)]
+    assert fast_bands == []
