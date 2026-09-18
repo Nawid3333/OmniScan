@@ -37,7 +37,6 @@ _STUB_COMMANDS = (
     "typeset",
     "export",
     "run",
-    "serve",
     "reference",
 )
 
@@ -185,9 +184,20 @@ def cmd_run(series: Annotated[str | None, typer.Argument()] = None) -> None:
     _stub("run", series)
 
 
-def cmd_serve(series: Annotated[str | None, typer.Argument()] = None) -> None:
-    """Not implemented yet."""
-    _stub("serve", series)
+def cmd_serve(
+    host: Annotated[str, typer.Option("--host")] = "127.0.0.1",
+    port: Annotated[int, typer.Option("--port")] = 8000,
+    reload: Annotated[bool, typer.Option("--reload")] = False,
+) -> None:
+    """Run the web debug tool's API (pair with `npm run dev` in webui/ for the UI)."""
+    import uvicorn
+
+    from omniscan.web.app import create_app
+
+    uvicorn.run(create_app(get_config()), host=host, port=port, reload=reload)
+
+
+app.command("serve")(cmd_serve)
 
 
 def cmd_reference(series: Annotated[str | None, typer.Argument()] = None) -> None:

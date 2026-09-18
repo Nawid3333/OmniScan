@@ -33,6 +33,8 @@ relay/.dev.vars
 # Web frontend
 src/omniscan/web/frontend/node_modules/
 src/omniscan/web/frontend/dist/
+webui/node_modules/
+webui/dist/
 
 # Editors / OS
 .vscode/*

@@ -19,6 +19,8 @@ dependencies = [
     "transformers>=5.4",
     "huggingface-hub>=1.0",
     "pyyaml>=6.0",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
 ]
 
 [dependency-groups]
