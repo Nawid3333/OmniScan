@@ -1,7 +1,7 @@
 """OmniScan command line."""
 
 import json
-from typing import Annotated
+from typing import Annotated, Literal
 
 import typer
 from PIL import Image
@@ -13,6 +13,8 @@ from omniscan.core.paths import ChapterPaths, SeriesPaths
 from omniscan.core.schemas import FilterArtifact, IngestArtifact, SlicesArtifact
 from omniscan.doctor import run_all_checks
 from omniscan.filter.decide import decide_files, decide_slices, load_examples, restore
+from omniscan.glossary.store import GlossaryStore
+from omniscan.glossary.yaml_io import export_yaml, import_yaml
 from omniscan.log import setup_logging
 
 app = typer.Typer(help="OmniScan — manhwa/manga translator", no_args_is_help=True)
@@ -25,7 +27,6 @@ _STUB_COMMANDS = (
     "slice",
     "detect",
     "ocr",
-    "glossary",
     "translate",
     "judge",
     "inpaint",
@@ -110,11 +111,6 @@ def cmd_detect(series: Annotated[str | None, typer.Argument()] = None) -> None:
 def cmd_ocr(series: Annotated[str | None, typer.Argument()] = None) -> None:
     """Not implemented yet."""
     _stub("ocr", series)
-
-
-def cmd_glossary(series: Annotated[str | None, typer.Argument()] = None) -> None:
-    """Not implemented yet."""
-    _stub("glossary", series)
 
 
 def cmd_translate(series: Annotated[str | None, typer.Argument()] = None) -> None:
@@ -233,3 +229,71 @@ def filter_restore(
 
 
 app.add_typer(filter_app, name="filter")
+
+GlossaryStatus = Literal["proposed", "locked", "rejected"]
+
+glossary_app = typer.Typer(
+    no_args_is_help=True, help="Per-series glossary: SQLite working copy + review YAML."
+)
+
+
+def _series_paths(series: str) -> SeriesPaths:
+    return SeriesPaths.from_config(get_config(), series)
+
+
+def _open_glossary(paths: SeriesPaths) -> GlossaryStore:
+    if not paths.db.is_file():
+        typer.echo(f"glossary: no db for series {paths.series!r} at {paths.db}", err=True)
+        raise typer.Exit(2)
+    return GlossaryStore(paths.db)
+
+
+@glossary_app.command("list")
+def glossary_list(
+    series: Annotated[str, typer.Argument()],
+    status: Annotated[
+        GlossaryStatus | None, typer.Option("--status", help="Only entries with this status.")
+    ] = None,
+) -> None:
+    """Print the glossary of a series as a table (source, target, type, status, count)."""
+    with _open_glossary(_series_paths(series)) as store:
+        entries = store.list(status=status)
+    table = Table(title=f"glossary: {series} ({len(entries)} entries)")
+    table.add_column("Source")
+    table.add_column("Target")
+    table.add_column("Type")
+    table.add_column("Status")
+    table.add_column("Count", justify="right")
+    for entry in entries:
+        table.add_row(entry.source, entry.target, entry.type, entry.status, str(entry.count))
+    Console().print(table)
+
+
+@glossary_app.command("export")
+def glossary_export(series: Annotated[str, typer.Argument()]) -> None:
+    """Write the full glossary of a series to its glossary.yaml (hand-editable)."""
+    paths = _series_paths(series)
+    with _open_glossary(paths) as store:
+        export_yaml(store, paths.glossary_yaml)
+        count = len(store.list())
+    typer.echo(f"glossary: exported {count} entries -> {paths.glossary_yaml}")
+
+
+@glossary_app.command("import")
+def glossary_import(
+    series: Annotated[str, typer.Argument()],
+    mode: Annotated[
+        Literal["merge", "replace"], typer.Option("--mode", help="merge updates by source, replace rebuilds.")
+    ] = "merge",
+) -> None:
+    """Import glossary entries from the series' glossary.yaml into its db."""
+    paths = _series_paths(series)
+    if not paths.glossary_yaml.is_file():
+        typer.echo(f"glossary: no glossary.yaml for series {series!r} at {paths.glossary_yaml}", err=True)
+        raise typer.Exit(2)
+    with _open_glossary(paths) as store:
+        written = import_yaml(store, paths.glossary_yaml, mode=mode)
+    typer.echo(f"glossary: wrote {written} entries ({mode}) from {paths.glossary_yaml}")
+
+
+app.add_typer(glossary_app, name="glossary")
