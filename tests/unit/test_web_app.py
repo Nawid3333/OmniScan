@@ -570,16 +570,14 @@ def test_output_image_404_on_bad_names(tmp_path: Path) -> None:
     secret = tmp_path / "secret.jpg"
     secret.write_bytes(make_jpeg((30, 10, 10)))
     out_dir = tmp_path / "out" / SERIES / CHAPTER
-    (out_dir / "escape.jpg").symlink_to(secret)
+    missing = ["99.jpg", "notes.txt", "..%2F..%2Fsecret.jpg", "..%2Fsecret.jpg", "a%5Cb.jpg"]
+    try:
+        (out_dir / "escape.jpg").symlink_to(secret)
+    except OSError:  # Windows without Developer Mode / admin cannot create symlinks; skip only that case
+        pass
+    else:
+        missing.append("escape.jpg")
     client = make_client(tmp_path)
-    missing = (
-        "99.jpg",
-        "notes.txt",
-        "..%2F..%2Fsecret.jpg",
-        "..%2Fsecret.jpg",
-        "a%5Cb.jpg",
-        "escape.jpg",
-    )
     for name in missing:
         response = client.get(output_url(f"/{name}"))
         assert response.status_code == 404, name
