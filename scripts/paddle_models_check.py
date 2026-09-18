@@ -3,14 +3,20 @@
 Renders synthetic text lines with Windows CJK fonts and recognizes them on the GPU.
 """
 
+import os
 import sys
 import time
+from pathlib import Path
 
 import torch
 from PIL import Image, ImageDraw, ImageFont
 from transformers import AutoImageProcessor, AutoModelForTextRecognition
 
-FONTS = "/mnt/c/Windows/Fonts/"
+FONTS = (
+    Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts"
+    if os.name == "nt"
+    else Path("/mnt/c/Windows/Fonts")
+)
 CASES = [
     (
         "PaddlePaddle/korean_PP-OCRv5_mobile_rec_safetensors",
@@ -23,7 +29,7 @@ CASES = [
 
 
 def render(text: str, font_file: str) -> Image.Image:
-    font = ImageFont.truetype(FONTS + font_file, 40)
+    font = ImageFont.truetype(str(FONTS / font_file), 40)
     w = int(font.getlength(text)) + 40
     img = Image.new("RGB", (w, 64), "white")
     ImageDraw.Draw(img).text((20, 8), text, font=font, fill="black")
