@@ -1,19 +1,25 @@
 #!/usr/bin/env bash
 # omni-builder — run a task card headless with Claude Code on Ollama (GLM builder).
 #
+# Single-agent policy (2026-09-18): glm-5.3-flash:cloud only. A deepseek-v4-pro run burned ~5M input
+# tokens / $26.77 over 71 turns and still hit the account's session usage limit before finishing — flash
+# is both cheaper and, per the pilot cards, sufficient. Only override --model for a deliberate, isolated
+# experiment; don't run multiple models in parallel as routine practice.
+#
 # Usage:
 #   omni-builder run <CARD_ID> [--model MODEL] [--max-turns N]   # new run in its own worktree
 #   omni-builder resume <CARD_ID> <FEEDBACK_FILE> [--model MODEL] # continue last session with review feedback
 #   omni-builder smoke [--model M]                                # 1-turn connectivity test
-#   Model aliases: flash (default) | glm | deepseek | kimi — or any full Ollama model name.
+#   Model aliases: flash (default, use this) | glm | deepseek | kimi — or any full Ollama model name.
 #
 # Env overrides: OMNI_REPO (default ~/projects/omniscan), OMNI_WT (default ~/projects/omniscan-wt),
-#                OMNI_SLOTS (parallel builders, default 2), OLLAMA_URL (default http://localhost:11434)
+#                OMNI_SLOTS (parallel builders, default 1 — one agent at a time), OLLAMA_URL (default
+#                http://localhost:11434)
 set -euo pipefail
 
 REPO="${OMNI_REPO:-$HOME/projects/omniscan}"
 WT_ROOT="${OMNI_WT:-$HOME/projects/omniscan-wt}"
-SLOTS="${OMNI_SLOTS:-3}"  # Ollama Pro = 3 concurrent cloud requests (shared by all models)
+SLOTS="${OMNI_SLOTS:-1}"  # one agent at a time (see policy note above)
 OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
 LOG_DIR="$REPO/.builder/logs"
 LOCK_DIR="${XDG_RUNTIME_DIR:-/tmp}/omni-builder"
