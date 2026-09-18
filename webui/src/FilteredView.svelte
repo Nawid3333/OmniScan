@@ -55,7 +55,7 @@
 {:else if chapters.length === 0}
   <p>nothing was filtered in this series</p>
 {:else}
-  <p>{summary.chapters} chapters · {summary.filtered} filtered · {summary.restored} restored</p>
+  <p>{summary.chapters} {summary.chapters === 1 ? "chapter" : "chapters"} · {summary.filtered} filtered · {summary.restored} restored</p>
   {#each chapters as c (c.chapter)}
     <h3>{c.chapter}</h3>
     <ul>
