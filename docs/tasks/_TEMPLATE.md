@@ -36,5 +36,5 @@ uv run pyright
 ```
 
 ## Report
-Write `REPORT.md` (sections: Changes, Tests, Deviations, Questions) and commit `<ID>: <summary>`.
+Write `docs/reports/<ID>.md` (sections: Changes, Tests, Deviations, Questions) and commit `<ID>: <summary>`.
 If anything above is unclear: stop, write the question under Questions, commit what you have, and end.

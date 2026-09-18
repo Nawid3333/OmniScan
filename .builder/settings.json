@@ -43,7 +43,6 @@
       "Bash(pip install:*)",
       "Bash(uv pip install:*)",
       "Edit(src/omniscan/core/**)",
-      "Write(src/omniscan/core/**)",
       "Read(~/.config/omniscan/**)",
       "Read(**/.env*)",
       "Read(**/secrets.env)"

@@ -30,6 +30,7 @@ export CLAUDE_CODE_MAX_OUTPUT_TOKENS="32000"
 export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1"
 export DISABLE_AUTOUPDATER="1"
 export API_TIMEOUT_MS="600000"
+export CLAUDE_CODE_MAX_CONTEXT_TOKENS="200000"  # GLM has 1M; cap at 200k to keep token use low
 
 acquire_slot() {
   mkdir -p "$LOCK_DIR"
@@ -63,13 +64,19 @@ parse_opts() {
 }
 
 run_claude() {  # $1 = workdir, $2 = log file, rest = extra claude args
-  local workdir="$1" log="$2"; shift 2
-  cd "$workdir"
-  claude -p --model "$MODEL" --max-turns "$MAX_TURNS" \
-    --permission-mode acceptEdits --settings "$REPO/.builder/settings.json" \
-    --output-format stream-json --verbose "$@" | tee -a "$log" \
-    | grep -o '"session_id":"[^"]*"' | head -1 | cut -d'"' -f4 > "$log.session.tmp" || true
-  if [[ -s "$log.session.tmp" ]]; then mv "$log.session.tmp" "${log%.jsonl}.session"; else rm -f "$log.session.tmp"; fi
+  local workdir="$1" log="$2" rc=0 start
+  shift 2
+  touch "$log"
+  start=$(( $(wc -l < "$log") + 1 ))
+  # Write straight to the log (no pipe to head/grep while running: SIGPIPE would kill claude).
+  ( cd "$workdir" && claude -p --model "$MODEL" --max-turns "$MAX_TURNS" \
+      --permission-mode acceptEdits --settings "$REPO/.builder/settings.json" \
+      --output-format stream-json --verbose "$@" ) >> "$log" 2>> "${log%.jsonl}.stderr" || rc=$?
+  local sid
+  sid=$(tail -n +"$start" "$log" | grep -o '"session_id":"[^"]*"' | head -n 1 | cut -d'"' -f4 || true)
+  [[ -n "$sid" ]] && echo "$sid" > "${log%.jsonl}.session"
+  echo "omni-builder: claude exited with code $rc (session ${sid:-unknown})" >&2
+  return "$rc"
 }
 
 cmd="${1:-}"; shift || true
@@ -95,7 +102,7 @@ case "$cmd" in
     log="$LOG_DIR/$card.jsonl"
     echo "omni-builder: running $card with $MODEL in $wt (log: $log)" >&2
     run_claude "$wt" "$log" "$(cat "$spec")"
-    echo "omni-builder: $card finished; report: $wt/REPORT.md" >&2
+    echo "omni-builder: $card finished; report: $wt/docs/reports/$card.md" >&2
     ;;
   resume)
     card="${1:-}"; feedback="${2:-}"; [[ -n "$card" && -f "$feedback" ]] || die "usage: omni-builder resume <CARD_ID> <FEEDBACK_FILE>"; shift 2

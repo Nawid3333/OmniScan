@@ -20,18 +20,18 @@ uv run omniscan --help
 ```
 
 ## Ownership (do not cross these lines)
-- `src/omniscan/core/**` (schemas, stage protocol, manifest, config contracts) is **owned by Claude**. Builder agents must NOT edit it. If a contract is missing or wrong, stop and describe the needed change in `REPORT.md`.
+- `src/omniscan/core/**` (schemas, stage protocol, manifest, config contracts) is **owned by Claude**. Builder agents must NOT edit it. If a contract is missing or wrong, stop and describe the needed change in your report.
 - Each task card (`docs/tasks/<ID>.md`) lists the files you may create/modify. Stay inside that list.
 
 ## Definition of done (every task card)
 1. All acceptance tests listed in the card exist and pass: `uv run pytest`.
 2. `uv run ruff format . && uv run ruff check .` clean, `uv run pyright` has no new errors.
 3. Public functions have type hints and a one-line docstring. No dead code, no commented-out code, no TODOs without a card ID.
-4. `REPORT.md` at the worktree root: what changed (files), how it was tested (commands + results), deviations from the card, open questions.
+4. `docs/reports/<ID>.md`: what changed (files), how it was tested (commands + results), deviations from the card, open questions.
 5. Commit on the card branch with message `<ID>: <summary>`. Never push, never touch `main`.
 
 ## Hard rules
-- **If the spec is ambiguous or seems wrong: STOP, write the question in `REPORT.md`, and end.** Do not guess.
+- **If the spec is ambiguous or seems wrong: STOP, write the question in `docs/reports/<ID>.md`, commit, and end.** Do not guess.
 - GPU code: tensors stay on the GPU between steps; no `.cpu()` / `.numpy()` inside hot loops; never loop in Python over image rows or pixels.
 - Never write intermediate images to disk unless the card says so (JSON/`.npz` artifacts only).
 - Never read or print secrets (`~/.config/omniscan/secrets.env`, API keys).
