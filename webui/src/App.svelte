@@ -3,9 +3,10 @@
 
   import OcrView from "./OcrView.svelte";
   import SlicerView from "./SlicerView.svelte";
+  import TranslationView from "./TranslationView.svelte";
   import { listChapters, listSeries } from "./api";
 
-  let view = $state<"slicer" | "ocr">("slicer");
+  let view = $state<"slicer" | "ocr" | "translation">("slicer");
   let series = $state("");
   let chapter = $state("");
   let seriesList = $state<string[]>([]);
@@ -56,11 +57,14 @@
     <p>
       <button onclick={() => (view = "slicer")} disabled={view === "slicer"}>Slicer</button>
       <button onclick={() => (view = "ocr")} disabled={view === "ocr"}>OCR</button>
+      <button onclick={() => (view = "translation")} disabled={view === "translation"}>Translation</button>
     </p>
     {#if view === "slicer"}
       <SlicerView {series} {chapter} />
-    {:else}
+    {:else if view === "ocr"}
       <OcrView {series} {chapter} />
+    {:else}
+      <TranslationView {series} {chapter} />
     {/if}
   {:else}
     <p>pick a series and chapter (no ingest.json yet for a chapter? run ingest first)</p>

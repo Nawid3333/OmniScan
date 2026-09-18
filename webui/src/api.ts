@@ -81,6 +81,68 @@ export interface RegionsArtifact {
   regions: Region[];
 }
 
+export interface Candidate {
+  region_id: string;
+  text: string;
+  notes: string | null;
+}
+
+export interface CandidateRun {
+  schema_version: number;
+  run_id: string;
+  profile: string;
+  model: string;
+  created_at: string;
+  candidates: Candidate[];
+  usage: Record<string, number>;
+}
+
+export interface FinalLine {
+  region_id: string;
+  text: string;
+  decision: "pick" | "merge" | "rewrite" | "manual";
+  sources: string[];
+  rationale: string;
+  flags: string[];
+}
+
+export interface FinalArtifact {
+  schema_version: number;
+  judge_model: string;
+  created_at: string;
+  lines: FinalLine[];
+}
+
+export interface GlossaryEntry {
+  id: number | null;
+  source: string;
+  target: string;
+  type: string;
+  gender: string;
+  pronouns: string | null;
+  aliases: string[];
+  notes: string | null;
+  status: "proposed" | "locked" | "rejected";
+  origin: "llm" | "reference" | "user";
+  first_seen_chapter: number | null;
+  count: number;
+}
+
+export interface GlossaryHit {
+  entry_id: number;
+  source: string;
+  target: string;
+  status: string;
+  start: number;
+  end: number;
+  particle: string | null;
+  target_in_final: boolean | null;
+}
+
+export interface GlossaryHits {
+  regions: Record<string, GlossaryHit[]>;
+}
+
 const BASE = "/api";
 
 async function getJson<T>(path: string): Promise<T> {
@@ -119,4 +181,32 @@ export async function getOcr(series: string, chapter: string): Promise<RegionsAr
 
 export function pageImageUrl(series: string, chapter: string, index: number): string {
   return `${BASE}/series/${encodeURIComponent(series)}/chapters/${encodeURIComponent(chapter)}/pages/${index}`;
+}
+
+export async function listTranslations(series: string, chapter: string): Promise<string[]> {
+  return getJson<string[]>(
+    `${BASE}/series/${encodeURIComponent(series)}/chapters/${encodeURIComponent(chapter)}/translations`,
+  );
+}
+
+export async function getTranslation(series: string, chapter: string, runId: string): Promise<CandidateRun> {
+  return getJson<CandidateRun>(
+    `${BASE}/series/${encodeURIComponent(series)}/chapters/${encodeURIComponent(chapter)}/translations/${encodeURIComponent(runId)}`,
+  );
+}
+
+export async function getFinal(series: string, chapter: string): Promise<FinalArtifact> {
+  return getJson<FinalArtifact>(
+    `${BASE}/series/${encodeURIComponent(series)}/chapters/${encodeURIComponent(chapter)}/final`,
+  );
+}
+
+export async function getGlossary(series: string): Promise<GlossaryEntry[]> {
+  return getJson<GlossaryEntry[]>(`${BASE}/series/${encodeURIComponent(series)}/glossary`);
+}
+
+export async function getGlossaryHits(series: string, chapter: string): Promise<GlossaryHits> {
+  return getJson<GlossaryHits>(
+    `${BASE}/series/${encodeURIComponent(series)}/chapters/${encodeURIComponent(chapter)}/glossary-hits`,
+  );
 }

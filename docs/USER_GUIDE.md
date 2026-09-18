@@ -296,7 +296,11 @@ Run the web debug tool's API (pair with `npm run dev` in `webui/` for the UI).
 
 Serves existing artifacts read-only: `/api/series`, `/api/series/{s}/chapters`,
 `/api/series/{s}/chapters/{c}/ingest`, `/api/series/{s}/chapters/{c}/slices`,
-`/api/series/{s}/chapters/{c}/ocr` (the OCR stage's `ocr.json`) and
+`/api/series/{s}/chapters/{c}/ocr` (the OCR stage's `ocr.json`),
+`/api/series/{s}/chapters/{c}/translations` (run ids) and `/api/series/{s}/chapters/{c}/translations/{run_id}`
+(each translation run's JSON), `/api/series/{s}/chapters/{c}/final` (the judge's `final.json`),
+`/api/series/{s}/glossary` (the series glossary),
+`/api/series/{s}/chapters/{c}/glossary-hits` (glossary hits per OCR region) and
 `/api/series/{s}/chapters/{c}/pages/{index}` (raw page bytes). GET-only; it never writes.
 
 ```bash
@@ -334,6 +338,16 @@ second-opinion reading (`ocr_alt`) differs from the main text. Checkboxes hide/s
 region opens a side panel with its full detail (id, language, orientation, per-line engine/score/text).
 No OCR stage exists yet, so this view only has data once a chapter has an `ocr.json`; until then it shows
 `no ocr.json yet`.
+
+The **Translation view** (switch with the `Translation` button) is one review table row per OCR region in
+reading order: the source text with glossary terms highlighted, every candidate translation run
+(`translations/<run_id>.json`) side by side, and the judge's final line (`final.json`) with its decision
+badge, per-flag chips and the rationale behind a `why` disclosure. The glossary column lists the terms
+matched in the region's source text; a **locked** term whose English target is missing from the final line
+is shown with `✗` and gives the row a red background, while rows with final flags, runs disagreeing with
+each other, or regions no run produced text for get an amber one. A checkbox filters the table down to just
+the rows needing attention. All inputs beyond `ocr.json` are optional — a missing `final.json`, run file or
+`series.db` simply shows less.
 
 The whole tool is read-only: the API only answers GET requests and never writes artifacts.
 

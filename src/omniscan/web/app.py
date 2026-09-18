@@ -12,7 +12,9 @@ from fastapi.responses import FileResponse, Response
 
 from omniscan.core.config import Config
 from omniscan.core.paths import ChapterPaths, SeriesPaths, natural_key
-from omniscan.core.schemas import IngestArtifact
+from omniscan.core.schemas import FinalArtifact, GlossaryEntry, IngestArtifact, RegionsArtifact
+from omniscan.glossary.match import find_terms, term_present
+from omniscan.glossary.store import GlossaryStore
 
 
 def _under(root: Path, candidate: Path) -> bool:
@@ -55,6 +57,27 @@ def create_app(cfg: Config, *, cors_origins: Sequence[str] = ("http://localhost:
             raise HTTPException(status_code=404, detail=f"{name} not found")
         return Response(content=path.read_bytes(), media_type="application/json")
 
+    def glossary_entries(series: SeriesPaths) -> list[GlossaryEntry]:
+        """All store entries in store order; [] when series.db does not exist (never creates the db)."""
+        if not series.db.is_file():
+            return []
+        with GlossaryStore(series.db) as store:
+            return store.list()
+
+    def final_lines(chapter: ChapterPaths) -> dict[str, str]:
+        """region_id -> final text; {} when final.json is missing or invalid (never a 500)."""
+        path = chapter.artifact("final.json")
+        if not path.is_file():
+            return {}
+        try:
+            final = FinalArtifact.load(path)
+        except Exception:
+            return {}
+        lines: dict[str, str] = {}
+        for line in final.lines:
+            lines.setdefault(line.region_id, line.text)
+        return lines
+
     @app.get("/api/series")
     def list_series() -> list[str]:
         """Series names in the library (missing library root -> empty list)."""
@@ -83,6 +106,73 @@ def create_app(cfg: Config, *, cors_origins: Sequence[str] = ("http://localhost:
     def get_ocr(series: str, chapter: str) -> Response:
         """The chapter's ocr.json, byte-for-byte as written by the OCR stage."""
         return artifact_bytes(chapter_paths(series, chapter), "ocr.json")
+
+    @app.get("/api/series/{series}/chapters/{chapter}/translations")
+    def list_translations(series: str, chapter: str) -> list[str]:
+        """Run ids (file stems) of the chapter's translation runs in natural order."""
+        directory = chapter_paths(series, chapter).work_dir / "translations"
+        if not directory.is_dir():
+            return []
+        stems = [p.stem for p in directory.glob("*.json") if p.is_file() and not p.stem.startswith(".")]
+        return sorted(stems, key=natural_key)
+
+    @app.get("/api/series/{series}/chapters/{chapter}/translations/{run_id}")
+    def get_translation(series: str, chapter: str, run_id: str) -> Response:
+        """One translation run's JSON, byte-for-byte as written by the translation stage."""
+        if "/" in run_id or "\\" in run_id or ".." in run_id:
+            raise HTTPException(status_code=404, detail="translation run not found")
+        directory = chapter_paths(series, chapter).work_dir / "translations"
+        path = directory / f"{run_id}.json"
+        if not _under(directory, path) or not path.is_file():
+            raise HTTPException(status_code=404, detail="translation run not found")
+        return Response(content=path.read_bytes(), media_type="application/json")
+
+    @app.get("/api/series/{series}/chapters/{chapter}/final")
+    def get_final(series: str, chapter: str) -> Response:
+        """The chapter's final.json, byte-for-byte as written by the judge stage."""
+        return artifact_bytes(chapter_paths(series, chapter), "final.json")
+
+    @app.get("/api/series/{series}/glossary")
+    def get_glossary(series: str) -> list[dict[str, object]]:
+        """Every glossary entry of the series in store order ([] when series.db is missing)."""
+        return [entry.model_dump(mode="json") for entry in glossary_entries(series_paths(series))]
+
+    @app.get("/api/series/{series}/chapters/{chapter}/glossary-hits")
+    def get_glossary_hits(series: str, chapter: str) -> dict[str, dict[str, list[dict[str, object]]]]:
+        """Glossary hits per OCR region, with locked-term target checks against the final text."""
+        paths = chapter_paths(series, chapter)
+        ocr_path = paths.artifact("ocr.json")
+        if not ocr_path.is_file():
+            raise HTTPException(status_code=404, detail="ocr.json not found")
+        ocr = RegionsArtifact.load(ocr_path)
+        entries = [
+            entry
+            for entry in glossary_entries(series_paths(series))
+            if entry.status in ("proposed", "locked")
+        ]
+        finals = final_lines(paths)
+        hits: dict[str, list[dict[str, object]]] = {}
+        for region in ocr.regions:
+            region_hits: list[dict[str, object]] = []
+            for match in find_terms(region.text, entries):
+                entry = next(e for e in entries if e.id == match.entry_id)
+                final_text = finals.get(region.id)
+                region_hits.append(
+                    {
+                        "entry_id": match.entry_id,
+                        "source": match.source,
+                        "target": entry.target,
+                        "status": entry.status,
+                        "start": match.start,
+                        "end": match.end,
+                        "particle": match.particle,
+                        "target_in_final": (
+                            term_present(final_text, entry) if final_text is not None else None
+                        ),
+                    }
+                )
+            hits[region.id] = region_hits
+        return {"regions": hits}
 
     @app.get("/api/series/{series}/chapters/{chapter}/pages/{index}")
     def get_page(series: str, chapter: str, index: int) -> FileResponse:

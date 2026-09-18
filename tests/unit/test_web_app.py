@@ -13,6 +13,11 @@ from omniscan.core.config import Config, PathsConfig
 from omniscan.core.schemas import (
     Band,
     BBox,
+    Candidate,
+    CandidateRun,
+    FinalArtifact,
+    FinalLine,
+    GlossaryEntry,
     IngestArtifact,
     OcrLine,
     Region,
@@ -21,6 +26,7 @@ from omniscan.core.schemas import (
     SlicesArtifact,
     SourceFile,
 )
+from omniscan.glossary.store import GlossaryStore
 from omniscan.web.app import create_app
 
 SERIES = "Solo Leveling"
@@ -240,6 +246,233 @@ def test_ocr_traversal_cannot_escape_roots(tmp_path: Path) -> None:
         f"/api/series/{quote(SERIES)}/chapters/..%2F..%2F..%2Fsecret.json/ocr",
         f"/api/series/%2Fetc%2Fpasswd/chapters/{quote(CHAPTER)}/ocr",
         f"/api/series/{quote(SERIES)}/chapters/%2Fetc%2Fpasswd/ocr",
+    )
+    for url in escapes:
+        response = client.get(url)
+        assert response.status_code == 404, url
+        assert b"outside the roots" not in response.content, url
+
+
+# ---------------------------------------------------------------- translation view (B10)
+
+
+def write_translation_chapter(tmp_path: Path) -> Path:
+    """One chapter with ocr.json (two regions), translations/runA.json + runB.json and no final.json."""
+    work = tmp_path / "work" / SERIES / CHAPTER
+    work.mkdir(parents=True, exist_ok=True)
+    RegionsArtifact(
+        regions=[
+            Region(
+                id="r0001",
+                slice_index=0,
+                kind="bubble_text",
+                bbox=BBox(x0=10, y0=20, x1=90, y1=60),
+                reading_order=1,
+                text="철수가 왔다",
+                confidence=0.9,
+            ),
+            Region(
+                id="r0002",
+                slice_index=0,
+                kind="sfx",
+                bbox=BBox(x0=5, y0=100, x1=50, y1=140),
+                reading_order=2,
+                text="아무것도 없다",
+                confidence=0.9,
+            ),
+        ]
+    ).save(work / "ocr.json")
+    for run_id, texts in (
+        ("runA", {"r0001": "Cheolsu came", "r0002": "Whoosh"}),
+        ("runB", {"r0001": "Cheolsu has come"}),
+    ):
+        CandidateRun(
+            run_id=run_id,
+            profile="fast",
+            model="qwen3:8b",
+            candidates=[Candidate(region_id=rid, text=text) for rid, text in texts.items()],
+        ).save(work / "translations" / f"{run_id}.json")
+    return work
+
+
+def write_final(work: Path, lines: list[FinalLine]) -> None:
+    FinalArtifact(judge_model="judge:8b", lines=lines).save(work / "final.json")
+
+
+def add_glossary(work_root: Path) -> tuple[GlossaryEntry, GlossaryEntry]:
+    """A locked `철수 -> Cheolsu` entry and a rejected one that would match r0002."""
+    with GlossaryStore(work_root / "series.db") as store:
+        locked = store.add(GlossaryEntry(source="철수", target="Cheolsu", status="locked"))
+        rejected = store.add(GlossaryEntry(source="아무것도", target="Nothing", status="rejected"))
+    return locked, rejected
+
+
+def test_translations_lists_run_ids_in_natural_order(tmp_path: Path) -> None:
+    work = write_translation_chapter(tmp_path)
+    client = make_client(tmp_path)
+    url = f"/api/series/{quote(SERIES)}/chapters/{quote(CHAPTER)}/translations"
+    assert client.get(url).json() == ["runA", "runB"]
+    (work / "translations" / "run2.json").write_bytes(b"{}")
+    (work / "translations" / "run10.json").write_bytes(b"{}")
+    (work / "translations" / ".hidden.json").write_bytes(b"{}")
+    assert client.get(url).json() == ["run2", "run10", "runA", "runB"]
+
+
+def test_translations_empty_when_directory_missing(tmp_path: Path) -> None:
+    write_chapter(tmp_path)
+    client = make_client(tmp_path)
+    url = f"/api/series/{quote(SERIES)}/chapters/{quote(CHAPTER)}/translations"
+    assert client.get(url).status_code == 200
+    assert client.get(url).json() == []
+
+
+def test_translation_run_serves_exact_bytes(tmp_path: Path) -> None:
+    work = write_translation_chapter(tmp_path)
+    client = make_client(tmp_path)
+    url = f"/api/series/{quote(SERIES)}/chapters/{quote(CHAPTER)}/translations/runB"
+    response = client.get(url)
+    assert response.status_code == 200
+    assert response.content == (work / "translations" / "runB.json").read_bytes()
+
+
+def test_translation_run_missing_or_escapes_returns_404(tmp_path: Path) -> None:
+    write_translation_chapter(tmp_path)
+    secret = tmp_path / "secret.json"
+    secret.write_bytes(b"outside the roots")
+    client = make_client(tmp_path)
+    base = f"/api/series/{quote(SERIES)}/chapters/{quote(CHAPTER)}/translations"
+    for run_id in ("nope", "..", "..%2F..%2Fsecret", "..%2Fsecret"):
+        response = client.get(f"{base}/{run_id}")
+        assert response.status_code == 404, run_id
+        assert b"outside the roots" not in response.content, run_id
+
+
+def test_final_serves_exact_bytes_and_404_when_absent(tmp_path: Path) -> None:
+    work = write_translation_chapter(tmp_path)
+    write_final(work, [FinalLine(region_id="r0001", text="Cheolsu came", decision="pick")])
+    client = make_client(tmp_path)
+    url = f"/api/series/{quote(SERIES)}/chapters/{quote(CHAPTER)}/final"
+    response = client.get(url)
+    assert response.status_code == 200
+    assert response.content == (work / "final.json").read_bytes()
+    (work / "final.json").unlink()
+    assert client.get(url).status_code == 404
+    assert client.get(url).json() == {"detail": "final.json not found"}
+
+
+def test_glossary_returns_all_entries(tmp_path: Path) -> None:
+    write_translation_chapter(tmp_path)
+    work_root = tmp_path / "work" / SERIES
+    locked, rejected = add_glossary(work_root)
+    client = make_client(tmp_path)
+    response = client.get(f"/api/series/{quote(SERIES)}/glossary")
+    assert response.status_code == 200
+    entries = response.json()
+    assert [e["id"] for e in entries] == [locked.id, rejected.id]
+    assert [e["status"] for e in entries] == ["locked", "rejected"]
+    assert entries[0]["source"] == "철수"
+    assert entries[0]["target"] == "Cheolsu"
+
+
+def test_glossary_empty_without_db_and_file_not_created(tmp_path: Path) -> None:
+    write_translation_chapter(tmp_path)
+    client = make_client(tmp_path)
+    response = client.get(f"/api/series/{quote(SERIES)}/glossary")
+    assert response.status_code == 200
+    assert response.json() == []
+    assert not (tmp_path / "work" / SERIES / "series.db").exists()
+
+
+def test_glossary_hits_with_locked_target_in_final(tmp_path: Path) -> None:
+    work = write_translation_chapter(tmp_path)
+    add_glossary(work.parent)
+    write_final(work, [FinalLine(region_id="r0001", text="Cheolsu came", decision="pick")])
+    client = make_client(tmp_path)
+    url = f"/api/series/{quote(SERIES)}/chapters/{quote(CHAPTER)}/glossary-hits"
+    response = client.get(url)
+    assert response.status_code == 200
+    regions = response.json()["regions"]
+    assert regions["r0001"] == [
+        {
+            "entry_id": 1,
+            "source": "철수",
+            "target": "Cheolsu",
+            "status": "locked",
+            "start": 0,
+            "end": 3,
+            "particle": "가",
+            "target_in_final": True,
+        }
+    ]
+    assert regions["r0002"] == []
+
+
+def test_glossary_hits_target_missing_from_final(tmp_path: Path) -> None:
+    work = write_translation_chapter(tmp_path)
+    add_glossary(work.parent)
+    client = make_client(tmp_path)
+    url = f"/api/series/{quote(SERIES)}/chapters/{quote(CHAPTER)}/glossary-hits"
+
+    # A final line whose text lacks the locked target -> false.
+    write_final(work, [FinalLine(region_id="r0001", text="Chul-soo came", decision="rewrite")])
+    assert client.get(url).json()["regions"]["r0001"][0]["target_in_final"] is False
+
+    # No final.json at all -> null.
+    (work / "final.json").unlink()
+    assert client.get(url).json()["regions"]["r0001"][0]["target_in_final"] is None
+
+    # A final.json without a line for r0001 -> null.
+    write_final(work, [FinalLine(region_id="r0002", text="nothing", decision="pick")])
+    assert client.get(url).json()["regions"]["r0001"][0]["target_in_final"] is None
+
+
+def test_glossary_hits_invalid_final_treated_as_absent(tmp_path: Path) -> None:
+    work = write_translation_chapter(tmp_path)
+    add_glossary(work.parent)
+    (work / "final.json").write_bytes(b"{not json")
+    client = make_client(tmp_path)
+    url = f"/api/series/{quote(SERIES)}/chapters/{quote(CHAPTER)}/glossary-hits"
+    response = client.get(url)
+    assert response.status_code == 200
+    assert response.json()["regions"]["r0001"][0]["target_in_final"] is None
+
+
+def test_glossary_hits_rejected_entry_and_missing_db(tmp_path: Path) -> None:
+    work = write_translation_chapter(tmp_path)
+    add_glossary(work.parent)  # the rejected `아무것도` entry must not hit r0002
+    client = make_client(tmp_path)
+    url = f"/api/series/{quote(SERIES)}/chapters/{quote(CHAPTER)}/glossary-hits"
+    assert client.get(url).json()["regions"]["r0002"] == []
+
+    # No series.db: every region maps to [] and no db file is created.
+    (work.parent / "series.db").unlink()
+    assert client.get(url).json()["regions"] == {"r0001": [], "r0002": []}
+    assert not (work.parent / "series.db").exists()
+
+
+def test_glossary_hits_missing_ocr_returns_404(tmp_path: Path) -> None:
+    write_translation_chapter(tmp_path)
+    (tmp_path / "work" / SERIES / CHAPTER / "ocr.json").unlink()
+    client = make_client(tmp_path)
+    url = f"/api/series/{quote(SERIES)}/chapters/{quote(CHAPTER)}/glossary-hits"
+    assert client.get(url).status_code == 404
+    assert client.get(url).json() == {"detail": "ocr.json not found"}
+
+
+def test_new_routes_traversal_cannot_escape_roots(tmp_path: Path) -> None:
+    """`..` / absolute segments in series/chapter on the new routes must yield a clean 404."""
+    write_translation_chapter(tmp_path)
+    secret = tmp_path / "secret.json"
+    secret.write_bytes(b"outside the roots")
+    client = make_client(tmp_path)
+    escapes = (
+        f"/api/series/..%2F..%2Fsecret/chapters/{quote(CHAPTER)}/translations",
+        f"/api/series/..%2F..%2Fsecret/chapters/{quote(CHAPTER)}/final",
+        f"/api/series/..%2F..%2Fsecret/chapters/{quote(CHAPTER)}/glossary-hits",
+        f"/api/series/{quote(SERIES)}/chapters/..%2F..%2Fsecret/translations/runA",
+        f"/api/series/{quote(SERIES)}/chapters/..%2F..%2Fsecret/final",
+        f"/api/series/{quote(SERIES)}/chapters/..%2F..%2Fsecret/glossary-hits",
+        "/api/series/..%2F..%2Fsecret/glossary",
     )
     for url in escapes:
         response = client.get(url)
