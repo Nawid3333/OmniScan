@@ -6,7 +6,7 @@ from rich.logging import RichHandler
 
 
 def setup_logging(level: str = "INFO") -> None:
-    """Configure root logging with a rich handler (idempotent: calling twice must not add a second handler)."""  # noqa: E501 (card-mandated docstring)
+    """Configure root logging with a rich handler (idempotent: calling twice must not add a second handler)."""
     logging.basicConfig(
         level=level,
         format="%(message)s",
