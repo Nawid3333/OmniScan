@@ -6,11 +6,11 @@ from pathlib import Path
 
 import pytest
 from PIL import Image
-from tests.fixtures import images
 
 from omniscan.core.paths import list_images
 from omniscan.core.schemas import IngestArtifact
 from omniscan.ingest import ingest_chapter
+from tests.fixtures import images
 
 
 def test_uniform_chapter_layout(tmp_path: Path) -> None:

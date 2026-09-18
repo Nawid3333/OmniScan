@@ -5,10 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from PIL import Image
-from tests.fixtures import images
 
 from omniscan.core.manifest import hash_file
 from omniscan.ingest.convert import convert_to_jpeg, needs_conversion
+from tests.fixtures import images
 
 
 def test_plain_jpeg_needs_no_conversion(tmp_path: Path) -> None:
