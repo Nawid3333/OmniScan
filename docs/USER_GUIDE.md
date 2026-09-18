@@ -66,14 +66,14 @@ Secrets never go in TOML. Put them in `~/.config/omniscan/secrets.env` (or expor
 optional today and `omniscan doctor` reports which are missing. Never commit this file.
 
 ```text
-OLLAMA_API_KEY=...            # Ollama cloud (doctor check only while `translate` is a stub)
+OLLAMA_API_KEY=...            # Ollama cloud (`translate` cloud profiles; doctor reports if unset)
 EXTRACTPICS_API_KEY=...
 OMNISCAN_RELAY_CLIENT_TOKEN=...
 ```
 
 ## Commands
 
-Stubs (`acquire`, `detect`, `ocr`, `translate`, `judge`, `inpaint`, `typeset`, `export`, `run`,
+Stubs (`acquire`, `detect`, `ocr`, `judge`, `inpaint`, `typeset`, `export`, `run`,
 `reference`) are registered but not usable; each prints `not implemented yet` and exits 2. Every other
 command below is fully working. The examples assume you generated the demo chapter with
 `uv run python scripts/make_demo_chapter.py`.
@@ -232,6 +232,33 @@ Same `series.db` requirement; exits 2 if `glossary.yaml` does not exist.
 
 ```bash
 uv run omniscan glossary import DemoSeries --mode merge
+```
+
+### `omniscan translate`
+
+Run translation profiles over a chapter's OCR text and write one candidate run per profile to
+`work_root/<series>/<chapter>/translations/<profile>.json`. Needs `ocr.json`, which no stage produces
+yet, so there is nothing to translate until the OCR stage lands.
+
+| Argument/option | Meaning |
+|---|---|
+| `series` | required |
+| `--chapter`, `-c <str>` | chapter folder name; repeatable. Default: all |
+| `--profile`, `-p <name>` | profile name; repeatable. Default: every enabled profile |
+| `--force` | re-run even if the run file already exists |
+
+Profiles live in `config/translation_profiles.toml`, overridden by
+`~/.config/omniscan/translation_profiles.toml` (a profile there replaces the same-named one here).
+One profile is one model plus a prompt style: `chat_json` (many regions per request, glossary in the
+prompt, JSON answer) or `translategemma` (one request per region, locked glossary terms
+pre-substituted). Interrupted or rate-limited runs keep a dot-prefixed partial file that the next
+invocation resumes; a finished run deletes it. Exit 2 for unknown profiles or chapters with no
+`ocr.json`-less series; a chapter without `ocr.json` fails that chapter but the rest still run (exit
+1). An Ollama rate limit stops everything immediately with exit 3 and keeps the partial results.
+
+```bash
+uv run omniscan translate DemoSeries
+uv run omniscan translate DemoSeries --profile gemma4-12b-local --chapter "Chapter 1" --force
 ```
 
 ### `omniscan watermark add`

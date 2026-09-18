@@ -82,6 +82,7 @@ class OllamaClient:
         format: dict[str, Any] | Literal["json"] | None = None,
         options: dict[str, Any] | None = None,
         keep_alive: str | int | None = None,
+        think: bool | None = None,
         max_retries: int = 5,
     ) -> ChatResponse:
         """Send one non-streaming /api/chat request and lift the fields callers use."""
@@ -93,6 +94,8 @@ class OllamaClient:
             body["options"] = options
         if keep_alive is not None:
             body["keep_alive"] = keep_alive
+        if think is not None:
+            body["think"] = think
         data = self._request(
             "POST", f"{base}/api/chat", headers=headers, json_body=body, max_retries=max_retries
         )

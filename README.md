@@ -18,7 +18,7 @@ packaged into CBZ/PDF.
 | glossary | module only — `omniscan glossary list` / `export` / `import` |
 | detect | not implemented |
 | ocr | not implemented |
-| translate | not implemented |
+| translate | working — `omniscan translate` (candidate runs only; needs ocr.json, which no stage produces yet) |
 | judge | not implemented |
 | inpaint | not implemented |
 | typeset | not implemented |
@@ -34,7 +34,7 @@ pipeline stage consumes it yet.
 
 | Command | Behaviour |
 |---|---|
-| `acquire`, `detect`, `ocr`, `translate`, `judge`, `inpaint`, `typeset`, `export`, `run`, `reference` | registered stubs; they print `not implemented yet` and exit 2 |
+| `acquire`, `detect`, `ocr`, `judge`, `inpaint`, `typeset`, `export`, `run`, `reference` | registered stubs; they print `not implemented yet` and exit 2 |
 
 ## Requirements
 

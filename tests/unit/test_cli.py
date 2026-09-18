@@ -19,7 +19,6 @@ STUB_COMMANDS = (
     "detect",
     "ocr",
     "glossary",
-    "translate",
     "judge",
     "inpaint",
     "typeset",

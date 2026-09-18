@@ -1,0 +1,39 @@
+# Translation profiles for `omniscan translate`. One table per profile: the table key IS the profile
+# name (it becomes the file stem of the run, `translations/<name>.json`). Override per machine in
+# ~/.config/omniscan/translation_profiles.toml — a profile there replaces the same-named one here.
+#
+# Every profile uses `endpoint = "local"`: the local Windows Ollama daemon also proxies the
+# `*-cloud` models (verified in docs/benchmarks/translation-probe.md), so no OLLAMA_API_KEY is
+# needed for them. `think = false` keeps thinking models from spending the whole budget reasoning;
+# translategemma rejects `think: true`, so its profile sends nothing.
+
+[profiles.translategemma-12b-local]
+endpoint = "local"
+model = "translategemma:12b"
+style = "translategemma"
+
+[profiles.gemma4-12b-local]
+endpoint = "local"
+model = "gemma4:12b"
+style = "chat_json"
+think = false
+
+[profiles.gemma4-31b-cloud]
+endpoint = "local"
+model = "gemma4:31b-cloud"
+style = "chat_json"
+think = false
+
+[profiles.glm-5-3-flash-cloud]
+enabled = false
+endpoint = "local"
+model = "glm-5.3-flash:cloud"
+style = "chat_json"
+think = false
+
+[profiles.kimi-k3-cloud]
+enabled = false
+endpoint = "local"
+model = "kimi-k3:cloud"
+style = "chat_json"
+think = false

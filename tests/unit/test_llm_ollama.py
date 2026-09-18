@@ -217,6 +217,20 @@ def test_chat_retries_transport_errors() -> None:
     assert len(sleeps) == 2
 
 
+def test_chat_think_lands_at_body_top_level() -> None:
+    client, rec = make_client()
+    client.chat("gemma3:27b", [{"role": "user", "content": "hi"}], think=False)
+    assert rec.bodies[0]["think"] is False
+
+    client, rec = make_client()
+    client.chat("gemma3:27b", [{"role": "user", "content": "hi"}], think=True)
+    assert rec.bodies[0]["think"] is True
+
+    client, rec = make_client()
+    client.chat("gemma3:27b", [{"role": "user", "content": "hi"}])
+    assert "think" not in rec.bodies[0]
+
+
 def backoff_bounds(attempt: int) -> tuple[float, float]:
     delay = min(1.0 * (2**attempt), 30.0)
     return delay, delay * 1.25

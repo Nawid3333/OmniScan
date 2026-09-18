@@ -13,13 +13,14 @@ from rich.table import Table
 
 from omniscan.core.config import Config, get_config, get_secrets
 from omniscan.core.paths import ChapterPaths, SeriesPaths, chapter_number, list_chapters, list_images
-from omniscan.core.schemas import FilterArtifact, IngestArtifact, SlicesArtifact
+from omniscan.core.schemas import FilterArtifact, GlossaryEntry, IngestArtifact, SlicesArtifact
 from omniscan.doctor import run_all_checks
 from omniscan.filter.decide import decide_files, decide_slices, load_examples, restore
 from omniscan.glossary.store import GlossaryStore
 from omniscan.glossary.yaml_io import export_yaml, import_yaml
 from omniscan.importer.execute import execute_import
 from omniscan.importer.plan import ImportPlanError, plan_import
+from omniscan.llm.ollama import OllamaClient, OllamaError, OllamaRateLimitError
 from omniscan.log import setup_logging
 from omniscan.packaging import pack_cbz, pack_pdf, safe_filename
 from omniscan.queue.executor import stage_executor
@@ -36,7 +37,6 @@ _STUB_COMMANDS = (
     "acquire",
     "detect",
     "ocr",
-    "translate",
     "judge",
     "inpaint",
     "typeset",
@@ -257,9 +257,85 @@ def cmd_ocr(series: Annotated[str | None, typer.Argument()] = None) -> None:
     _stub("ocr", series)
 
 
-def cmd_translate(series: Annotated[str | None, typer.Argument()] = None) -> None:
-    """Not implemented yet."""
-    _stub("translate", series)
+def cmd_translate(
+    series: Annotated[str, typer.Argument()],
+    chapter: Annotated[
+        list[str] | None,
+        typer.Option("--chapter", "-c", help="Chapter folder name; repeatable. Default: all."),
+    ] = None,
+    profile: Annotated[
+        list[str] | None,
+        typer.Option("--profile", "-p", help="Profile name; repeatable. Default: every enabled one."),
+    ] = None,
+    force: Annotated[
+        bool, typer.Option("--force", help="Re-run even if the run file already exists.")
+    ] = False,
+) -> None:
+    """Translate chapters' OCR text into candidate runs (one file per translation profile)."""
+    from omniscan.translate.chapter import translate_chapter
+    from omniscan.translate.profiles import default_profile_paths, load_profiles
+
+    cfg = get_config()
+    sp = SeriesPaths.from_config(cfg, series)
+    chapters = chapter or sp.chapters()
+    if not chapters:
+        typer.echo(f"translate: no chapters found for series {series!r}", err=True)
+        raise typer.Exit(2)
+    profiles = load_profiles(default_profile_paths())
+    if profile:
+        unknown = next((name for name in profile if name not in profiles), None)
+        if unknown is not None:
+            typer.echo(f"translate: unknown profile {unknown!r} (known: {', '.join(profiles)})", err=True)
+            raise typer.Exit(2)
+        selected = [profiles[name] for name in profile]
+    else:
+        selected = [p for p in profiles.values() if p.enabled]
+        if not selected:
+            typer.echo("translate: no enabled profiles in translation_profiles.toml", err=True)
+            raise typer.Exit(2)
+    entries = _glossary_entries(sp)
+    failed = 0
+    with OllamaClient(cfg.ollama, get_secrets()) as client:
+        for chap in chapters:
+            paths = sp.chapter(chap)
+            for prof in selected:
+                try:
+                    status, run = translate_chapter(client, paths, prof, entries, force=force)
+                except FileNotFoundError as exc:
+                    typer.echo(f"{series}/{chap}: {exc}", err=True)
+                    failed += 1
+                    break
+                except OllamaRateLimitError:
+                    typer.echo(
+                        "translate: Ollama rate limit reached — partial results are kept; re-run later",
+                        err=True,
+                    )
+                    raise typer.Exit(3) from None
+                except OllamaError as exc:
+                    typer.echo(f"translate: {exc}", err=True)
+                    failed += 1
+                    continue
+                if status == "done" and run is not None:
+                    usage = run.usage
+                    typer.echo(
+                        f"{series}/{chap} {prof.name}: done ({int(usage['regions'])} regions, "
+                        f"{int(usage['missing'])} missing, {usage['seconds']:.1f}s)"
+                    )
+                else:
+                    typer.echo(f"{series}/{chap} {prof.name}: skipped")
+    if failed:
+        raise typer.Exit(1)
+
+
+def _glossary_entries(sp: SeriesPaths) -> list[GlossaryEntry]:
+    """All glossary entries of the series, or none when its db does not exist (never created here)."""
+    if not sp.db.is_file():
+        return []
+    with GlossaryStore(sp.db) as store:
+        return store.list()
+
+
+app.command("translate")(cmd_translate)
 
 
 def cmd_judge(series: Annotated[str | None, typer.Argument()] = None) -> None:
