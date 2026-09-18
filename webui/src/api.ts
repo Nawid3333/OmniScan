@@ -8,6 +8,8 @@ export interface SourceFile {
   y0: number;
   y1: number;
   scale: number;
+  /** removed by the file-level promo pre-check (not part of the strip); absent in pre-B12 artifacts */
+  filtered?: boolean;
 }
 
 export interface IngestArtifact {
@@ -209,4 +211,14 @@ export async function getGlossaryHits(series: string, chapter: string): Promise<
   return getJson<GlossaryHits>(
     `${BASE}/series/${encodeURIComponent(series)}/chapters/${encodeURIComponent(chapter)}/glossary-hits`,
   );
+}
+
+export async function listOutput(series: string, chapter: string): Promise<string[]> {
+  return getJson<string[]>(
+    `${BASE}/series/${encodeURIComponent(series)}/chapters/${encodeURIComponent(chapter)}/output`,
+  );
+}
+
+export function outputImageUrl(series: string, chapter: string, name: string): string {
+  return `${BASE}/series/${encodeURIComponent(series)}/chapters/${encodeURIComponent(chapter)}/output/${encodeURIComponent(name)}`;
 }

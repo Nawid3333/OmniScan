@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 
 from omniscan.core.config import Config
-from omniscan.core.paths import ChapterPaths, SeriesPaths, natural_key
+from omniscan.core.paths import IMAGE_SUFFIXES, ChapterPaths, SeriesPaths, list_images, natural_key
 from omniscan.core.schemas import FinalArtifact, GlossaryEntry, IngestArtifact, RegionsArtifact
 from omniscan.glossary.match import find_terms, term_present
 from omniscan.glossary.store import GlossaryStore
@@ -49,6 +49,15 @@ def create_app(cfg: Config, *, cors_origins: Sequence[str] = ("http://localhost:
         ):
             raise HTTPException(status_code=404, detail=f"unknown chapter {chapter!r} of series {series!r}")
         return paths
+
+    def output_paths(series: str, chapter: str) -> Path:
+        """The chapter's output dir; 404 unless it sits inside cfg.paths.output_root."""
+        paths = chapter_paths(series, chapter)
+        # chapter_paths never checks the output root, so a chapter of ".." would resolve to the root
+        # itself; that (and any escape out of the root) must 404.
+        if ".." in chapter or not _under(cfg.paths.output_root, paths.output_dir):
+            raise HTTPException(status_code=404, detail=f"unknown chapter {chapter!r} of series {series!r}")
+        return paths.output_dir
 
     def artifact_bytes(chapter: ChapterPaths, name: str) -> Response:
         """Serve a JSON artifact's exact file bytes (no model round-trip)."""
@@ -193,5 +202,24 @@ def create_app(cfg: Config, *, cors_origins: Sequence[str] = ("http://localhost:
             raise HTTPException(status_code=404, detail=f"raw file {source_file.name} not found")
         media_type = mimetypes.guess_type(source_file.name)[0] or "application/octet-stream"
         return FileResponse(image_path, media_type=media_type)
+
+    @app.get("/api/series/{series}/chapters/{chapter}/output")
+    def list_output(series: str, chapter: str) -> list[str]:
+        """File names of the chapter's finished output images in natural order ([] when absent)."""
+        return [p.name for p in list_images(output_paths(series, chapter))]
+
+    @app.get("/api/series/{series}/chapters/{chapter}/output/{name}")
+    def get_output_image(series: str, chapter: str, name: str) -> FileResponse:
+        """One finished output image's bytes; never a path outside the chapter's output dir."""
+        directory = output_paths(series, chapter)
+        if "/" in name or "\\" in name or ".." in name:
+            raise HTTPException(status_code=404, detail="output image not found")
+        if Path(name).suffix.lower() not in IMAGE_SUFFIXES:
+            raise HTTPException(status_code=404, detail="output image not found")
+        path = directory / name
+        if not _under(directory, path) or not path.is_file():
+            raise HTTPException(status_code=404, detail="output image not found")
+        media_type = mimetypes.guess_type(name)[0] or "application/octet-stream"
+        return FileResponse(path, media_type=media_type)
 
     return app

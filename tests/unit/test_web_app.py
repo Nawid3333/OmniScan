@@ -478,3 +478,107 @@ def test_new_routes_traversal_cannot_escape_roots(tmp_path: Path) -> None:
         response = client.get(url)
         assert response.status_code == 404, url
         assert b"outside the roots" not in response.content, url
+
+
+# ---------------------------------------------------------------- reader view (B12)
+
+
+def make_png(color: tuple[int, int, int]) -> bytes:
+    img = Image.new("RGB", (80, 120), color)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def write_output(tmp_path: Path, names: dict[str, bytes]) -> Path:
+    """Place finished output images into the chapter's output dir."""
+    out_dir = tmp_path / "out" / SERIES / CHAPTER
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for name, data in names.items():
+        (out_dir / name).write_bytes(data)
+    return out_dir
+
+
+def output_url(suffix: str = "") -> str:
+    return f"/api/series/{quote(SERIES)}/chapters/{quote(CHAPTER)}/output{suffix}"
+
+
+def test_output_lists_names_in_natural_order(tmp_path: Path) -> None:
+    pages = {
+        "1.jpg": make_jpeg((10, 10, 10)),
+        "2.jpg": make_jpeg((20, 10, 10)),
+        "10.jpg": make_jpeg((30, 10, 10)),
+    }
+    write_output(tmp_path, pages)
+    (tmp_path / "out" / SERIES / CHAPTER / "notes.txt").write_bytes(b"not an image")
+    (tmp_path / "out" / SERIES / CHAPTER / "extra").mkdir()
+    (tmp_path / "out" / SERIES / CHAPTER / "extra" / "3.jpg").write_bytes(make_jpeg((40, 10, 10)))
+    client = make_client(tmp_path)
+    response = client.get(output_url())
+    assert response.status_code == 200
+    assert response.json() == ["1.jpg", "2.jpg", "10.jpg"]
+
+
+def test_output_empty_when_directory_absent(tmp_path: Path) -> None:
+    write_chapter(tmp_path)
+    client = make_client(tmp_path)
+    response = client.get(output_url())
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_output_traversal_cannot_escape_roots(tmp_path: Path) -> None:
+    """`..` / absolute segments in series/chapter on the output routes must yield a clean 404."""
+    write_chapter(tmp_path)
+    secret = tmp_path / "secret.jpg"
+    secret.write_bytes(make_jpeg((10, 10, 10)))
+    client = make_client(tmp_path)
+    escapes = (
+        "/api/series/..%2F..%2Fsecret/chapters/x/output",
+        f"/api/series/{quote(SERIES)}/chapters/..%2F..%2Fsecret/output",
+        "/api/series/..%2F..%2Fsecret/chapters/x/output/1.jpg",
+        f"/api/series/{quote(SERIES)}/chapters/..%2F..%2Fsecret/output/1.jpg",
+        f"/api/series/{quote(SERIES)}/chapters/%2E%2E/output",
+    )
+    for url in escapes:
+        response = client.get(url)
+        assert response.status_code == 404, url
+        assert b"secret" not in response.content, url
+
+
+def test_output_image_serves_exact_bytes_with_content_type(tmp_path: Path) -> None:
+    pages = {
+        "1.jpg": make_jpeg((10, 10, 10)),
+        "0002.png": make_png((20, 20, 20)),
+    }
+    write_output(tmp_path, pages)
+    client = make_client(tmp_path)
+    response = client.get(output_url("/1.jpg"))
+    assert response.status_code == 200
+    assert response.content == pages["1.jpg"]
+    assert response.headers["content-type"].startswith("image/jpeg")
+    response = client.get(output_url("/0002.png"))
+    assert response.status_code == 200
+    assert response.content == pages["0002.png"]
+    assert response.headers["content-type"].startswith("image/png")
+
+
+def test_output_image_404_on_bad_names(tmp_path: Path) -> None:
+    write_output(tmp_path, {"1.jpg": make_jpeg((10, 10, 10)), "notes.txt": b"text"})
+    secret = tmp_path / "secret.jpg"
+    secret.write_bytes(make_jpeg((30, 10, 10)))
+    out_dir = tmp_path / "out" / SERIES / CHAPTER
+    (out_dir / "escape.jpg").symlink_to(secret)
+    client = make_client(tmp_path)
+    missing = (
+        "99.jpg",
+        "notes.txt",
+        "..%2F..%2Fsecret.jpg",
+        "..%2Fsecret.jpg",
+        "a%5Cb.jpg",
+        "escape.jpg",
+    )
+    for name in missing:
+        response = client.get(output_url(f"/{name}"))
+        assert response.status_code == 404, name
+        assert b"secret" not in response.content, name

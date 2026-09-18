@@ -301,8 +301,10 @@ Serves existing artifacts read-only: `/api/series`, `/api/series/{s}/chapters`,
 `/api/series/{s}/chapters/{c}/translations` (run ids) and `/api/series/{s}/chapters/{c}/translations/{run_id}`
 (each translation run's JSON), `/api/series/{s}/chapters/{c}/final` (the judge's `final.json`),
 `/api/series/{s}/glossary` (the series glossary),
-`/api/series/{s}/chapters/{c}/glossary-hits` (glossary hits per OCR region) and
-`/api/series/{s}/chapters/{c}/pages/{index}` (raw page bytes). GET-only; it never writes.
+`/api/series/{s}/chapters/{c}/glossary-hits` (glossary hits per OCR region),
+`/api/series/{s}/chapters/{c}/pages/{index}` (raw page bytes),
+`/api/series/{s}/chapters/{c}/output` (finished output image names) and
+`/api/series/{s}/chapters/{c}/output/{name}` (finished output image bytes). GET-only; it never writes.
 
 ```bash
 uv run omniscan serve
@@ -393,6 +395,13 @@ is shown with `✗` and gives the row a red background, while rows with final fl
 each other, or regions no run produced text for get an amber one. A checkbox filters the table down to just
 the rows needing attention. All inputs beyond `ocr.json` are optional — a missing `final.json`, run file or
 `series.db` simply shows less.
+
+The **Reader view** (switch with the `Reader` button) shows a chapter's finished English output images
+(`output_root/<series>/<chapter>/`) as one continuous vertical strip, the way a reader would see the
+released chapter. `final only` shows the output images alone; `raw | final` puts them side by side with
+the chapter's raw pages (kept files only) with linked scrolling for comparison. A width slider sets the
+reading column width, fitted to the viewport. The export stage does not exist yet, so the view shows
+`no output yet` until finished images are placed in the chapter's output folder by hand.
 
 The whole tool is read-only: the API only answers GET requests and never writes artifacts.
 
