@@ -6,8 +6,8 @@ Exit code 0 = HARDWARE backend usable (OmniScan's codec will auto-select it), 1 
 
 import ctypes
 import ctypes.util
-import os
 import sys
+from pathlib import Path
 
 CANDIDATES = [
     "/opt/rocm/core-10.0/lib/librocjpeg.so.1",
@@ -33,7 +33,7 @@ BACKENDS = {"HARDWARE": 0, "HYBRID": 1}
 
 
 def main() -> int:
-    path = next((p for p in CANDIDATES if p and os.path.exists(p)), None)
+    path = next((p for p in CANDIDATES if p and Path(p).exists()), None)
     if path is None:
         print("librocjpeg not found")
         return 1
@@ -41,7 +41,7 @@ def main() -> int:
     lib.rocJpegCreate.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_void_p)]
     lib.rocJpegCreate.restype = ctypes.c_int
     lib.rocJpegDestroy.argtypes = [ctypes.c_void_p]
-    print(f"library: {path}   /dev/dri present: {os.path.exists('/dev/dri')}")
+    print(f"library: {path}   /dev/dri present: {Path('/dev/dri').exists()}")
     usable = False
     for name, backend in BACKENDS.items():
         handle = ctypes.c_void_p()
