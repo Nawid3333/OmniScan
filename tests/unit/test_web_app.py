@@ -15,6 +15,8 @@ from omniscan.core.schemas import (
     BBox,
     Candidate,
     CandidateRun,
+    FilterArtifact,
+    FilterDecision,
     FinalArtifact,
     FinalLine,
     GlossaryEntry,
@@ -582,3 +584,258 @@ def test_output_image_404_on_bad_names(tmp_path: Path) -> None:
         response = client.get(output_url(f"/{name}"))
         assert response.status_code == 404, name
         assert b"secret" not in response.content, name
+
+
+# ---------------------------------------------------------------- filtered view (B30)
+
+
+def write_filter_fixtures(tmp_path: Path) -> Path:
+    """Chapters 1-3: Ch1 with a mixed filter.json, Ch2 keep-only, Ch3 without filter.json.
+
+    Every chapter gets an ingest.json (SourceFile indices 0..5) and a slices.json (slices 7 and 9)."""
+    work_root = tmp_path / "work" / SERIES
+    for chapter in ("Chapter 1", "Chapter 2", "Chapter 3"):
+        (tmp_path / "lib" / SERIES / chapter).mkdir(parents=True, exist_ok=True)
+        work = work_root / chapter
+        work.mkdir(parents=True, exist_ok=True)
+        IngestArtifact(
+            series=SERIES,
+            chapter=chapter,
+            strip_width=100,
+            strip_height=30000,
+            files=[
+                SourceFile(
+                    index=i,
+                    name=f"{i + 1:04d}.jpg",
+                    sha256=f"{i:02x}" * 32,
+                    width=100,
+                    height=150,
+                    y0=150 * i,
+                    y1=150 * (i + 1),
+                )
+                for i in range(6)
+            ],
+        ).save(work / "ingest.json")
+        SlicesArtifact(
+            strip_width=100,
+            strip_height=30000,
+            bands=[Band(y0=70, y1=90, color=(255, 255, 255))],
+            slices=[Slice(index=7, y0=20100, y1=23000), Slice(index=9, y0=100, y1=200)],
+        ).save(work / "slices.json")
+    FilterArtifact(
+        decisions=[
+            FilterDecision(
+                target="file", index=3, decision="filtered", score=0.97, matched_example="global/end_card.jpg"
+            ),
+            FilterDecision(target="file", index=5, decision="keep", score=0.10),
+            FilterDecision(
+                target="slice", index=7, decision="filtered", score=0.93, matched_example="global/ad.jpg"
+            ),
+            FilterDecision(
+                target="slice", index=9, decision="filtered", score=0.88, matched_example="global/ad.jpg"
+            ),
+            FilterDecision(target="slice", index=9, decision="restored", score=1.0, method="manual"),
+        ]
+    ).save(work_root / CHAPTER / "filter.json")
+    FilterArtifact(decisions=[FilterDecision(target="file", index=0, decision="keep", score=0.0)]).save(
+        work_root / "Chapter 2" / "filter.json"
+    )
+    return work_root
+
+
+def filtered_url(series: str = SERIES) -> str:
+    return f"/api/series/{quote(series)}/filtered"
+
+
+def restore_url(series: str = SERIES, chapter: str = CHAPTER) -> str:
+    return f"/api/series/{quote(series)}/chapters/{quote(chapter)}/filter/restore"
+
+
+def test_filtered_lists_items_in_documented_shape_and_order(tmp_path: Path) -> None:
+    write_filter_fixtures(tmp_path)
+    client = make_client(tmp_path)
+    response = client.get(filtered_url())
+    assert response.status_code == 200
+    # keep-only pairs are excluded; items are file-before-slice then by index; a restored pair keeps
+    # the score of its last "filtered" decision.
+    assert response.json() == [
+        {
+            "chapter": CHAPTER,
+            "items": [
+                {
+                    "target": "file",
+                    "index": 3,
+                    "state": "filtered",
+                    "score": 0.97,
+                    "matched_example": "global/end_card.jpg",
+                    "method": "phash",
+                    "name": "0004.jpg",
+                    "y0": None,
+                    "y1": None,
+                },
+                {
+                    "target": "slice",
+                    "index": 7,
+                    "state": "filtered",
+                    "score": 0.93,
+                    "matched_example": "global/ad.jpg",
+                    "method": "phash",
+                    "name": None,
+                    "y0": 20100,
+                    "y1": 23000,
+                },
+                {
+                    "target": "slice",
+                    "index": 9,
+                    "state": "restored",
+                    "score": 0.88,
+                    "matched_example": "global/ad.jpg",
+                    "method": "phash",
+                    "name": None,
+                    "y0": 100,
+                    "y1": 200,
+                },
+            ],
+        }
+    ]
+
+    # ingest.json missing -> name: null, everything else unchanged.
+    (tmp_path / "work" / SERIES / CHAPTER / "ingest.json").unlink()
+    response = client.get(filtered_url())
+    assert response.json()[0]["items"][0]["name"] is None
+
+    # Unknown series -> []; a `..` series -> clean 404.
+    assert client.get(filtered_url("No Such Series")).json() == []
+    assert client.get("/api/series/..%2F..%2Fsecret/filtered").status_code == 404
+
+
+def test_filtered_invalid_filter_json_skips_chapter(tmp_path: Path) -> None:
+    write_filter_fixtures(tmp_path)
+    chapter_2 = tmp_path / "work" / SERIES / "Chapter 2"
+    FilterArtifact(
+        decisions=[
+            FilterDecision(target="file", index=0, decision="filtered", score=0.99, matched_example="x.jpg")
+        ]
+    ).save(chapter_2 / "filter.json")
+    (chapter_2 / "filter.json").write_bytes(b"{not json")
+    client = make_client(tmp_path)
+    response = client.get(filtered_url())
+    assert response.status_code == 200
+    assert [c["chapter"] for c in response.json()] == [CHAPTER]
+
+
+def test_restore_appends_one_manual_decision(tmp_path: Path) -> None:
+    work = write_filter_fixtures(tmp_path)
+    filtered_dir = tmp_path / "out" / SERIES / "_filtered" / CHAPTER
+    filtered_dir.mkdir(parents=True)
+    (filtered_dir / "0004.jpg").write_bytes(b"promo bytes")
+    filter_path = work / CHAPTER / "filter.json"
+    before_filter = filter_path.read_bytes()
+    before_image = (filtered_dir / "0004.jpg").read_bytes()
+    client = make_client(tmp_path)
+    response = client.post(restore_url(), json={"target": "file", "index": 3})
+    assert response.status_code == 200
+    assert response.json() == {
+        "target": "file",
+        "index": 3,
+        "decision": "restored",
+        "score": 1.0,
+        "matched_example": None,
+        "method": "manual",
+    }
+    artifact = FilterArtifact.load(filter_path)
+    assert len(artifact.decisions) == 5 + 1
+    assert artifact.decisions[-1].decision == "restored"
+    assert artifact.decisions[-1].method == "manual"
+    # restore is a metadata override only: _filtered/ files are untouched.
+    assert (filtered_dir / "0004.jpg").read_bytes() == before_image
+    # A following filtered listing shows the item as restored.
+    items = client.get(filtered_url()).json()[0]["items"]
+    assert next(i for i in items if i["target"] == "file")["state"] == "restored"
+    assert before_filter != filter_path.read_bytes()
+
+
+def test_restore_rejects_non_filtered_items_missing_artifact_and_bad_bodies(tmp_path: Path) -> None:
+    work = write_filter_fixtures(tmp_path)
+    client = make_client(tmp_path)
+    url = restore_url()
+    filter_path = work / CHAPTER / "filter.json"
+    before = filter_path.read_bytes()
+
+    # never filtered (keep-only pair) -> 409, nothing written
+    response = client.post(url, json={"target": "file", "index": 5})
+    assert response.status_code == 409
+    assert response.json() == {"detail": "item is not currently filtered"}
+    # already restored -> 409
+    response = client.post(url, json={"target": "slice", "index": 9})
+    assert response.status_code == 409
+    # never mentioned at all -> 409
+    response = client.post(url, json={"target": "file", "index": 42})
+    assert response.status_code == 409
+    assert filter_path.read_bytes() == before
+
+    # filter.json missing -> 404
+    response = client.post(restore_url(chapter="Chapter 3"), json={"target": "file", "index": 0})
+    assert response.status_code == 404
+    assert response.json() == {"detail": "filter.json not found"}
+
+    # bad bodies -> 422 (invalid target, negative index, extra field)
+    for body in (
+        {"target": "page", "index": 0},
+        {"target": "file", "index": -1},
+        {"target": "file", "index": 0, "x": 1},
+    ):
+        response = client.post(url, json=body)
+        assert response.status_code == 422, body
+        assert filter_path.read_bytes() == before
+
+
+def test_restore_rejects_non_json_content_types(tmp_path: Path) -> None:
+    """The CSRF guard: a cross-site page can send text/plain POSTs without a preflight; only JSON passes."""
+    work = write_filter_fixtures(tmp_path)
+    filter_path = work / CHAPTER / "filter.json"
+    before = filter_path.read_bytes()
+    client = make_client(tmp_path)
+    body = '{"target": "file", "index": 3}'
+    for headers in (
+        {"Content-Type": "text/plain"},
+        {"Content-Type": "application/x-www-form-urlencoded"},
+        {},
+    ):
+        response = client.post(restore_url(), content=body, headers=headers)
+        assert response.status_code == 415, headers
+        assert filter_path.read_bytes() == before, headers
+    response = client.post(
+        restore_url(), content=body, headers={"Content-Type": "application/json; charset=utf-8"}
+    )
+    assert response.status_code == 200
+
+
+def test_restore_cors_preflight_allows_post_only_from_allowed_origins(tmp_path: Path) -> None:
+    write_filter_fixtures(tmp_path)
+    client = make_client(tmp_path)
+    preflight = {
+        "Origin": "http://localhost:5173",
+        "Access-Control-Request-Method": "POST",
+    }
+    response = client.options(restore_url(), headers=preflight)
+    assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
+    assert "POST" in response.headers["access-control-allow-methods"]
+    response = client.options(restore_url(), headers={**preflight, "Origin": "http://evil.example"})
+    assert "access-control-allow-origin" not in response.headers
+
+
+def test_restore_traversal_cannot_escape_roots(tmp_path: Path) -> None:
+    """`..` / absolute segments in series/chapter on the restore route must yield a clean 404."""
+    write_filter_fixtures(tmp_path)
+    client = make_client(tmp_path)
+    escapes = (
+        "/api/series/..%2F..%2Fsecret/chapters/x/filter/restore",
+        f"/api/series/..%2F..%2Fsecret/chapters/{quote(CHAPTER)}/filter/restore",
+        f"/api/series/{quote(SERIES)}/chapters/..%2F..%2Fsecret/filter/restore",
+        f"/api/series/{quote(SERIES)}/chapters/%2Fetc%2Fpasswd/filter/restore",
+        f"/api/series/%2Fetc%2Fpasswd/chapters/{quote(CHAPTER)}/filter/restore",
+    )
+    for url in escapes:
+        response = client.post(url, json={"target": "file", "index": 0})
+        assert response.status_code == 404, url

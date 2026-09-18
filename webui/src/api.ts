@@ -145,12 +145,50 @@ export interface GlossaryHits {
   regions: Record<string, GlossaryHit[]>;
 }
 
+export interface FilteredItem {
+  target: "file" | "slice";
+  index: number;
+  state: "filtered" | "restored";
+  score: number;
+  matched_example: string | null;
+  method: string;
+  name: string | null;
+  y0: number | null;
+  y1: number | null;
+}
+
+export interface FilteredChapter {
+  chapter: string;
+  items: FilteredItem[];
+}
+
 const BASE = "/api";
 
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(path);
   if (!res.ok) {
     throw new Error(`${res.status} ${res.statusText} — ${path}`);
+  }
+  return (await res.json()) as T;
+}
+
+async function postJson<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let detail = "";
+    try {
+      const data = (await res.json()) as { detail?: unknown };
+      if (typeof data.detail === "string") {
+        detail = ` — ${data.detail}`;
+      }
+    } catch {
+      // body was not JSON: nothing to add
+    }
+    throw new Error(`${res.status} ${res.statusText} — ${path}${detail}`);
   }
   return (await res.json()) as T;
 }
@@ -221,4 +259,20 @@ export async function listOutput(series: string, chapter: string): Promise<strin
 
 export function outputImageUrl(series: string, chapter: string, name: string): string {
   return `${BASE}/series/${encodeURIComponent(series)}/chapters/${encodeURIComponent(chapter)}/output/${encodeURIComponent(name)}`;
+}
+
+export async function listFiltered(series: string): Promise<FilteredChapter[]> {
+  return getJson<FilteredChapter[]>(`${BASE}/series/${encodeURIComponent(series)}/filtered`);
+}
+
+export async function restoreFiltered(
+  series: string,
+  chapter: string,
+  target: "file" | "slice",
+  index: number,
+): Promise<void> {
+  await postJson<unknown>(
+    `${BASE}/series/${encodeURIComponent(series)}/chapters/${encodeURIComponent(chapter)}/filter/restore`,
+    { target, index },
+  );
 }

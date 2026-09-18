@@ -304,7 +304,13 @@ Serves existing artifacts read-only: `/api/series`, `/api/series/{s}/chapters`,
 `/api/series/{s}/chapters/{c}/glossary-hits` (glossary hits per OCR region),
 `/api/series/{s}/chapters/{c}/pages/{index}` (raw page bytes),
 `/api/series/{s}/chapters/{c}/output` (finished output image names) and
-`/api/series/{s}/chapters/{c}/output/{name}` (finished output image bytes). GET-only; it never writes.
+`/api/series/{s}/chapters/{c}/output/{name}` (finished output image bytes).
+
+The one write endpoint is `/api/series/{s}/chapters/{c}/filter/restore` (POST): it appends a
+`restored` decision to the chapter's `filter.json`, exactly what `omniscan filter restore` does —
+metadata only, it never touches files under `_filtered/`. There is also
+`/api/series/{s}/filtered`, the read-only listing behind the Filtered view. Everything else is
+GET-only and never writes.
 
 ```bash
 uv run omniscan serve
@@ -371,6 +377,9 @@ npm run dev
 The Vite dev server proxies `/api` to `http://localhost:8000`, so the defaults of both commands work
 together. Open the local URL Vite prints and pick a series and chapter.
 
+Four chapter views (Slicer, OCR, Translation, Reader) need a chapter; the **Filtered** view only needs
+a series and shows its every chapter that has filtered items.
+
 The Slicer view stacks the raw pages and overlays:
 
 - the detected **bands** as translucent green rectangles,
@@ -403,7 +412,17 @@ the chapter's raw pages (kept files only) with linked scrolling for comparison. 
 reading column width, fitted to the viewport. The export stage does not exist yet, so the view shows
 `no output yet` until finished images are placed in the chapter's output folder by hand.
 
-The whole tool is read-only: the API only answers GET requests and never writes artifacts.
+The **Filtered view** (switch with the `Filtered` button, shown as soon as a series is picked) lists
+everything the promo filter ever marked `filtered`, per chapter: one row per filtered file or slice
+with its score, matched example and method, a thumbnail for file-level items (the raw page is still in
+the library), a `filtered` (red) or `restored` (green) badge, and a **Restore** button on items still
+filtered. Restore appends a `restored` decision to the chapter's `filter.json` — the same thing
+`omniscan filter restore` does; files already copied into `_filtered/` are never touched, and a
+restored item can be re-filtered only by re-running `omniscan filter run`. The row turns green without
+a refetch when the restore succeeds; a failure shows the API's error next to the button.
+
+The whole tool is read-only except the Filtered view's Restore button: the API only answers GET
+requests plus that one POST, which appends to `filter.json` and never writes anything else.
 
 ## Resuming and re-running
 

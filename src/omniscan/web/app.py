@@ -1,20 +1,40 @@
-"""FastAPI app serving existing pipeline artifacts and raw images (read-only, local)."""
+"""FastAPI app serving existing pipeline artifacts and raw images (read-only except filter restore)."""
 
 from __future__ import annotations
 
 import mimetypes
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
+from pydantic import Field, ValidationError
 
 from omniscan.core.config import Config
 from omniscan.core.paths import IMAGE_SUFFIXES, ChapterPaths, SeriesPaths, list_images, natural_key
-from omniscan.core.schemas import FinalArtifact, GlossaryEntry, IngestArtifact, RegionsArtifact
+from omniscan.core.schemas import (
+    FilterArtifact,
+    FilterDecision,
+    FinalArtifact,
+    GlossaryEntry,
+    IngestArtifact,
+    Model,
+    RegionsArtifact,
+    SlicesArtifact,
+)
+from omniscan.filter.decide import effective_decision, restore
 from omniscan.glossary.match import find_terms, term_present
 from omniscan.glossary.store import GlossaryStore
+
+
+class RestoreBody(Model):
+    """Body of the filter-restore POST request."""
+
+    target: Literal["file", "slice"]
+    index: int = Field(ge=0)
 
 
 def _under(root: Path, candidate: Path) -> bool:
@@ -28,7 +48,7 @@ def create_app(cfg: Config, *, cors_origins: Sequence[str] = ("http://localhost:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(cors_origins),
-        allow_methods=["GET"],
+        allow_methods=["GET", "POST"],
         allow_headers=["*"],
     )
 
@@ -86,6 +106,26 @@ def create_app(cfg: Config, *, cors_origins: Sequence[str] = ("http://localhost:
         for line in final.lines:
             lines.setdefault(line.region_id, line.text)
         return lines
+
+    def source_names(chapter: ChapterPaths) -> dict[int, str]:
+        """SourceFile index -> name from ingest.json; {} when missing or invalid (never a 500)."""
+        path = chapter.artifact("ingest.json")
+        if not path.is_file():
+            return {}
+        try:
+            return {file.index: file.name for file in IngestArtifact.load(path).files}
+        except Exception:
+            return {}
+
+    def slice_ranges(chapter: ChapterPaths) -> dict[int, tuple[int, int]]:
+        """Slice index -> (y0, y1) from slices.json; {} when missing or invalid (never a 500)."""
+        path = chapter.artifact("slices.json")
+        if not path.is_file():
+            return {}
+        try:
+            return {s.index: (s.y0, s.y1) for s in SlicesArtifact.load(path).slices}
+        except Exception:
+            return {}
 
     @app.get("/api/series")
     def list_series() -> list[str]:
@@ -221,5 +261,79 @@ def create_app(cfg: Config, *, cors_origins: Sequence[str] = ("http://localhost:
             raise HTTPException(status_code=404, detail="output image not found")
         media_type = mimetypes.guess_type(name)[0] or "application/octet-stream"
         return FileResponse(path, media_type=media_type)
+
+    @app.get("/api/series/{series}/filtered")
+    def list_filtered(series: str) -> list[dict[str, object]]:
+        """Per chapter, every (target, index) the filter ever marked filtered, with restore state."""
+        result: list[dict[str, object]] = []
+        spaths = series_paths(series)
+        for chapter in spaths.chapters():
+            paths = spaths.chapter(chapter)
+            filter_path = paths.artifact("filter.json")
+            if not filter_path.is_file():
+                continue
+            try:
+                artifact = FilterArtifact.load(filter_path)
+            except Exception:
+                continue  # invalid filter.json: skip the chapter, never a 500
+            # (target, index) -> the LAST "filtered" decision of that pair (score/example source).
+            last_filtered: dict[tuple[Literal["file", "slice"], int], FilterDecision] = {}
+            for decision in artifact.decisions:
+                if decision.decision == "filtered":
+                    last_filtered[(decision.target, decision.index)] = decision
+            if not last_filtered:
+                continue
+            names = source_names(paths)
+            ranges = slice_ranges(paths)
+            items: list[dict[str, object]] = []
+            for (target, index), decision in sorted(
+                last_filtered.items(), key=lambda kv: (0 if kv[0][0] == "file" else 1, kv[0][1])
+            ):
+                y0: int | None = None
+                y1: int | None = None
+                if target == "slice" and index in ranges:
+                    y0, y1 = ranges[index]
+                items.append(
+                    {
+                        "target": target,
+                        "index": index,
+                        "state": effective_decision(artifact, target, index),
+                        "score": decision.score,
+                        "matched_example": decision.matched_example,
+                        "method": decision.method,
+                        "name": names.get(index) if target == "file" else None,
+                        "y0": y0,
+                        "y1": y1,
+                    }
+                )
+            result.append({"chapter": chapter, "items": items})
+        return result
+
+    @app.post("/api/series/{series}/chapters/{chapter}/filter/restore")
+    async def restore_filtered(series: str, chapter: str, request: Request) -> dict[str, object]:
+        """Append a manual `restored` decision for the requested (target, index); metadata only."""
+        content_type = request.headers.get("content-type", "")
+        if not content_type.lower().startswith("application/json"):
+            # A cross-site page can send text/plain POSTs without a CORS preflight; close that hole.
+            # Checked before anything else — FastAPI would 422 the body first if it parsed it itself.
+            raise HTTPException(status_code=415, detail="Content-Type must be application/json")
+        paths = chapter_paths(series, chapter)
+        filter_path = paths.artifact("filter.json")
+        if not filter_path.is_file():
+            raise HTTPException(status_code=404, detail="filter.json not found")
+        try:
+            body = RestoreBody.model_validate_json(await request.body())
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=jsonable_encoder(exc.errors())) from exc
+        try:
+            artifact = FilterArtifact.load(filter_path)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=404, detail=f"filter.json is not a valid filter artifact: {exc}"
+            ) from exc
+        if effective_decision(artifact, body.target, body.index) != "filtered":
+            raise HTTPException(status_code=409, detail="item is not currently filtered")
+        decision = restore(paths, body.target, body.index)
+        return decision.model_dump(mode="json")
 
     return app

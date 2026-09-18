@@ -1,13 +1,14 @@
 <script lang="ts">
   import { onMount } from "svelte";
 
+  import FilteredView from "./FilteredView.svelte";
   import OcrView from "./OcrView.svelte";
   import ReaderView from "./ReaderView.svelte";
   import SlicerView from "./SlicerView.svelte";
   import TranslationView from "./TranslationView.svelte";
   import { listChapters, listSeries } from "./api";
 
-  let view = $state<"slicer" | "ocr" | "translation" | "reader">("slicer");
+  let view = $state<"slicer" | "ocr" | "translation" | "reader" | "filtered">("slicer");
   let series = $state("");
   let chapter = $state("");
   let seriesList = $state<string[]>([]);
@@ -54,21 +55,30 @@
   {#if loadError}
     <p>{loadError}</p>
   {/if}
-  {#if series && chapter}
+  {#if series}
     <p>
-      <button onclick={() => (view = "slicer")} disabled={view === "slicer"}>Slicer</button>
-      <button onclick={() => (view = "ocr")} disabled={view === "ocr"}>OCR</button>
-      <button onclick={() => (view = "translation")} disabled={view === "translation"}>Translation</button>
-      <button onclick={() => (view = "reader")} disabled={view === "reader"}>Reader</button>
+      {#if chapter}
+        <button onclick={() => (view = "slicer")} disabled={view === "slicer"}>Slicer</button>
+        <button onclick={() => (view = "ocr")} disabled={view === "ocr"}>OCR</button>
+        <button onclick={() => (view = "translation")} disabled={view === "translation"}>Translation</button>
+        <button onclick={() => (view = "reader")} disabled={view === "reader"}>Reader</button>
+      {/if}
+      <button onclick={() => (view = "filtered")} disabled={view === "filtered"}>Filtered</button>
     </p>
-    {#if view === "slicer"}
-      <SlicerView {series} {chapter} />
-    {:else if view === "ocr"}
-      <OcrView {series} {chapter} />
-    {:else if view === "reader"}
-      <ReaderView {series} {chapter} />
+    {#if view === "filtered"}
+      <FilteredView {series} />
+    {:else if chapter}
+      {#if view === "slicer"}
+        <SlicerView {series} {chapter} />
+      {:else if view === "ocr"}
+        <OcrView {series} {chapter} />
+      {:else if view === "reader"}
+        <ReaderView {series} {chapter} />
+      {:else}
+        <TranslationView {series} {chapter} />
+      {/if}
     {:else}
-      <TranslationView {series} {chapter} />
+      <p>pick a series and chapter (no ingest.json yet for a chapter? run ingest first)</p>
     {/if}
   {:else}
     <p>pick a series and chapter (no ingest.json yet for a chapter? run ingest first)</p>
