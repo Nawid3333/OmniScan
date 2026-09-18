@@ -1,9 +1,11 @@
 <script lang="ts">
   import { onMount } from "svelte";
 
+  import OcrView from "./OcrView.svelte";
   import SlicerView from "./SlicerView.svelte";
   import { listChapters, listSeries } from "./api";
 
+  let view = $state<"slicer" | "ocr">("slicer");
   let series = $state("");
   let chapter = $state("");
   let seriesList = $state<string[]>([]);
@@ -51,7 +53,15 @@
     <p>{loadError}</p>
   {/if}
   {#if series && chapter}
-    <SlicerView {series} {chapter} />
+    <p>
+      <button onclick={() => (view = "slicer")} disabled={view === "slicer"}>Slicer</button>
+      <button onclick={() => (view = "ocr")} disabled={view === "ocr"}>OCR</button>
+    </p>
+    {#if view === "slicer"}
+      <SlicerView {series} {chapter} />
+    {:else}
+      <OcrView {series} {chapter} />
+    {/if}
   {:else}
     <p>pick a series and chapter (no ingest.json yet for a chapter? run ingest first)</p>
   {/if}

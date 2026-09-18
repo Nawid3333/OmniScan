@@ -1,6 +1,6 @@
 /** Coordinate mapping between strip space (ingest.json/slices.json) and the stacked raw-image view. */
 
-import type { SourceFile } from "./api";
+import type { BBox, SourceFile } from "./api";
 
 /**
  * Convert a strip-space y-coordinate (as used in ingest.json/slices.json) into a y-offset in the DOM
@@ -32,4 +32,46 @@ export function stackTotalHeight(files: SourceFile[]): number {
 /** The natural (unscaled) width to use for the stack container: the maximum `width` across `files`. */
 export function stackWidth(files: SourceFile[]): number {
   return files.reduce((max, file) => Math.max(max, file.width), 0);
+}
+
+export interface StackBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * The file that owns strip row `yStrip`: the LAST file whose y0 <= yStrip; the FIRST file if yStrip
+ * is above every file's y0. Precondition: files is non-empty.
+ */
+export function fileAtStripY(files: SourceFile[], yStrip: number): SourceFile {
+  let owner = files[0];
+  for (const file of files) {
+    if (file.y0 > yStrip) break;
+    owner = file;
+  }
+  return owner;
+}
+
+/**
+ * Map a strip-space box into the stacked raw-image view.
+ *   y      = stripYToStackY(files, box.y0)
+ *   height = max(0, stripYToStackY(files, box.y1) - y)
+ *   file   = fileAtStripY(files, box.y0)
+ *   s      = file.scale > 0 ? file.scale : 1
+ *   x      = box.x0 / s            (strip x -> that page's natural x)
+ *   width  = (box.x1 - box.x0) / s
+ * (The x scale of the page that contains the box's TOP edge is used for the whole box.)
+ */
+export function stripBoxToStackBox(files: SourceFile[], box: BBox): StackBox {
+  const y = stripYToStackY(files, box.y0);
+  const file = fileAtStripY(files, box.y0);
+  const s = file.scale > 0 ? file.scale : 1;
+  return {
+    x: box.x0 / s,
+    y,
+    width: (box.x1 - box.x0) / s,
+    height: Math.max(0, stripYToStackY(files, box.y1) - y),
+  };
 }

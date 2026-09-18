@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest";
 
-import type { SourceFile } from "./api";
-import { stackTotalHeight, stackWidth, stripYToStackY } from "./strip";
+import type { BBox, SourceFile } from "./api";
+import {
+  fileAtStripY,
+  stackTotalHeight,
+  stackWidth,
+  stripBoxToStackBox,
+  stripYToStackY,
+} from "./strip";
+
+function box(x0: number, y0: number, x1: number, y1: number): BBox {
+  return { x0, y0, x1, y1 };
+}
 
 function file(overrides: Partial<SourceFile> & { index: number }): SourceFile {
   return {
@@ -77,5 +87,54 @@ describe("degenerate file (y1 === y0)", () => {
     expect(() => stripYToStackY(files, 1000)).not.toThrow();
     expect(stripYToStackY(files, 1000)).toBe(1000);
     expect(stripYToStackY(files, 5000)).toBe(1000);
+  });
+});
+
+describe("fileAtStripY", () => {
+  it("returns the last file whose y0 <= y", () => {
+    expect(fileAtStripY(plain, 500)).toBe(plain[0]);
+    expect(fileAtStripY(plain, 1000)).toBe(plain[1]);
+    expect(fileAtStripY(plain, 3400)).toBe(plain[2]);
+    expect(fileAtStripY(plain, 99999)).toBe(plain[2]);
+  });
+
+  it("returns the first file when y is above every file's y0", () => {
+    expect(fileAtStripY(plain, -5)).toBe(plain[0]);
+  });
+});
+
+describe("stripBoxToStackBox", () => {
+  it("is the identity for a single scale=1 file", () => {
+    const files = [file({ index: 0, width: 800, height: 1000, y0: 0, y1: 1000 })];
+    expect(stripBoxToStackBox(files, box(100, 50, 300, 150))).toEqual({
+      x: 100,
+      y: 50,
+      width: 200,
+      height: 100,
+    });
+  });
+
+  it("divides x by the scale of the file owning the box's top edge", () => {
+    // Natural 800x2000 scaled by 0.5 -> strip rows 0..1000, strip width 400.
+    const files = [file({ index: 0, width: 800, height: 2000, y0: 0, y1: 1000, scale: 0.5 })];
+    expect(stripBoxToStackBox(files, box(100, 100, 300, 200))).toEqual({
+      x: 200,
+      y: 200,
+      width: 400,
+      height: 200,
+    });
+  });
+
+  it("maps a box on the second file below the first file's stack height", () => {
+    const files = [
+      file({ index: 0, width: 800, height: 1000, y0: 0, y1: 1000 }),
+      file({ index: 1, width: 800, height: 1000, y0: 1000, y1: 2000 }),
+    ];
+    expect(stripBoxToStackBox(files, box(0, 1200, 100, 1300))).toEqual({
+      x: 0,
+      y: 1200,
+      width: 100,
+      height: 100,
+    });
   });
 });

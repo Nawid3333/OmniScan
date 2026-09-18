@@ -79,6 +79,11 @@ def create_app(cfg: Config, *, cors_origins: Sequence[str] = ("http://localhost:
         """The chapter's slices.json, byte-for-byte as written by the slicer."""
         return artifact_bytes(chapter_paths(series, chapter), "slices.json")
 
+    @app.get("/api/series/{series}/chapters/{chapter}/ocr")
+    def get_ocr(series: str, chapter: str) -> Response:
+        """The chapter's ocr.json, byte-for-byte as written by the OCR stage."""
+        return artifact_bytes(chapter_paths(series, chapter), "ocr.json")
+
     @app.get("/api/series/{series}/chapters/{chapter}/pages/{index}")
     def get_page(series: str, chapter: str, index: int) -> FileResponse:
         """Raw image bytes of the SourceFile at `index` in the chapter's ingest.json."""

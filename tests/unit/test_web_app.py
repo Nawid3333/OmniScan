@@ -10,7 +10,17 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from omniscan.core.config import Config, PathsConfig
-from omniscan.core.schemas import Band, IngestArtifact, Slice, SlicesArtifact, SourceFile
+from omniscan.core.schemas import (
+    Band,
+    BBox,
+    IngestArtifact,
+    OcrLine,
+    Region,
+    RegionsArtifact,
+    Slice,
+    SlicesArtifact,
+    SourceFile,
+)
 from omniscan.web.app import create_app
 
 SERIES = "Solo Leveling"
@@ -159,6 +169,77 @@ def test_traversal_cannot_escape_roots(tmp_path: Path) -> None:
         f"/api/series/%2Fetc%2Fpasswd/chapters/{quote(CHAPTER)}/ingest",
         f"/api/series/{quote(SERIES)}/chapters/%2Fetc%2Fpasswd/slices",
         "/api/series/../../secret/chapters",
+    )
+    for url in escapes:
+        response = client.get(url)
+        assert response.status_code == 404, url
+        assert b"outside the roots" not in response.content, url
+
+
+def _ocr_artifact() -> RegionsArtifact:
+    return RegionsArtifact(
+        regions=[
+            Region(
+                id="r0001",
+                slice_index=0,
+                kind="bubble_text",
+                bbox=BBox(x0=10, y0=20, x1=90, y1=60),
+                reading_order=1,
+                lang="ko",
+                lines=[
+                    OcrLine(
+                        bbox=BBox(x0=10, y0=20, x1=90, y1=40),
+                        text="첫 줄",
+                        score=0.97,
+                        engine="korean_PP-OCRv5_mobile_rec",
+                    )
+                ],
+                text="첫 줄\n둘째 줄",
+                confidence=0.93,
+                ocr_alt="첫 줄\n둘째 즁",
+            ),
+            Region(
+                id="r0002",
+                slice_index=0,
+                kind="sfx",
+                bbox=BBox(x0=5, y0=100, x1=50, y1=140),
+                reading_order=2,
+                text="우웅",
+                confidence=0.41,
+            ),
+        ]
+    )
+
+
+def test_ocr_serves_exact_file_bytes(tmp_path: Path) -> None:
+    write_chapter(tmp_path)
+    _ocr_artifact().save(tmp_path / "work" / SERIES / CHAPTER / "ocr.json")
+    client = make_client(tmp_path)
+    response = client.get(f"/api/series/{quote(SERIES)}/chapters/{quote(CHAPTER)}/ocr")
+    assert response.status_code == 200
+    on_disk = (tmp_path / "work" / SERIES / CHAPTER / "ocr.json").read_bytes()
+    assert response.content == on_disk
+
+
+def test_ocr_missing_returns_404(tmp_path: Path) -> None:
+    write_chapter(tmp_path)
+    client = make_client(tmp_path)
+    response = client.get(f"/api/series/{quote(SERIES)}/chapters/{quote(CHAPTER)}/ocr")
+    assert response.status_code == 404
+    assert response.json() == {"detail": "ocr.json not found"}
+
+
+def test_ocr_traversal_cannot_escape_roots(tmp_path: Path) -> None:
+    """`..` / absolute segments on the ocr route must yield a clean 404, never outside files."""
+    write_chapter(tmp_path)
+    secret = tmp_path / "secret.json"
+    secret.write_bytes(b"outside the roots")
+    client = make_client(tmp_path)
+    escapes = (
+        f"/api/series/..%2F..%2Fsecret/chapters/{quote(CHAPTER)}/ocr",
+        f"/api/series/{quote(SERIES)}/chapters/..%2F..%2F..%2Fsecret.json/ocr",
+        f"/api/series/%2Fetc%2Fpasswd/chapters/{quote(CHAPTER)}/ocr",
+        f"/api/series/{quote(SERIES)}/chapters/%2Fetc%2Fpasswd/ocr",
     )
     for url in escapes:
         response = client.get(url)
