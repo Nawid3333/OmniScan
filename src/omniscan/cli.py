@@ -1,5 +1,6 @@
 """OmniScan command line."""
 
+import enum
 import json
 from pathlib import Path
 from typing import Annotated, Literal
@@ -10,7 +11,7 @@ from rich.console import Console
 from rich.table import Table
 
 from omniscan.core.config import Config, get_config, get_secrets
-from omniscan.core.paths import ChapterPaths, SeriesPaths
+from omniscan.core.paths import ChapterPaths, SeriesPaths, chapter_number, list_chapters, list_images
 from omniscan.core.schemas import FilterArtifact, IngestArtifact, SlicesArtifact
 from omniscan.doctor import run_all_checks
 from omniscan.filter.decide import decide_files, decide_slices, load_examples, restore
@@ -19,6 +20,7 @@ from omniscan.glossary.yaml_io import export_yaml, import_yaml
 from omniscan.importer.execute import execute_import
 from omniscan.importer.plan import ImportPlanError, plan_import
 from omniscan.log import setup_logging
+from omniscan.packaging import pack_cbz, pack_pdf, safe_filename
 from omniscan.watermark.store import WatermarkStore
 
 app = typer.Typer(help="OmniScan — manhwa/manga translator", no_args_is_help=True)
@@ -122,6 +124,59 @@ def cmd_import(
 
 
 app.command("import")(cmd_import)
+
+
+class PackFormat(enum.StrEnum):
+    """Output format of `omniscan pack` (typer cannot build a click option from list[Literal])."""
+
+    CBZ = "cbz"
+    PDF = "pdf"
+
+
+def cmd_pack(
+    series: Annotated[str, typer.Argument()],
+    chapter: Annotated[
+        list[str] | None,
+        typer.Option("--chapter", "-c", help="Chapter folder name; repeatable. Default: all."),
+    ] = None,
+    fmt: Annotated[
+        list[PackFormat] | None,
+        typer.Option("--format", "-f", help="cbz or pdf; repeatable. Default: cbz."),
+    ] = None,
+    out: Annotated[
+        Path | None, typer.Option("--out", help="Output folder. Default: <output_root>/<series>/_packaged")
+    ] = None,
+) -> None:
+    """Package finished chapters (output_root/<series>/<chapter>/*.jpg) into CBZ and/or PDF files."""
+    cfg = get_config()
+    sp = SeriesPaths.from_config(cfg, series)
+    chapters = chapter or [p.name for p in list_chapters(sp.output_dir)]
+    formats = list(dict.fromkeys(fmt or [PackFormat.CBZ]))
+    dest_dir = out or sp.output_dir / "_packaged"
+    written = 0
+    for chap in chapters:
+        images = list_images(sp.chapter(chap).output_dir)
+        if not images:
+            typer.echo(f"pack: no images in {series}/{chap}, skipped", err=True)
+            continue
+        n = chapter_number(chap)
+        stem = safe_filename(f"{series} - {chap}")
+        for extension in formats:
+            dest = dest_dir / f"{stem}.{extension.value}"
+            if extension is PackFormat.CBZ:
+                pack_cbz(
+                    images, dest, title=chap, series=series, number=(f"{n:g}" if n is not None else None)
+                )
+            else:
+                pack_pdf(images, dest)
+            typer.echo(f"pack: {dest}")
+            written += 1
+    if not written:
+        typer.echo(f"pack: nothing to pack for series {series!r}", err=True)
+        raise typer.Exit(2)
+
+
+app.command("pack")(cmd_pack)
 
 
 def _stub(name: str, series: str | None) -> None:
