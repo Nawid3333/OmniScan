@@ -93,8 +93,11 @@ def _bench_one(datas: list[bytes], warmup: int, repeats: int, codec) -> dict[str
         codec.decode_into(datas, out, offsets)
         if is_cuda:
             torch.cuda.synchronize()
-    wall = (time.perf_counter() - t0) / repeats
-    cpu_pct = ((_cpu_time_used() - cpu_before) / wall * 100.0) if wall > 0 else 0.0
+    total_wall = time.perf_counter() - t0
+    wall = total_wall / repeats
+    # CPU seconds accumulated over ALL repeats must be divided by the wall time of ALL repeats (dividing by the
+    # per-repeat wall inflated this by a factor of `repeats`, e.g. ~3300% on a 12-thread machine).
+    cpu_pct = ((_cpu_time_used() - cpu_before) / total_wall * 100.0) if total_wall > 0 else 0.0
     peak_mib = ((torch.cuda.max_memory_allocated() - base_mem) / (1024 * 1024)) if is_cuda else 0.0
     return {"wall": wall, "mps": total_px / wall / 1e6, "peak_mib": peak_mib, "cpu_pct": cpu_pct}
 
