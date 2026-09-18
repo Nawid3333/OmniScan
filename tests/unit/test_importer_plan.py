@@ -124,14 +124,33 @@ def test_empty_source(tmp_path: Path) -> None:
         plan_import(src, series="Solo Leveling")
 
 
-def test_case_c_wins_over_case_a_when_folder_has_no_chapter(tmp_path: Path) -> None:
-    # Every filename parses a number while the folder name doesn't: flat dump, not "ask for --chapter".
+def test_bare_page_numbers_do_not_trigger_case_c(tmp_path: Path) -> None:
+    # Bare page numbers with no chapter keyword ("1.jpg", "3.jpg") are page numbers of ONE chapter, not
+    # markers of three different one-page chapters — Case C requires an explicit "ch"/"chapter"/"ep" marker.
+    # With no --chapter and an unparseable folder name, this must ask for --chapter (Case A), not silently
+    # split into per-file chapters.
     src = tmp_path / "raws"
     _write_files(src, ["3.jpg", "1.jpg"])
 
-    plan = plan_import(src, series="Solo Leveling")
+    with pytest.raises(ImportPlanError, match="--chapter"):
+        plan_import(src, series="Solo Leveling")
 
-    assert [(item.chapter, len(item.files)) for item in plan.items] == [
-        ("Chapter 1", 1),
-        ("Chapter 3", 1),
-    ]
+
+def test_bare_page_numbers_become_one_chapter_with_explicit_chapter(tmp_path: Path) -> None:
+    src = tmp_path / "raws"
+    _write_files(src, ["3.jpg", "1.jpg"])
+
+    plan = plan_import(src, series="Solo Leveling", chapter="Chapter 7")
+
+    assert len(plan.items) == 1
+    assert plan.items[0].chapter == "Chapter 7"
+    assert [p.name for p in plan.items[0].files] == ["1.jpg", "3.jpg"]
+
+
+def test_case_c_requires_explicit_chapter_keyword(tmp_path: Path) -> None:
+    # Mixed: one file has an explicit "ch" marker, the other is a bare number — still ambiguous, not Case C.
+    src = tmp_path / "dump"
+    _write_files(src, ["Ch1_01.jpg", "02.jpg"])
+
+    with pytest.raises(ImportPlanError, match=r"02\.jpg"):
+        plan_import(src, series="Solo Leveling")

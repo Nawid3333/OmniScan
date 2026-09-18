@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -12,6 +13,19 @@ from omniscan.core.paths import (
     list_images,
     natural_key,
 )
+
+# Same keyword set as core.paths._CHAPTER_RE, but the keyword is REQUIRED (not optional). core.paths'
+# chapter_number() is deliberately loose for folder names, where a bare "12" IS the chapter — but applying
+# that same looseness per-file here would misread an ordinary single chapter of sequentially numbered pages
+# ("1.jpg", "2.jpg", "3.jpg" — the most common raw-page naming convention) as three separate one-page
+# chapters. Per-file grouping (Case C) only fires on an explicit marker ("Ch1", "Chapter_02", "ep3", ...);
+# bare page numbers fall through to Case A instead (single chapter, needs --chapter or a parseable folder name).
+_EXPLICIT_CHAPTER_RE = re.compile(r"(?:chapter|chap|ch|episode|ep)[\s._-]*(\d+(?:\.\d+)?)", re.IGNORECASE)
+
+
+def _explicit_chapter_number(name: str) -> float | None:
+    match = _EXPLICIT_CHAPTER_RE.search(name)
+    return float(match.group(1)) if match else None
 
 
 class ImportPlanError(RuntimeError):
@@ -142,8 +156,8 @@ def _plan_flat_dump(
     series: str | None,
     warnings: list[str],
 ) -> ImportPlan:
-    """Case C: filenames carry per-file chapter numbers; group by number, chapters ascending."""
-    numbers = {image.name: chapter_number(image.name) for image in images}
+    """Case C: filenames carry an explicit per-file chapter marker; group by number, chapters ascending."""
+    numbers = {image.name: _explicit_chapter_number(image.name) for image in images}
     unparsed = [name for name, number in numbers.items() if number is None]
     if len(unparsed) == len(numbers):
         raise ImportPlanError(f"can't tell which chapter the images in {source} belong to — pass --chapter")
@@ -153,7 +167,7 @@ def _plan_flat_dump(
         raise ImportPlanError(f"series is required to import {source} — pass --series")
     groups: dict[float, list[Path]] = {}
     for image in images:  # already in natural order, so each group keeps that order
-        number = chapter_number(image.name)
+        number = _explicit_chapter_number(image.name)
         if number is not None:
             groups.setdefault(number, []).append(image)
     return ImportPlan(
