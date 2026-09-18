@@ -1,6 +1,7 @@
 """OmniScan command line."""
 
 import json
+from pathlib import Path
 from typing import Annotated, Literal
 
 import typer
@@ -15,6 +16,8 @@ from omniscan.doctor import run_all_checks
 from omniscan.filter.decide import decide_files, decide_slices, load_examples, restore
 from omniscan.glossary.store import GlossaryStore
 from omniscan.glossary.yaml_io import export_yaml, import_yaml
+from omniscan.importer.execute import execute_import
+from omniscan.importer.plan import ImportPlanError, plan_import
 from omniscan.log import setup_logging
 
 app = typer.Typer(help="OmniScan — manhwa/manga translator", no_args_is_help=True)
@@ -81,6 +84,44 @@ def doctor(
         console.print(f"{counts['OK']} ok, {counts['WARN']} warn, {counts['FAIL']} fail")
     if any(r.status == "FAIL" for r in results):
         raise typer.Exit(1)
+
+
+def cmd_import(
+    source: Annotated[Path, typer.Argument(exists=True, file_okay=False)],
+    series: Annotated[str | None, typer.Option("--series")] = None,
+    chapter: Annotated[str | None, typer.Option("--chapter")] = None,
+    move: Annotated[
+        bool, typer.Option("--move", help="Move instead of copy; delete source after import.")
+    ] = False,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Print the plan without writing anything.")
+    ] = False,
+) -> None:
+    """Import raw chapter images from a local folder into the library."""
+    try:
+        plan = plan_import(source, series=series, chapter=chapter)
+        if dry_run:
+            typer.echo(f"import: plan for series '{plan.series}' — {len(plan.items)} chapter(s)")
+            for item in plan.items:
+                typer.echo(f"import:   {item.chapter}: {len(item.files)} file(s)")
+            for warning in plan.warnings:
+                typer.echo(f"import:   {warning}", err=True)
+            return
+        result = execute_import(plan, get_config().paths.library_root, move=move)
+    except ImportPlanError as exc:
+        typer.echo(f"import: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    for chapter_written in result.chapters_written:
+        typer.echo(f"import: {plan.series}/{chapter_written}")
+    for warning in plan.warnings:
+        typer.echo(f"import: {warning}", err=True)
+    typer.echo(
+        f"import: {result.files_copied} file(s) copied, "
+        f"{result.files_skipped_duplicate} duplicate file(s) skipped"
+    )
+
+
+app.command("import")(cmd_import)
 
 
 def _stub(name: str, series: str | None) -> None:
