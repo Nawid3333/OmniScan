@@ -311,6 +311,24 @@ SFX classification + reading (PaddleOCR-VL / Gemma 4 vision), onomatopoeia gloss
 - **B16:** LAN mode (auth, edit log, page locks).
 - **B17:** Docker for ROCm on WSL (`/dev/dxg` + `/usr/lib/wsl`); user docs; Ollama-only API keys.
 
+### M13 — Unified desktop app (deferred, post first-end-to-end) [C + B]
+One packaged application (Windows `.exe`, macOS `.app`, Linux binary) instead of CLI + separate browser tool.
+- **Shell:** PyQt6 or PySide6 (Qt has the most mature cross-platform native packaging story); no C++/Java needed
+  beyond the GPU codec extension already planned for C2, which is compiled regardless of platform.
+- **Debug/review area:** not rebuilt from scratch — the browser views from B5/B7/B10/B11 (slicer cuts, OCR
+  boxes, translation candidates, inpaint before/after) are embedded via `QWebEngineView`, so that work carries
+  over as the desktop app's dedicated debugging panel instead of a separate Firefox tab. Each pipeline stage
+  (slice / OCR / translate / inpaint) gets its own reviewable pane in one window, enterprise-tool style, not
+  just a log stream.
+- **Any GPU / any OS:** device selection routed through one small abstraction over `torch.device` —
+  auto-detect CUDA (NVIDIA), ROCm (AMD, this machine), MPS (Apple Silicon), else CPU — so this is additive to
+  `gpu/vram.py`, not a rewrite of it. The CPU `turbo` codec (B2) already doubles as the universal fallback path
+  when no GPU backend is available.
+- **Packaging:** PyInstaller or Nuitka; ship a CPU-only build by default, GPU acceleration used automatically
+  when the detected hardware supports it (no separate installer per vendor to start).
+- Scheduled **after** the pipeline works end-to-end on this machine (post-M9/M10) — going cross-platform/any-GPU
+  before that would multiply the testing surface before we know the pipeline itself is right.
+
 **Critical path:** M0 → C1 + B1 (pilot) → C2/B2 benchmark gate → B3/B4 → C3/C4 → B8/B9 + C5 → C6 → C7 + B12 (first end-to-end).
 **In parallel (builder slot 2):** B18/B19 acquisition, the views (against fixture JSON), then B20.
 **After first end-to-end:** C12 reference mode (it needs working OCR + translation).
