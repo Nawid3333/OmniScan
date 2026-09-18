@@ -57,6 +57,10 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "PTH", "N"]
+ignore = [
+    "E501",                          # line length is the formatter's job; long docstrings are fine
+    "RUF001", "RUF002", "RUF003",    # CJK full-width punctuation is legitimate data in this project
+]
 
 [tool.pyright]
 pythonVersion = "3.14"

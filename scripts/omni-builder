@@ -4,7 +4,8 @@
 # Usage:
 #   omni-builder run <CARD_ID> [--model MODEL] [--max-turns N]   # new run in its own worktree
 #   omni-builder resume <CARD_ID> <FEEDBACK_FILE> [--model MODEL] # continue last session with review feedback
-#   omni-builder smoke                                            # 1-turn connectivity test
+#   omni-builder smoke [--model M]                                # 1-turn connectivity test
+#   Model aliases: flash (default) | glm | deepseek | kimi — or any full Ollama model name.
 #
 # Env overrides: OMNI_REPO (default ~/projects/omniscan), OMNI_WT (default ~/projects/omniscan-wt),
 #                OMNI_SLOTS (parallel builders, default 2), OLLAMA_URL (default http://localhost:11434)
@@ -12,7 +13,7 @@ set -euo pipefail
 
 REPO="${OMNI_REPO:-$HOME/projects/omniscan}"
 WT_ROOT="${OMNI_WT:-$HOME/projects/omniscan-wt}"
-SLOTS="${OMNI_SLOTS:-2}"
+SLOTS="${OMNI_SLOTS:-3}"  # Ollama Pro = 3 concurrent cloud requests (shared by all models)
 OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
 LOG_DIR="$REPO/.builder/logs"
 LOCK_DIR="${XDG_RUNTIME_DIR:-/tmp}/omni-builder"
@@ -53,10 +54,20 @@ check_ollama() {
     || die "Ollama not reachable at $OLLAMA_URL (is WSL mirrored networking on and Ollama running on Windows?)"
 }
 
+resolve_model() {  # short aliases for the builder roster
+  case "$1" in
+    flash) echo "glm-5.3-flash:cloud" ;;          # default: token-efficient
+    glm) echo "glm-5.3:cloud" ;;                  # escalation / harder Python
+    deepseek) echo "deepseek-v4-pro:cloud" ;;     # algorithmic / numeric GPU code
+    kimi) echo "kimi-k2.7-code:cloud" ;;          # TypeScript / web UI / relay (has vision)
+    *) echo "$1" ;;
+  esac
+}
+
 parse_opts() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --model) MODEL="$2"; shift 2 ;;
+      --model) MODEL="$(resolve_model "$2")"; shift 2 ;;
       --max-turns) MAX_TURNS="$2"; shift 2 ;;
       *) die "unknown option: $1" ;;
     esac
