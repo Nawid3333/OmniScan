@@ -2,8 +2,9 @@
 
 import enum
 import json
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 import typer
 from PIL import Image
@@ -29,8 +30,6 @@ STATUS_STYLES = {"OK": "green", "WARN": "yellow", "FAIL": "red"}
 
 _STUB_COMMANDS = (
     "acquire",
-    "ingest",
-    "slice",
     "detect",
     "ocr",
     "translate",
@@ -189,14 +188,59 @@ def cmd_acquire(series: Annotated[str | None, typer.Argument()] = None) -> None:
     _stub("acquire", series)
 
 
-def cmd_ingest(series: Annotated[str | None, typer.Argument()] = None) -> None:
-    """Not implemented yet."""
-    _stub("ingest", series)
+def _run_stages(
+    name: str, stages: Sequence[Any], series: str, chapters: list[str] | None, force: bool
+) -> None:
+    """Run a pipeline over a series' chapters, printing one line per stage outcome (exit 1 if any failed)."""
+    from omniscan.core.stage import run_series
+
+    cfg = get_config()
+    if chapters is None and not SeriesPaths.from_config(cfg, series).chapters():
+        typer.echo(f"{name}: no chapters found for series {series!r}", err=True)
+        raise typer.Exit(2)
+    results = run_series(stages, cfg, series, chapters, force=force)
+    failed = False
+    for chapter, outcomes in results.items():
+        for outcome in outcomes:
+            typer.echo(f"{series}/{chapter} {outcome.stage}: {outcome.status} ({outcome.seconds:.2f}s)")
+            if outcome.status == "failed":
+                failed = True
+                typer.echo(f"    {outcome.error}")
+    if failed:
+        raise typer.Exit(1)
 
 
-def cmd_slice(series: Annotated[str | None, typer.Argument()] = None) -> None:
-    """Not implemented yet."""
-    _stub("slice", series)
+def cmd_ingest(
+    series: Annotated[str, typer.Argument()],
+    chapter: Annotated[
+        list[str] | None,
+        typer.Option("--chapter", "-c", help="Chapter folder name; repeatable. Default: all."),
+    ] = None,
+    force: Annotated[bool, typer.Option("--force", help="Re-run even if up to date.")] = False,
+) -> None:
+    """Normalise raw chapter images to JPEG and record the strip layout (ingest.json)."""
+    from omniscan.ingest.stage import IngestStage
+
+    _run_stages("ingest", [IngestStage()], series, chapter, force)
+
+
+def cmd_slice(
+    series: Annotated[str, typer.Argument()],
+    chapter: Annotated[
+        list[str] | None,
+        typer.Option("--chapter", "-c", help="Chapter folder name; repeatable. Default: all."),
+    ] = None,
+    force: Annotated[bool, typer.Option("--force", help="Re-run even if up to date.")] = False,
+) -> None:
+    """Cut chapter strips into slices (slices.json). Runs ingest first if needed."""
+    from omniscan.ingest.stage import IngestStage
+    from omniscan.slicer.stage import SliceStage
+
+    _run_stages("slice", [IngestStage(), SliceStage()], series, chapter, force)
+
+
+app.command("ingest")(cmd_ingest)
+app.command("slice")(cmd_slice)
 
 
 def cmd_detect(series: Annotated[str | None, typer.Argument()] = None) -> None:
