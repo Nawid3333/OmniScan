@@ -17,6 +17,7 @@
   let names = $state<string[]>([]);
   let rawFiles = $state<SourceFile[]>([]);
   let rawFailed = $state(false);
+  let rawLoaded = $state(false);
   let loaded = $state(false);
   let mode = $state<ReaderMode>("final");
   let width = $state(DEFAULT_COLUMN_WIDTH);
@@ -34,13 +35,14 @@
     names = [];
     rawFiles = [];
     rawFailed = false;
+    rawLoaded = false;
     loaded = false;
     mode = "final";
     void load(s, c);
   });
 
   $effect(() => {
-    if (mode === "compare" && !rawFailed && rawFiles.length === 0) {
+    if (mode === "compare" && !rawFailed && !rawLoaded) {
       void loadRaw(series, chapter);
     }
   });
@@ -58,6 +60,7 @@
     try {
       const ingest = await getIngest(s, c);
       rawFiles = ingest.files.filter((file) => file.filtered !== true);
+      rawLoaded = true;
     } catch {
       rawFailed = true;
       mode = "final";
