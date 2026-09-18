@@ -1,0 +1,5 @@
+- [OmniScan project](omniscan-project.md) — manhwa/manga translator at V:\OmniScan (Windows native), GLM builder split; RESUME via repo docs/CHECKPOINT.md
+- [OmniScan environment](omniscan-env.md) — verified GPU/OS/Ollama facts: Windows-native ROCm works, iGPU is cuda:0 (crashes), WSL retired
+- [User: GPU-first, evidence-based](user-gpu-first.md) — reject CPU fallbacks without benchmark evidence, sudo runs by user, builder policy
+- [Save open questions, ask later](feedback-open-questions.md) — keep unanswered questions in repo docs/OPEN_QUESTIONS.md, ask 2–3 at pauses
+- [Windows shell tips](windows-shell-tips.md) — launch-and-track builders, PowerShell cwd reset/quoting, symlink/npm/CLI quirks

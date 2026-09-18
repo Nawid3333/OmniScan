@@ -1,5 +1,6 @@
 # Checkpoint — 2026-09-19 (moved to Windows native, `V:\OmniScan`)
 
+**New session? Read `docs/HANDOFF.md` first** (reading order, working agreement with the owner, lessons), then this file.
 Where the project stands and exactly how to continue. `docs/PLAN.md` is the master plan; this file is the
 current-state snapshot. Repo: **`V:\OmniScan`** (Windows 11 native, no WSL), remote `Nawid3333/OmniScan` on GitHub.
 Local data (sample library, work artifacts, outputs) lives in `V:\OmniScan\data\` (gitignored); machine config in

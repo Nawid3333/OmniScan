@@ -83,5 +83,8 @@ See the full key reference and per-command details in the user guide:
   web viewer, troubleshooting
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — architecture and contracts
 - [docs/PLAN.md](docs/PLAN.md) — the full build plan
+- [docs/HANDOFF.md](docs/HANDOFF.md) — start here for a new AI session or contributor (reading order, working agreement, lessons)
 - [docs/CHECKPOINT.md](docs/CHECKPOINT.md) — current state, evidence gathered, and how to resume
+- [docs/DECISIONS.md](docs/DECISIONS.md) — why the important choices were made, with the evidence
+- [docs/OPEN_QUESTIONS.md](docs/OPEN_QUESTIONS.md) — decisions still waiting on the owner
 - [CLAUDE.md](CLAUDE.md) — contributor/agent rules

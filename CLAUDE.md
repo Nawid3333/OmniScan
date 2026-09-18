@@ -1,7 +1,9 @@
 # OmniScan — rules for every agent working in this repo
 
 OmniScan turns raw Korean/Chinese/Japanese manhwa/manga chapters into English releases, GPU end-to-end (developed on Windows 11 + AMD ROCm; the app is meant to run on any OS/GPU that PyTorch supports).
-Full plan: `docs/PLAN.md`. Architecture/contracts: `docs/ARCHITECTURE.md` (once written).
+Full plan: `docs/PLAN.md`. Architecture/contracts: `docs/ARCHITECTURE.md`.
+**If you are the director (an interactive session continuing the project) read `docs/HANDOFF.md` first**, then `docs/CHECKPOINT.md`.
+If you are a builder running a task card, this file plus the card are your contract.
 
 ## Environment
 - Windows 11 native; repo at `V:\OmniScan` (builder worktrees in `V:\OmniScan-wt\<ID>`). GPU: RX 9070 XT (gfx1201, 16 GB), ROCm 10.0.0.
