@@ -12,6 +12,7 @@ OmniScan keeps three roots (see `[paths]` in [Configuration](#configuration)):
 | `library_root/<Series>/<Chapter N>/` | `omniscan import` | raw chapter images (read-only for the pipeline) |
 | `library_root/<Series>/_reference_en/` | reference mode (not implemented yet) | already-translated chapters used as style reference |
 | `work_root/<Series>/series.db` | glossary seeding (no command creates it yet) | SQLite glossary working copy |
+| `work_root/queue.db` | the job queue | every queued/running/finished job |
 | `work_root/<Series>/glossary.yaml` | `omniscan glossary export` | hand-editable glossary review file |
 | `work_root/<Series>/watermarks.json` | `omniscan watermark add` / `remove` | fixed-position watermark regions |
 | `work_root/<Series>/<Chapter N>/ingest.json` | `omniscan ingest` | strip layout: files, widths, y-ranges |
@@ -305,6 +306,50 @@ Serves existing artifacts read-only: `/api/series`, `/api/series/{s}/chapters`,
 
 ```bash
 uv run omniscan serve
+```
+
+### `omniscan queue`
+
+A persistent job queue for running pipeline stages over series without babysitting one command per
+series. You add jobs, then a worker drains them one at a time. Everything lives in one SQLite file,
+`work_root/queue.db`; jobs survive restarts, and a worker that died mid-job recovers automatically
+(the interrupted job is queued again with its attempt refunded). Exactly one worker per `queue.db` is
+supported.
+
+A job is "run these stages over this series (optionally only some chapters)". Jobs for stages that
+are not implemented yet are accepted but fail permanently with a clear message, so adding the stage
+later only means adding it to the executor's stage table.
+
+| Subcommand | Effect |
+|---|---|
+| `add <series>` | queue a job. Options: `--stage`, `-s <name>` (repeatable, default `slice`), `--chapter`, `-c <name>` (repeatable, default all), `--priority`, `-p <int>` (higher runs first, default 0), `--max-attempts <int>` (default 2), `--force` |
+| `list [--status <status>]` | print the jobs, one line each; filter by `queued` / `running` / `paused` / `done` / `failed` / `cancelled` |
+| `run [--webhook <url>] [--max-jobs <n>]` | drain the queue as the worker. `--webhook` POSTs every event as JSON (also settable with the `OMNISCAN_NOTIFY_WEBHOOK` env var); `--max-jobs` stops after n jobs |
+| `pause <id>` / `resume <id>` | pause a queued job / put a paused job back into the queue |
+| `cancel <id>` | cancel a queued or paused job (a running job cannot be cancelled) |
+| `retry <id>` | reset a failed or cancelled job to queued with a fresh attempt counter |
+| `clear` | delete done and cancelled jobs (failed jobs stay so you can retry them) |
+
+The `run` worker prints one line per executed job (`job 1 done`, `job 1 failed: <error>`) and a
+summary, exits 1 if any job failed, and prints `queue is empty` when there was nothing to do. Failures
+after a retryable error are retried up to `--max-attempts` times automatically; unknown stage names and
+bad job ids exit 2.
+
+```bash
+uv run omniscan queue add DemoSeries
+uv run omniscan queue add DemoSeries -s ingest -s slice -p 5 -c "Chapter 1"
+uv run omniscan queue list
+uv run omniscan queue run
+```
+
+```text
+queued job 1: DemoSeries stages=slice chapters=all priority=0
+queued job 2: DemoSeries stages=ingest,slice chapters=Chapter 1 priority=5
+   1  queued    pri=0 try=0/2  DemoSeries  slice  all
+   2  queued    pri=5 try=0/2  DemoSeries  ingest,slice  Chapter 1
+job 2 done
+job 1 done
+done=2 failed=0 retried=0
 ```
 
 ## Web viewer

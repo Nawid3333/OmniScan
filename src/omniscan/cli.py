@@ -2,9 +2,9 @@
 
 import enum
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 
 import typer
 from PIL import Image
@@ -22,6 +22,10 @@ from omniscan.importer.execute import execute_import
 from omniscan.importer.plan import ImportPlanError, plan_import
 from omniscan.log import setup_logging
 from omniscan.packaging import pack_cbz, pack_pdf, safe_filename
+from omniscan.queue.executor import stage_executor
+from omniscan.queue.notify import combine, log_notifier, webhook_notifier
+from omniscan.queue.store import KNOWN_STAGES, STATUSES, JobStatus, QueueStore, queue_db_path
+from omniscan.queue.worker import run_queue
 from omniscan.watermark.store import WatermarkStore
 
 app = typer.Typer(help="OmniScan — manhwa/manga translator", no_args_is_help=True)
@@ -508,3 +512,157 @@ def watermark_remove(
 
 
 app.add_typer(watermark_app, name="watermark")
+
+queue_app = typer.Typer(no_args_is_help=True, help="Persistent job queue: run pipeline stages over series.")
+
+
+def _open_queue() -> QueueStore:
+    return QueueStore(queue_db_path(get_config()))
+
+
+_QUEUE_ACTIONS: dict[str, Callable[[QueueStore, int], Any]] = {
+    "pause": QueueStore.pause,
+    "resume": QueueStore.resume,
+    "cancel": QueueStore.cancel,
+    "retry": QueueStore.retry,
+}
+
+
+def _queue_job_action(action: str, job_id: int) -> None:
+    """Run one store state transition for a job, mapping errors to exit 2 and printing the new status."""
+    try:
+        with _open_queue() as store:
+            job = _QUEUE_ACTIONS[action](store, job_id)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from exc
+    except KeyError:
+        typer.echo(f"no such job {job_id}", err=True)
+        raise typer.Exit(2) from None
+    typer.echo(f"job {job.id}: {job.status}")
+
+
+@queue_app.command("add")
+def queue_add(
+    series: Annotated[str, typer.Argument()],
+    stage: Annotated[
+        list[str] | None, typer.Option("--stage", "-s", help="Stage name; repeatable. Default: slice.")
+    ] = None,
+    chapter: Annotated[
+        list[str] | None,
+        typer.Option("--chapter", "-c", help="Chapter folder name; repeatable. Default: all."),
+    ] = None,
+    priority: Annotated[int, typer.Option("--priority", "-p", help="Higher runs first.")] = 0,
+    max_attempts: Annotated[
+        int, typer.Option("--max-attempts", help="How often the worker may retry a failing job.")
+    ] = 2,
+    force: Annotated[bool, typer.Option("--force", help="Re-run stages even if up to date.")] = False,
+) -> None:
+    """Queue pipeline stages over a series' chapters (executed later by `queue run`)."""
+    stages = list(stage) if stage else ["slice"]
+    unknown = next((name for name in stages if name not in KNOWN_STAGES), None)
+    if unknown is not None:
+        typer.echo(f"queue: unknown stage {unknown!r} (known: {', '.join(KNOWN_STAGES)})", err=True)
+        raise typer.Exit(2)
+    try:
+        with _open_queue() as store:
+            job = store.add(
+                series,
+                stages,
+                chapters=chapter,
+                priority=priority,
+                max_attempts=max_attempts,
+                force=force,
+            )
+    except ValueError as exc:
+        typer.echo(f"queue: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    chapters_text = ",".join(job.chapters) if job.chapters is not None else "all"
+    typer.echo(
+        f"queued job {job.id}: {job.series} stages={','.join(job.stages)}"
+        f" chapters={chapters_text} priority={job.priority}"
+    )
+
+
+@queue_app.command("list")
+def queue_list(
+    status: Annotated[str | None, typer.Option("--status", help="Only jobs with this status.")] = None,
+) -> None:
+    """Print the queue's jobs, one line per job (most recent error first 80 chars)."""
+    if status is not None and status not in STATUSES:
+        typer.echo(f"queue: unknown status {status!r} (known: {', '.join(STATUSES)})", err=True)
+        raise typer.Exit(2)
+    with _open_queue() as store:
+        jobs = store.list(status=cast("JobStatus | None", status))
+    if not jobs:
+        typer.echo("queue is empty")
+        return
+    for job in jobs:
+        chapters_text = ",".join(job.chapters) if job.chapters is not None else "all"
+        line = (
+            f"{job.id:>4}  {job.status:<9} pri={job.priority} try={job.attempts}/{job.max_attempts}"
+            f"  {job.series}  {','.join(job.stages)}  {chapters_text}"
+        )
+        if job.error is not None:
+            line += f"  !! {job.error[:80]}"
+        typer.echo(line)
+
+
+@queue_app.command("run")
+def queue_run(
+    webhook: Annotated[
+        str | None,
+        typer.Option("--webhook", help="POST job events to this URL.", envvar="OMNISCAN_NOTIFY_WEBHOOK"),
+    ] = None,
+    max_jobs: Annotated[
+        int | None, typer.Option("--max-jobs", help="Stop after this many executed jobs.")
+    ] = None,
+) -> None:
+    """Drain the queue: run queued jobs one at a time until it is empty."""
+    cfg = get_config()
+    notifier = combine(log_notifier, webhook_notifier(webhook)) if webhook is not None else log_notifier
+    with QueueStore(queue_db_path(cfg)) as store:
+        summary = run_queue(store, stage_executor(cfg), notifier, max_jobs=max_jobs)
+    if not summary.finished:
+        typer.echo("queue is empty")
+        return
+    for job in summary.finished:
+        typer.echo(f"job {job.id} {job.status}" + (f": {job.error}" if job.error is not None else ""))
+    typer.echo(f"done={summary.done} failed={summary.failed} retried={summary.retried}")
+    if summary.failed > 0:
+        raise typer.Exit(1)
+
+
+@queue_app.command("pause")
+def queue_pause(job_id: Annotated[int, typer.Argument()]) -> None:
+    """Pause a queued job (it will not be claimed until resumed)."""
+    _queue_job_action("pause", job_id)
+
+
+@queue_app.command("resume")
+def queue_resume(job_id: Annotated[int, typer.Argument()]) -> None:
+    """Resume a paused job (back to queued)."""
+    _queue_job_action("resume", job_id)
+
+
+@queue_app.command("cancel")
+def queue_cancel(job_id: Annotated[int, typer.Argument()]) -> None:
+    """Cancel a queued or paused job."""
+    _queue_job_action("cancel", job_id)
+
+
+@queue_app.command("retry")
+def queue_retry(job_id: Annotated[int, typer.Argument()]) -> None:
+    """Reset a failed or cancelled job to queued with a fresh attempt counter."""
+    _queue_job_action("retry", job_id)
+
+
+@queue_app.command("clear")
+def queue_clear() -> None:
+    """Delete done and cancelled jobs from the queue (failed jobs stay for retry)."""
+    with _open_queue() as store:
+        removed = store.clear_finished()
+    typer.echo(f"removed {removed} finished job(s)")
+
+
+app.add_typer(queue_app, name="queue")
