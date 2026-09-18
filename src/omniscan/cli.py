@@ -19,6 +19,7 @@ from omniscan.glossary.yaml_io import export_yaml, import_yaml
 from omniscan.importer.execute import execute_import
 from omniscan.importer.plan import ImportPlanError, plan_import
 from omniscan.log import setup_logging
+from omniscan.watermark.store import WatermarkStore
 
 app = typer.Typer(help="OmniScan — manhwa/manga translator", no_args_is_help=True)
 
@@ -338,3 +339,63 @@ def glossary_import(
 
 
 app.add_typer(glossary_app, name="glossary")
+
+watermark_app = typer.Typer(no_args_is_help=True, help="Per-series fixed-position watermark regions.")
+
+
+@watermark_app.command("add")
+def watermark_add(
+    series: Annotated[str, typer.Argument()],
+    x0: Annotated[float, typer.Option("--x0", min=0.0, max=1.0, help="Left edge, fraction of page width.")],
+    y0: Annotated[float, typer.Option("--y0", min=0.0, max=1.0, help="Top edge, fraction of page height.")],
+    x1: Annotated[float, typer.Option("--x1", min=0.0, max=1.0, help="Right edge, fraction of page width.")],
+    y1: Annotated[
+        float, typer.Option("--y1", min=0.0, max=1.0, help="Bottom edge, fraction of page height.")
+    ],
+    note: Annotated[
+        str | None, typer.Option("--note", help="Free-text reminder of what the region holds.")
+    ] = None,
+) -> None:
+    """Record a fixed-position watermark region for a series (fractions of every raw page)."""
+    try:
+        region = WatermarkStore(_series_paths(series).work_dir).add(x0, y0, x1, y1, note=note)
+    except ValueError as exc:
+        typer.echo(f"watermark: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    typer.echo(f"watermark: added region {region.index} to {series}")
+
+
+@watermark_app.command("list")
+def watermark_list(series: Annotated[str, typer.Argument()]) -> None:
+    """Print the watermark regions of a series as a table."""
+    regions = WatermarkStore(_series_paths(series).work_dir).list()
+    table = Table(title=f"watermark: {series} ({len(regions)} region(s))")
+    table.add_column("Index", justify="right")
+    table.add_column("x0-x1")
+    table.add_column("y0-y1")
+    table.add_column("Note")
+    for region in regions:
+        table.add_row(
+            str(region.index),
+            f"{region.x0_frac:.3f}-{region.x1_frac:.3f}",
+            f"{region.y0_frac:.3f}-{region.y1_frac:.3f}",
+            region.note or "",
+        )
+    Console().print(table)
+
+
+@watermark_app.command("remove")
+def watermark_remove(
+    series: Annotated[str, typer.Argument()],
+    index: Annotated[int, typer.Argument()],
+) -> None:
+    """Remove a watermark region of a series by index (remaining indices keep their values)."""
+    try:
+        WatermarkStore(_series_paths(series).work_dir).remove(index)
+    except KeyError:
+        typer.echo(f"watermark: no region {index} for {series}", err=True)
+        raise typer.Exit(2) from None
+    typer.echo(f"watermark: removed region {index} from {series}")
+
+
+app.add_typer(watermark_app, name="watermark")
