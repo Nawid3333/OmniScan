@@ -31,7 +31,7 @@ class PathsConfig(BaseModel):
 
 
 class GpuConfig(BaseModel):
-    device: str = "cuda:0"
+    device: str = "auto"  # auto | cpu | mps | cuda | cuda:N (auto = strongest discrete GPU)
     vram_budget_gib: float = 14.5
     codec: Literal["auto", "rocjpeg", "hybrid", "turbo"] = "auto"
 

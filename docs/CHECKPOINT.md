@@ -1,56 +1,61 @@
-# Checkpoint — 2026-09-19
+# Checkpoint — 2026-09-19 (moved to Windows native, `V:\OmniScan`)
 
 Where the project stands and exactly how to continue. `docs/PLAN.md` is the master plan; this file is the
-current-state snapshot. Repo: `~/projects/omniscan` (WSL), `main` is pushed to `Nawid3333/OmniScan`.
+current-state snapshot. Repo: **`V:\OmniScan`** (Windows 11 native, no WSL), remote `Nawid3333/OmniScan` on GitHub.
+Local data (sample library, work artifacts, outputs) lives in `V:\OmniScan\data\` (gitignored); machine config in
+`C:\Users\limex\.config\omniscan\config.toml` (paths only; the GPU is chosen by `gpu.device = "auto"`).
 
 ## State in one paragraph
 Everything up to a working **ingest → slice** pipeline, the **web debug tool** (5 views), the **translation candidate
-runner**, glossary, promo filter, job queue, import, packaging and docs is built, reviewed and merged (≈1 900 tests, ruff
-and pyright clean). The first real-data checks have been done: slicing on real comic pages, live translation through
-three Ollama models, and the text/bubble detector on real pages. **Detection (C3) is half built on branch `C3`**;
-OCR, judge, inpaint, typeset and export do not exist yet, so there is no end-to-end run yet.
+runner**, glossary, promo filter, job queue, import, packaging and docs is built, reviewed and merged (≈2 000 tests, ruff
+and pyright clean, all passing on Windows in ~20 s). The first real-data checks have been done: slicing on real comic pages,
+live translation through three Ollama models, the text/bubble detector and PaddleOCR recognition models on the GPU.
+**Detection (C3) is half built on branch `C3`**; OCR, judge, inpaint, typeset and export do not exist yet, so there is no
+end-to-end run yet.
 
 ## What works today (CLI)
 `doctor`, `import`, `ingest`, `slice`, `filter run|restore`, `glossary list|export|import`, `watermark add|list|remove`,
 `pack` (CBZ/PDF), `serve` (+ `npm run dev` in `webui/`), `queue add|list|run|pause|resume|cancel|retry|clear`,
 `translate` (candidate runs; needs an `ocr.json`). Stubs (exit 2): `acquire detect ocr judge inpaint typeset export run
 reference`. Web views: Slicer, OCR (reads `ocr.json`), Translation, Reader, Filtered (Restore = the only write action).
+Run everything with `uv run ...` from `V:\OmniScan` (`uv` is installed for the user; `python -m uv` also works).
 
 ## Evidence gathered (all reproducible)
+- **Windows native works** (`docs/benchmarks/windows-native.md`): AMD's `win_amd64` ROCm wheels run on the RX 9070 XT
+  (128 vs 117 TFLOPS in WSL); the detector gives identical detections (fp16 ≈ 2.4× fp32); PaddleOCR Korean/Chinese/Japanese
+  recognition is correct; the full suite runs in ~20 s (WSL ≈ 87 s); a real `slice` is ~2× faster than in WSL. Neither WSL
+  nor a Linux container is needed. Fixed on the way: `triton` Linux-only override in `pyproject.toml`, LF line endings
+  (`.gitattributes`), platform-aware `doctor`, symlink-test guard, and **GPU selection** (`omniscan.gpu.device.resolve_device`;
+  on this PC the integrated GPU is `cuda:0` and crashes, the RX 9070 XT is `cuda:1`).
+- **Builders on Windows:** `scripts/omni_builder.py` (Python port of the old bash script) runs the native Windows Claude Code
+  CLI against the local Ollama; smoke test passed (`claude.exe` 2.1.277, `glm-5.3-flash:cloud`).
 - **Codec:** rocJPEG cannot run in WSL; CPU `turbo` ≈ 141–148 Mp/s (`docs/benchmarks/codec.md`). Hybrid GPU codec (C2) is
-  still an open decision — my recommendation: build detect/OCR first, profile a real chapter, then decide.
+  still an open decision — recommendation: build detect/OCR first, profile a real chapter, then decide.
 - **Translation probe** (`docs/benchmarks/translation-probe.md`, `scripts/probe_translation.py`): gemma4 needs
   `think:false`; cloud models ignore Ollama's JSON `format` (parser is tolerant); translategemma ignores the glossary
   unless locked terms are pre-substituted. Live `omniscan translate` run: 3 profiles, 10/10 regions each, 0 missing.
-- **Detector** (`scripts/probe_detector.py` on branch `C3`): `ogkalu/comic-text-and-bubble-detector` (RT-DETR-v2, 42.7 M
-  params, classes bubble / text_bubble / text_free) loads and runs on the RX 9070 XT via `transformers`; on real pages it
-  finds the speech bubbles, the text inside and free-standing SFX (missed two small "PLOP" SFX at threshold 0.3).
-  Not benchmarked for speed; fp16 untested.
-- **Windows native works** (`docs/benchmarks/windows-native.md`): the pinned ROCm PyTorch installs from AMD's `win_amd64`
-  wheels and runs on the RX 9070 XT; `uv sync --frozen` works (after a `triton` override, commit `56847f9`); the whole test
-  suite passes in 18 s (WSL ≈ 87 s); the detector gives identical detections (fp16 ≈ 2.4× fp32 on both); PaddleOCR
-  Korean/Chinese/Japanese recognition is correct; `omniscan doctor` runs. So neither WSL nor a Linux container is required.
-  Open items: the iGPU is `cuda:0` on Windows and crashes (use `HIP_VISIBLE_DEVICES=1` until real GPU selection exists),
-  `doctor` has Linux-only rows, `scripts/omni-builder` is bash (port to Python), `.gitattributes` for line endings.
-- **Real-data slice run:** two Pepper&Carrot episodes (CC BY 4.0, David Revoy) in `~/omniscan/library/PepperCarrot/`
-  (with `ATTRIBUTION.txt`; never in the repo). 2481 px pages stitched to 11 222 / 19 078 px strips, cut into 3 / 6 slices,
-  no forced cuts, 1.8 s / 0.6 s. Artifacts in `~/omniscan/work/PepperCarrot/`.
+- **Detector** (`scripts/probe_detector.py`, branch `C3`): `ogkalu/comic-text-and-bubble-detector` (RT-DETR-v2, 42.7 M
+  params; bubble / text_bubble / text_free) finds bubbles, their text and free-standing SFX on real pages.
+- **Real-data slice run:** two Pepper&Carrot episodes (CC BY 4.0, David Revoy) in `V:\OmniScan\data\library\PepperCarrot\`
+  (with `ATTRIBUTION.txt`; never committed). 2481 px pages → 11 222 / 19 078 px strips → 3 / 6 slices, no forced cuts.
 
-## In flight: C3 detection (branch `C3`, worktree `~/projects/omniscan-wt/C3`, pushed, NOT merged)
+## In flight: C3 detection (branch `C3`, pushed, NOT merged)
+Worktree: `git worktree add V:\OmniScan-wt\C3 C3`, then `git rebase main` there (main gained the `gpu.device = "auto"`
+change in `config.py`, so expect a small conflict next to the new `[detect]` section).
 Done: `[detect]` config section, shared `ingest.strip.load_strip` (SliceStage now uses it and also hashes the raw
 images, fixing stale slices when pixels change but sizes do not), `detect/tiles.py`, `detect/postprocess.py`
 (no tests yet), `scripts/probe_detector.py`.
 Still to do, in order:
 1. `detect/model.py` — RT-DETR-v2 wrapper: tile → `F.interpolate` to 640×640 (bilinear, antialias, no mean/std
-   normalisation, /255 only), batch forward, `processor.post_process_object_detection`, boxes back in tile pixels.
+   normalisation, /255 only), batch forward, `processor.post_process_object_detection`, boxes back in tile pixels; fp16
+   after checking detections match fp32.
 2. `gpu/groups.py` — `build_vram_manager(cfg)` registering the `"vision"` group (`{"detector": Detector}`).
 3. `detect/stage.py` — `DetectStage` (`gpu_group="vision"`, inputs = raw images + `slices.json`, outputs
    `regions.json` as `RegionsArtifact` with empty text): plan tiles, skip tiles that only touch blank/filtered slices,
    detect, `merge_detections`, `build_regions`.
 4. CLI: replace the `detect` stub; `_run_stages` must build the VRAM manager when a stage has a `gpu_group`.
 5. Tests: tiles, postprocess (merge/association/reading order/slice assignment), stage with a fake detector and a fake
-   scheduler, GPU smoke test (`@pytest.mark.gpu`), SliceStage-invalidates-on-pixel-change test; docs (README status row,
-   USER_GUIDE, ARCHITECTURE).
+   scheduler, GPU smoke test (`@pytest.mark.gpu`), SliceStage-invalidates-on-pixel-change test; docs.
 6. Look at real results: copy `regions.json` to `ocr.json` for a chapter and open the OCR view, check threshold/tile size.
 Design decisions already taken: tile side = min(1280, strip width), overlap 0.5; tile-edge boxes are penalised and
 truncated duplicates dropped; text↔bubble by containment (≥ 0.6); several text boxes in one bubble become one region;
@@ -64,9 +69,8 @@ re-cuts slices, so it belongs to export).
    `scripts/paddle_models_check.py`; detection / line grouping is not).
 2. C5 judge + story memory + glossary post-check (text-only work; can start before OCR exists), then C6 inpaint,
    C7 typeset, export.
-3. **Cross-platform groundwork** (from the Windows check): GPU selection by per-device smoke test (skip the iGPU),
-   platform-aware `doctor`, port `scripts/omni-builder` to Python, `.gitattributes` (`* text=auto eol=lf`), a Windows CPU CI job,
-   then a first PyInstaller/Nuitka smoke build on Windows.
+3. **Cross-platform groundwork still open:** a Windows (and macOS) CPU CI job, a first PyInstaller/Nuitka smoke build on
+   Windows, a hardware-detection screen for the future app (GPU list, chosen device, self-test).
 4. Unblocked builder cards (flash, up to 2 at a time): **acquire plumbing** (sources.toml, resumable downloader, non-chapter
    image filter, DRM-domain warning — everything except the extract.pics request/response shapes), duplicate-chapter
    detection, `doctor` check that translation-profile models exist, model pinning/integrity.
@@ -74,23 +78,25 @@ re-cuts slices, so it belongs to export).
 ## Waiting on you (the user)
 The full list (about 50 questions with my defaults) is **[docs/OPEN_QUESTIONS.md](OPEN_QUESTIONS.md)** — ask 2–3 of them at natural pauses
 and record answers there. The most pressing ones:
-- **1–2 real Korean raw chapters** (`omniscan import "<folder>" --series Sample --chapter "Chapter 1"`): needed to tune
+- **1–2 real Korean raw chapters** (`uv run omniscan import "<folder>" --series Sample --chapter "Chapter 1"`): needed to tune
   detection/OCR on real Korean text. Everything so far was validated on English/synthetic material.
-- Optional: `gh auth login` in WSL (enables PRs); Cloudflare token + account id, extract.pics key, and the hook URL
-  (plan M0 step 8); paste the extract.pics API docs so `acquire` can be finished (the site is a JS app I cannot fetch);
-  decide whether the hybrid GPU codec (C2) should come sooner.
+- Optional: Cloudflare token + account id, extract.pics key, and the hook URL (plan M0 step 8); paste the extract.pics API
+  docs so `acquire` can be finished (the site is a JS app I cannot fetch); decide whether the hybrid GPU codec (C2) should
+  come sooner. (`gh` is already logged in on Windows as Nawid3333, so PR-based review is possible if wanted.)
 
 ## How to work the loop (for the next session)
-- **Builders:** `cd ~/projects/omniscan && scripts/omni-builder run <ID>` (default `glm-5.3-flash:cloud`; `--model glm`
-  for glm-5.3 only when a card is genuinely hard). Launch it as a background tool call so the completion notification
-  arrives; at most 2 at once. Do not use deepseek/kimi as builders (a single run burned ~$27 and hit the account limit).
+- **Builders:** `uv run python scripts/omni_builder.py run <ID>` from `V:\OmniScan` (default `glm-5.3-flash:cloud`;
+  `--model glm` for glm-5.3 only when a card is genuinely hard; `resume <ID> <feedback-file>`; `smoke`). Worktrees go to
+  `V:\OmniScan-wt\<ID>` with a junction to the shared `.venv`. Launch it as a background tool call so the completion
+  notification arrives; at most 2 at once. Needs Ollama running and the CLI (`npm install -g --allow-scripts=@anthropic-ai/claude-code
+  @anthropic-ai/claude-code`; npm blocks the postinstall step otherwise). Do not use deepseek/kimi as builders (one run burned ~$27).
 - **Card → review → merge:** write `docs/tasks/<ID>.md` (exact interfaces, numbered acceptance tests, file allowlist,
-  stop-and-ask rule), `ruff format` it and commit; after the builder finishes: `git fetch ~/projects/omniscan main:main-sync`,
-  `GIT_EDITOR=true git rebase main-sync` in the worktree (every card edits the README status table, so expect that
-  conflict; keep both rows), read `docs/reports/<ID>.md`, run pytest + ruff + pyright (+ `npm run check/test/build` in
-  `webui/` for web cards), fix issues yourself, `git merge --ff-only`, push, remove worktree and branch. Builders' "Questions"
-  sections have caught real spec bugs every time — read them. Mutation-check test-only cards (break the code, see the tests fail).
-- **Gotchas:** `chmod +x scripts/omni-builder` before committing it; delete builder scratch files in a worktree before
-  rebasing; `uv run` from another worktree just re-points the shared venv's editable install (harmless); files with
-  apostrophes are easier to write through the `\\wsl.localhost\Ubuntu-26.04\…` path than through `wsl -e bash -lc '…'`.
-- **Data:** never commit raws or samples (`samples/`, `library/` are gitignored); tests use synthetic fixtures.
+  stop-and-ask rule), `ruff format` it and commit; after the builder finishes: in the worktree `git rebase main` (every card
+  edits the README status table, so expect that conflict; keep both rows), read `docs/reports/<ID>.md`, run pytest + ruff +
+  pyright (+ `npm run check/test/build` in `webui/` for web cards), fix issues yourself, then in `V:\OmniScan`
+  `git merge --ff-only <ID>`, push, `git worktree remove`, delete the branch. Builders' "Questions" sections have caught real
+  spec bugs every time — read them. Mutation-check test-only cards (break the code, see the tests fail).
+- **Gotchas:** delete builder scratch files in a worktree before rebasing; the PowerShell tool resets its working directory
+  on every call (`Set-Location V:\OmniScan` first); use `uv run --frozen` to avoid re-locking; files with quotes are easier to
+  write with the editor tools than through shell here-strings; symlinks need Developer Mode on Windows (tests guard for it).
+- **Data:** never commit raws or samples (`data/`, `library/`, `samples/` are gitignored); tests use synthetic fixtures.

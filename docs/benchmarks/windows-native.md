@@ -25,28 +25,29 @@ PaddleOCR is **not** a reason to use Linux: the PaddlePaddle framework is never 
    in `pyproject.toml` (commit `56847f9`); Linux is unchanged.
 2. **GPU selection.** On Windows the integrated GPU is `cuda:0` and **crashes on the first kernel** (access violation in
    `amdhip64_7.dll`); the RX 9070 XT is `cuda:1`. WSL exposes only the 9070 XT, so `gpu.device = "cuda:0"` worked there.
-   `torch.cuda.get_arch_list()` lists gfx1036 too, so it cannot be used to filter. Workaround today:
-   `HIP_VISIBLE_DEVICES=1`. Proper fix (hardware detection, M13): probe every device with a tiny kernel in a subprocess,
-   prefer non-integrated devices, pick the fastest passing one.
-3. **`omniscan doctor`** has Linux-only checks (`rocminfo`, `librocjpeg.so`); make them platform-aware.
+   `torch.cuda.get_arch_list()` lists gfx1036 too, so it cannot be used to filter. **Fixed:** `torch` reports
+   `is_integrated` per device, and `omniscan.gpu.device.resolve_device("auto")` (now the `gpu.device` default) picks the
+   strongest discrete GPU, then Apple MPS, then CPU; a named device (`cuda:1`) still wins. Tests and `doctor` use it.
+   (A per-device kernel smoke test is still worth adding to the future hardware-detection screen.)
+3. **`omniscan doctor`** had Linux-only checks. **Fixed for `rocm`** (reports "not applicable on Windows"); the `rocjpeg`
+   WARN stays informational.
 4. **Symlink test** in `tests/unit/test_web_app.py` failed with WinError 1314 (creating symlinks needs Developer Mode or
    admin). Now only that case is skipped where the OS forbids it.
 5. Hugging Face prints a symlink warning without Developer Mode (models are copied instead of linked; uses more disk).
    Cosmetic; set `HF_HUB_DISABLE_SYMLINKS_WARNING=1` or enable Developer Mode.
-6. `scripts/omni-builder` (bash + `flock`) and the `scripts/*.py` that hard-code `/mnt/c/...` fonts are Linux-flavoured;
-   the font path in `paddle_models_check.py` is fixed, the builder harness should be ported to Python (card idea B31).
+6. `scripts/omni-builder` (bash + `flock`) was Linux-only. **Fixed:** replaced by `scripts/omni_builder.py` (portable slot
+   locks, junction for the shared `.venv`, card text on stdin), smoke-tested with the native Windows Claude Code CLI;
+   the `/mnt/c` font path in `paddle_models_check.py` is portable too.
 7. Not tested yet: the hybrid GPU codec C++ extension (would need MSVC or prebuilt wheels on Windows), PyInstaller/Nuitka
    packaging, macOS (no Mac; MPS operator coverage unknown), NVIDIA, Intel.
 
 ## Reproduce on Windows
 ```powershell
-git clone <repo> ; cd omniscan            # or a local clone
-python -m pip install uv                  # uv was not installed on this machine
+git clone https://github.com/Nawid3333/OmniScan.git V:\OmniScan ; cd V:\OmniScan
+python -m pip install --user uv           # uv was not installed on this machine
 uv sync --frozen                          # ~2.5 min the first time (downloads the ROCm wheels)
-$env:HIP_VISIBLE_DEVICES = '1'            # the discrete GPU, not the iGPU (see finding 2)
-uv run pytest -q
+uv run pytest -q                          # no environment variables needed: gpu.device = "auto"
 uv run python scripts/paddle_models_check.py
 uv run omniscan doctor
 ```
-Throwaway environments used for this check live in `C:\Users\limex\omniscan-wintest` (venv + a clone, ≈ 8 GB); delete
-that folder when no longer needed.
+(The throwaway environments used for this check, `C:\Users\limex\omniscan-wintest`, have been deleted.)

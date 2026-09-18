@@ -17,6 +17,8 @@ from typing import Any
 import httpx
 import torch
 
+from omniscan.gpu.device import resolve_device
+
 log = logging.getLogger(__name__)
 
 OLLAMA_GROUP = "ollama_local"
@@ -32,13 +34,13 @@ class GroupSpec:
 class VramManager:
     def __init__(
         self,
-        device: str | torch.device = "cuda:0",
+        device: str | torch.device = "auto",
         budget_gib: float | None = None,
         *,
         ollama_url: str | None = "http://localhost:11434",
         http: httpx.Client | None = None,
     ) -> None:
-        self.device = torch.device(device if torch.cuda.is_available() else "cpu")
+        self.device = resolve_device(device)
         self._groups: dict[str, GroupSpec] = {}
         self._resident: str | None = None
         self._models: Mapping[str, Any] = {}

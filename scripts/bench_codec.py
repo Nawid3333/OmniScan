@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import io
-import resource
 import sys
 import tempfile
 import time
@@ -16,6 +15,8 @@ from pathlib import Path
 
 import torch
 from PIL import Image
+
+from omniscan.gpu.device import resolve_device
 
 _REPO = Path(__file__).resolve().parent.parent
 _BENCH_MD = _REPO / "docs" / "benchmarks" / "codec.md"
@@ -40,7 +41,7 @@ def _load_chapter(chapter: Path) -> list[bytes]:
     return [p.read_bytes() for p in sorted(chapter.iterdir()) if p.suffix.lower() in (".jpg", ".jpeg")]
 
 
-def _build_codec(name: str, device: str):
+def _build_codec(name: str, device: str | torch.device):
     """Build the named codec on `device`, or None if the backend isn't implemented yet."""
     if name == "turbo":
         from omniscan.gpu.codec.turbo import TurboCodec
@@ -62,11 +63,8 @@ def _strip_info(datas: list[bytes]) -> tuple[list[int], int]:
 
 
 def _cpu_time_used() -> float:
-    """Process CPU seconds so far (user + system; Linux only, else 0)."""
-    if sys.platform == "linux":
-        ru = resource.getrusage(resource.RUSAGE_SELF)
-        return ru.ru_utime + ru.ru_stime
-    return 0.0
+    """Process CPU seconds so far (user + system, summed over all threads; works on every OS)."""
+    return time.process_time()
 
 
 def _bench_one(datas: list[bytes], warmup: int, repeats: int, codec) -> dict[str, float]:
@@ -145,7 +143,7 @@ def main() -> None:
 
         rows: list[tuple[str, dict[str, float]]] = []
         for name in args.backend or ["turbo"]:
-            codec = _build_codec(name, "cuda:0")
+            codec = _build_codec(name, resolve_device())
             if codec is None:
                 print(f"notice: backend {name!r} not implemented yet, skipping", file=sys.stderr)
                 continue

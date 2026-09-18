@@ -1,12 +1,15 @@
 # OmniScan — rules for every agent working in this repo
 
-OmniScan turns raw Korean/Chinese/Japanese manhwa/manga chapters into English releases, GPU end-to-end on AMD ROCm (WSL2).
+OmniScan turns raw Korean/Chinese/Japanese manhwa/manga chapters into English releases, GPU end-to-end (developed on Windows 11 + AMD ROCm; the app is meant to run on any OS/GPU that PyTorch supports).
 Full plan: `docs/PLAN.md`. Architecture/contracts: `docs/ARCHITECTURE.md` (once written).
 
 ## Environment
-- Runs inside WSL2 Ubuntu 26.04, repo at `~/projects/omniscan`. GPU: RX 9070 XT (gfx1201, 16 GB), ROCm 10.0.0.
+- Windows 11 native; repo at `V:\OmniScan` (builder worktrees in `V:\OmniScan-wt\<ID>`). GPU: RX 9070 XT (gfx1201, 16 GB), ROCm 10.0.0.
+  Your Bash tool is Git Bash (bash syntax works, paths like `V:/OmniScan/...`). Never rely on Linux-only behaviour (symlinks, `chmod`,
+  `fcntl`, `/dev/...`, `/mnt/c`); code and tests must run on Windows, Linux and macOS. Files use LF line endings (`.gitattributes`).
 - Python **3.14**, managed by **uv**. PyTorch comes from AMD's ROCm 10 index (see `pyproject.toml`); never `pip install torch` from PyPI.
-- Ollama runs on Windows, reachable at `http://localhost:11434` (mirrored networking).
+- GPU choice: use `omniscan.gpu.device.resolve_device(cfg.gpu.device)`; never hard-code `cuda:0` (on this PC `cuda:0` is the integrated GPU and crashes).
+- Ollama runs natively on Windows at `http://localhost:11434`.
 - **Never** install or import `paddlepaddle` / `paddleocr`: Paddle has no ROCm support. Paddle *models* are used through HF `transformers` (PyTorch).
 
 ## Commands

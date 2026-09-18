@@ -1,6 +1,6 @@
 # <ID> — <Title>
 
-**Owner:** GLM builder · **Branch:** `<ID>` · **Worktree:** `~/projects/omniscan-wt/<ID>`
+**Owner:** GLM builder · **Branch:** `<ID>` · **Worktree:** `V:\OmniScan-wt\<ID>` (sibling of the repo, created by `scripts/omni_builder.py`)
 Read `CLAUDE.md` first. It overrides nothing below but applies everywhere.
 
 ## Goal

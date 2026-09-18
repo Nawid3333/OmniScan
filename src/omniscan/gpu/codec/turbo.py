@@ -16,6 +16,7 @@ import torch
 from PIL import Image, ImageOps, JpegImagePlugin
 
 from omniscan.gpu.codec.base import JpegInfo, Subsampling
+from omniscan.gpu.device import resolve_device
 
 _EXIF_ORIENTATION = 0x0112  # EXIF Orientation tag id
 _GET_SAMPLING_CODES = {0: "444", 1: "422", 2: "420"}  # newer Pillow: get_sampling -> code
@@ -28,11 +29,8 @@ class TurboCodec:
 
     name = "turbo"
 
-    def __init__(self, device: str | torch.device = "cuda:0", max_workers: int | None = None) -> None:
-        resolved = torch.device(device)
-        if resolved.type == "cuda" and not torch.cuda.is_available():
-            resolved = torch.device("cpu")
-        self.device = resolved
+    def __init__(self, device: str | torch.device = "auto", max_workers: int | None = None) -> None:
+        self.device = resolve_device(device)
         self._max_workers = max_workers if max_workers is not None else os.cpu_count()
         self._pool: ThreadPoolExecutor | None = ThreadPoolExecutor(self._max_workers)
 

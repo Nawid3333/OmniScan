@@ -12,6 +12,12 @@ import torch
 from PIL import Image, ImageDraw, ImageFont
 from transformers import AutoImageProcessor, AutoModelForTextRecognition
 
+from omniscan.gpu.device import resolve_device
+
+DEVICE = resolve_device()
+if DEVICE.type == "cuda":
+    torch.cuda.set_device(DEVICE)  # bare torch.cuda.* calls then mean the chosen GPU
+
 FONTS = (
     Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts"
     if os.name == "nt"
@@ -40,9 +46,9 @@ def main() -> int:
     print(f"python {sys.version.split()[0]}  torch {torch.__version__}  cuda={torch.cuda.is_available()}")
     ok = True
     for repo, font, text in CASES:
-        model = AutoModelForTextRecognition.from_pretrained(repo).to("cuda").eval()
+        model = AutoModelForTextRecognition.from_pretrained(repo).to(DEVICE).eval()
         proc = AutoImageProcessor.from_pretrained(repo)
-        inputs = proc(images=[render(text, font)] * 8, return_tensors="pt").to("cuda")
+        inputs = proc(images=[render(text, font)] * 8, return_tensors="pt").to(DEVICE)
         with torch.inference_mode():
             model(**inputs)  # warmup
             torch.cuda.synchronize()

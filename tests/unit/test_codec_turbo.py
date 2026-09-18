@@ -6,6 +6,7 @@ import pytest
 import torch
 
 from omniscan.gpu.codec.turbo import TurboCodec
+from omniscan.gpu.device import resolve_device
 from tests.fixtures.images import plain_jpeg, rotated_jpeg
 
 pytest.importorskip("torch")
@@ -101,8 +102,8 @@ def test_close_twice_then_decode(tmp_path) -> None:
 def test_decode_into_gpu_strip(tmp_path) -> None:
     n = 40
     datas = [_read(plain_jpeg(tmp_path / f"{i}.jpg", size=(400, 300), color=(120, 40, 90))) for i in range(n)]
-    out = torch.empty((3, 300 * n, 400), dtype=torch.uint8, device="cuda:0")
-    TurboCodec("cuda:0").decode_into(datas, out, [300 * i for i in range(n)])
+    out = torch.empty((3, 300 * n, 400), dtype=torch.uint8, device=resolve_device())
+    TurboCodec(resolve_device()).decode_into(datas, out, [300 * i for i in range(n)])
     assert out.is_cuda
     cpu = out.cpu()
     for i in range(n):
@@ -114,6 +115,6 @@ def test_decode_into_gpu_strip(tmp_path) -> None:
 @pytest.mark.gpu
 def test_decode_on_cuda(tmp_path) -> None:
     data = _read(plain_jpeg(tmp_path / "a.jpg", size=(400, 300), color=(200, 60, 60)))
-    tensor = TurboCodec("cuda:0").decode(data)
+    tensor = TurboCodec(resolve_device()).decode(data)
     assert tensor.is_cuda
     assert tensor.shape == (3, 300, 400)

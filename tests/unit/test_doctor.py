@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from collections.abc import Callable
 from typing import Any
 
@@ -112,10 +113,18 @@ def test_secrets_missing_listed() -> None:
     assert "OMNISCAN_RELAY_CLIENT_TOKEN" in result.detail
 
 
+def test_rocm_not_applicable_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    result = doctor.check_rocm()
+    assert result.status == "OK"
+    assert "Windows" in result.detail
+
+
 def test_rocm_missing_binary(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_run(*args: Any, **kwargs: Any) -> None:
         raise FileNotFoundError("rocminfo")
 
+    monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(subprocess, "run", fake_run)
     result = doctor.check_rocm()
     assert result.status == "FAIL"
@@ -127,6 +136,7 @@ def test_rocm_found(monkeypatch: pytest.MonkeyPatch) -> None:
             ["rocminfo"], 0, stdout="Name:                    gfx1201\n", stderr=""
         )
 
+    monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(subprocess, "run", fake_run)
     result = doctor.check_rocm()
     assert result.status == "OK"

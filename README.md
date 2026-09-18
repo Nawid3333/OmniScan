@@ -1,6 +1,6 @@
 # OmniScan
 
-GPU end-to-end manhwa/manga translator (Korean / Chinese / Japanese → English) for AMD ROCm on WSL2.
+GPU end-to-end manhwa/manga translator (Korean / Chinese / Japanese → English) on your own GPU (developed on Windows 11 with AMD ROCm).
 Chapters are imported from a local folder, normalised and cut into reading slices on the GPU, and — as
 the remaining stages land — detected, OCR'd, translated through Ollama, judged, inpainted, typeset and
 packaged into CBZ/PDF.
@@ -38,9 +38,10 @@ pipeline stage consumes it yet.
 
 ## Requirements
 
-- Windows 11 with WSL2 Ubuntu (26.04 tested); mirrored networking so WSL can reach the Windows-side
-  Ollama at `localhost:11434`.
-- An AMD GPU supported by ROCm 10 (tested: RX 9070 XT, gfx1201, 16 GB VRAM).
+- Windows 11 (tested natively; Linux/WSL2 also works). Ollama installed and running at `localhost:11434`.
+- A GPU PyTorch supports. Tested: AMD RX 9070 XT (gfx1201, 16 GB) with AMD's ROCm 10 wheels on Windows and Linux/WSL.
+  NVIDIA, Apple Silicon (MPS) and CPU-only are expected to work through PyTorch but are untested; `gpu.device = "auto"`
+  picks the strongest discrete GPU (it skips integrated GPUs).
 - Python 3.14, managed by [uv](https://docs.astral.sh/uv/). PyTorch comes from AMD's ROCm 10 index —
   never `pip install torch` from PyPI.
 - Node 24 for the web UI only (`npm run dev` in `webui/`).

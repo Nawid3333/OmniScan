@@ -6,6 +6,7 @@ import httpx
 import pytest
 import torch
 
+from omniscan.gpu.device import resolve_device
 from omniscan.gpu.vram import OLLAMA_GROUP, VramManager
 
 
@@ -89,7 +90,7 @@ def test_unknown_and_reserved_groups() -> None:
 def test_real_gpu_release_returns_memory() -> None:
     if not torch.cuda.is_available():
         pytest.skip("no GPU")
-    vm = VramManager("cuda:0", ollama_url=None)
+    vm = VramManager(resolve_device(), ollama_url=None)
     vm.register("big", lambda d: {"t": torch.empty(2 * 2**30, dtype=torch.uint8, device=d)}, est_gib=2)
     before = vm.free_gib()
     vm.acquire("big")

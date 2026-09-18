@@ -14,7 +14,6 @@ Each has the **default I will use until you answer**, so nothing is blocked unle
 | ID | Question | Blocks / why it matters | Default until answered |
 |---|---|---|---|
 | A1 | Can you provide **1–2 real Korean raw chapters** (a folder of images; `omniscan import "<folder>" --series Sample --chapter "Chapter 1"`)? | **Blocks** tuning detection/OCR on real Korean text; everything so far was validated on English/synthetic pages | I keep using the CC BY *Pepper&Carrot* pages (English) |
-| A2 | Will you run `gh auth login` in WSL (or on Windows if we move)? | Enables PR-based review; otherwise I merge with plain git | Merge locally with git, push to `main` |
 | A3 | Cloudflare account + API token ("Edit Cloudflare Workers") + account id, your extract.pics API key, and later the relay hook URL (plan M0 step 8) | **Blocks** deploying the relay (B18) and live `acquire` | Relay code stays undeployed |
 | A4 | Can you paste the **extract.pics API docs** (request/response shapes)? The site is a JS app I cannot fetch | **Blocks** the concrete extract.pics client in `acquire` (B19); the rest of acquire can be built without it | I build downloader/sources/filter first and leave the client as a stub |
 | A5 | Which **sites** do you actually raw-acquire from? | Referer/hotlink rules, non-chapter-image filter heuristics, the DRM-platform warning list | Generic heuristics only |
@@ -24,7 +23,6 @@ Each has the **default I will use until you answer**, so nothing is blocked unle
 
 | ID | Question | Blocks / why it matters | Default until answered |
 |---|---|---|---|
-| B1 | **Windows-native development vs WSL** — evidence in `docs/benchmarks/windows-native.md`: everything tested (GPU torch, lockfile, full test suite, detector, PaddleOCR models, doctor) works natively with the same results. Do you want Windows native as the main dev/run environment now? (WSL would then only host the builder harness until `omni-builder` is ported to Python.) | Where you run and test the app; whether the Qt app is tested on the real target OS | Windows native becomes the primary run/test environment; builders stay in WSL until ported; add a Windows CI job |
 | B2 | Which **OS + GPU combinations must be first-class** (tested, supported) vs best-effort? Windows: AMD / NVIDIA / Intel / CPU; macOS: Apple Silicon (MPS) / Intel; Linux | Test matrix, wheel choice, how much GPU-specific tuning we do | Tier 1: Windows + AMD/NVIDIA, Linux + AMD/NVIDIA; Tier 2: Apple Silicon (MPS), CPU-only everywhere |
 | B3 | Do you have a **Mac** and/or an **NVIDIA machine** (or a friend who does) to test on? | Without a Mac we cannot verify macOS builds or MPS behaviour; CI can only run CPU tests there | CPU-only CI on macOS, no MPS claims |
 | B4 | **Packaging model**: one big installer, or a small app that **downloads the matching PyTorch runtime** (CUDA / ROCm / MPS / CPU) on first run after detecting the hardware? | Installer size, first-run internet requirement, how "just works" it feels | Small app + on-demand runtime download (as ComfyUI/LM Studio-style tools do) |
@@ -77,7 +75,6 @@ Each has the **default I will use until you answer**, so nothing is blocked unle
 | ID | Question | Blocks / why it matters | Default until answered |
 |---|---|---|---|
 | F1 | Should the **hybrid GPU JPEG codec (C2)** come sooner? Evidence so far: CPU `turbo` ≈ 141–148 Mp/s, ~0.4 s / 50 pages | Whether a GPU decoder is worth its complexity | Later: detect/OCR first, profile a real chapter, then decide |
-| F2 | Where should **library / work / output** live (which drive), and how much disk can they use? Raw chapters are GBs; on WSL, `/mnt/c` is slow | Path config, performance | WSL ext4 (`~/omniscan`) |
 | F3 | How many **series / chapters** do you expect (dozens? hundreds?) | Queue/DB scaling, storage | Tens of series |
 | F4 | What **manual edits** do you expect to make most (text, box size, font size, glossary)? | Editor (M8) priorities | Text + font size + glossary lock |
 | F5 | Is **LAN / multi-editor mode** (B16: auth, edit log, page locks) needed soon? | Scheduling B13/B16 | Later |
@@ -93,4 +90,8 @@ Each has the **default I will use until you answer**, so nothing is blocked unle
 | 2026-09-18 | Builders | Flash-first (`glm-5.3-flash:cloud`), up to 2 concurrent; avoid deepseek/kimi as builders |
 | 2026-09-18 | Product | Long-term: one universal desktop app (any OS, any GPU) with a built-in professional debug/review area (M13) |
 | 2026-09-19 | Platform | The shipped app is one executable for all systems (Windows, macOS, Linux); development should not be tied to one OS |
+| 2026-09-19 | Environment | Windows 11 native is the primary dev/run environment; the project lives in `V:\OmniScan` (worktrees in `V:\OmniScan-wt`); the WSL distro is retired |
+| 2026-09-19 | Data location | Library / work / output live in `V:\OmniScan\data\` (gitignored), configured in `C:\Users\limex\.config\omniscan\config.toml` |
+| 2026-09-19 | GitHub | `gh` is logged in on Windows as Nawid3333; PR-based review is possible (default stays: merge locally, push to `main`) |
+| 2026-09-19 | GPU choice | `gpu.device = "auto"` picks the strongest discrete GPU (skips integrated GPUs); no hard-coded `cuda:0` |
 | 2026-09-19 | Process | Open questions are kept in this file and asked at natural pauses; a checkpoint lives in `docs/CHECKPOINT.md` |

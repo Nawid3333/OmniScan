@@ -7,6 +7,7 @@ import torch
 
 from omniscan.core.config import SlicerConfig
 from omniscan.core.schemas import SourceFile
+from omniscan.gpu.device import resolve_device
 from omniscan.slicer.bands import find_uniform_bands, row_stats
 from omniscan.slicer.cuts import plan_cuts
 from omniscan.slicer.slice import slice_strip
@@ -86,7 +87,7 @@ def test_gpu_performance() -> None:
     for k in range(60):
         blocks.append(art(2420, W, seed=k))
         blocks.append(solid(80, W, (255, 255, 255)))
-    strip = stack(*blocks).to("cuda")
+    strip = stack(*blocks).to(resolve_device())
     assert strip.shape[1] == 150_000
 
     slice_strip(strip, cfg)  # warm-up

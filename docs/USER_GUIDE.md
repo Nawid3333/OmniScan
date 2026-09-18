@@ -48,7 +48,7 @@ Every key in `config/default.toml`:
 | `paths.output_root` | where final English chapters live | yes |
 | `paths.promo_examples` | where promo-filter example images live | yes (`filter run`) |
 | `paths.models_dir` | local cache for model weights | no consumer yet |
-| `gpu.device` | torch device for the JPEG codec (`cuda:0`) | yes (falls back to CPU if CUDA is unavailable) |
+| `gpu.device` | torch device: `auto` (default: strongest discrete GPU, else Apple MPS, else CPU), `cpu`, `mps`, `cuda:N` | yes (a named GPU that is unreachable falls back to CPU) |
 | `gpu.vram_budget_gib` | VRAM budget in GiB | no consumer yet (used once the first model-loading stage lands) |
 | `gpu.codec` | `auto` / `rocjpeg` / `hybrid` / `turbo` | only `auto`/`turbo` work — both run the CPU `turbo` codec; `rocjpeg`/`hybrid` are not implemented yet |
 | `slicer.band_min_px` | smallest strip band kept, in px | yes |
@@ -463,15 +463,19 @@ missing or stale, so `slice` alone is enough for a fresh chapter.
 
 - **`doctor` rows.** `FAIL` means the machine is not ready — the command exits 1 and the pipeline
   would not run (e.g. torch is not a ROCm build, or the local Ollama is unreachable). `WARN` is
-  informational and does not affect the exit code: in WSL the `rocjpeg` WARN is expected (the GPU's
-  VCN media engine is not reachable today — no `/dev/dri` — so the CPU `turbo` codec runs), as are
-  the secrets/paths "not set / will be created on first use" rows.
-- **rocJPEG probe.** `uv run python scripts/rocjpeg_probe.py` exits 0 only when the hardware JPEG
-  decoder is usable; in WSL2 it fails today. Re-run it after every AMD driver / ROCm update — a
-  driver that exposes VCN would let the real decoder replace the CPU codec.
-- **`ollama_local` FAIL (unreachable).** Ollama runs on Windows; WSL reaches it at
-  `localhost:11434` only with mirrored networking. Set `networkingMode=mirrored` in `~/.wslconfig`,
-  then `wsl --shutdown` (see `docs/PLAN.md`).
+  informational and does not affect the exit code: the `rocjpeg` WARN is expected (the hardware JPEG
+  decoder is not usable in WSL — no `/dev/dri` — and is not present on Windows, so the CPU `turbo`
+  codec runs), as are the secrets/paths "not set / will be created on first use" rows. The `rocm`
+  row (`rocminfo`) only applies to Linux/WSL; on Windows it reports "not applicable".
+- **`torch_gpu` FAIL: "no usable discrete GPU".** `gpu.device = "auto"` skips integrated GPUs (on
+  Windows they are listed first and crash on the first kernel). Name a device explicitly
+  (`gpu.device = "cuda:1"`) only if `auto` picks the wrong one.
+- **rocJPEG probe (Linux/WSL).** `uv run python scripts/rocjpeg_probe.py` exits 0 only when the
+  hardware JPEG decoder is usable; in WSL2 it fails today. Re-run it after every AMD driver / ROCm
+  update — a driver that exposes VCN would let the real decoder replace the CPU codec.
+- **`ollama_local` FAIL (unreachable).** Start Ollama (it listens on `localhost:11434`). When
+  running inside WSL2 instead of Windows, WSL reaches the Windows Ollama only with mirrored
+  networking (`networkingMode=mirrored` in `~/.wslconfig`, then `wsl --shutdown`).
 - **`ollama_models` WARN (missing: …).** The named models are not pulled yet; install them in the
   Windows-side Ollama.
 - **VA-API noise before the `doctor` table.** Lines like `InitVAAPI(drm_node) returned …` are the

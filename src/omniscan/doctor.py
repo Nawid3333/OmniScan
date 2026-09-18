@@ -55,17 +55,26 @@ def check_torch_gpu() -> CheckResult:
         return CheckResult("torch_gpu", "FAIL", f"torch {torch.__version__} is not a ROCm build")
     if not torch.cuda.is_available():
         return CheckResult("torch_gpu", "FAIL", f"torch {torch.__version__} but cuda is not available")
-    props = torch.cuda.get_device_properties(0)
+    from omniscan.core.config import get_config
+    from omniscan.gpu.device import resolve_device
+
+    device = resolve_device(get_config().gpu.device)
+    if device.type != "cuda":
+        return CheckResult("torch_gpu", "FAIL", f"no usable discrete GPU (device resolves to {device})")
+    index = device.index if device.index is not None else torch.cuda.current_device()
+    props = torch.cuda.get_device_properties(index)
     name = props.name
     arch = getattr(props, "gcnArchName", "?")
-    free, total = torch.cuda.mem_get_info(0)
+    free, total = torch.cuda.mem_get_info(index)
     free_gib, total_gib = free / 2**30, total / 2**30
-    detail = f"{torch.__version__} | {name} | {arch} | {free_gib:.1f}/{total_gib:.1f} GiB free"
+    detail = f"{torch.__version__} | {name} | {arch} | {free_gib:.1f}/{total_gib:.1f} GiB free | cuda:{index}"
     return CheckResult("torch_gpu", "OK", detail)
 
 
 def check_rocm() -> CheckResult:
-    """Check `rocminfo` reports a gfx1201 agent."""
+    """Check `rocminfo` reports a gfx1201 agent (Linux/WSL only; on Windows torch_gpu covers the GPU)."""
+    if sys.platform == "win32":
+        return CheckResult("rocm", "OK", "not applicable on Windows (torch_gpu covers the GPU)")
     try:
         proc = subprocess.run(["rocminfo"], capture_output=True, text=True, timeout=30)
     except FileNotFoundError:

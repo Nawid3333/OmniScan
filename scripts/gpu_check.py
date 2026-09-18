@@ -5,6 +5,8 @@ import time
 
 import torch
 
+from omniscan.gpu.device import resolve_device
+
 
 def bench(fn, iters: int) -> float:
     fn()
@@ -27,7 +29,11 @@ def main() -> int:
     if not torch.cuda.is_available():
         print("FAIL: torch.cuda.is_available() is False")
         return 1
-    dev = torch.device("cuda:0")
+    dev = resolve_device()
+    if dev.type != "cuda":
+        print(f"FAIL: no usable discrete GPU (auto-selection resolved to {dev})")
+        return 1
+    torch.cuda.set_device(dev)  # the bare torch.cuda.synchronize() calls below must wait on THIS card
     props = torch.cuda.get_device_properties(dev)
     arch = getattr(props, "gcnArchName", "?")
     print(f"device: {props.name}  arch: {arch}  CUs: {props.multi_processor_count}")

@@ -7,7 +7,7 @@
 # output_root  = "/home/limex/omniscan/output"
 
 [gpu]
-device = "cuda:0"
+device = "auto"          # auto (strongest discrete GPU, else MPS, else CPU) | cpu | mps | cuda:N
 vram_budget_gib = 14.5
 codec = "auto"          # auto | rocjpeg | hybrid | turbo (turbo = benchmark baseline only)
 

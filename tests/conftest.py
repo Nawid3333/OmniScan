@@ -14,5 +14,9 @@ def _skip_gpu_when_unavailable(request: pytest.FixtureRequest) -> None:
         import torch
     except Exception:
         pytest.skip("torch not importable")
-    if not torch.cuda.is_available():
-        pytest.skip("no GPU available")
+    from omniscan.gpu.device import resolve_device
+
+    device = resolve_device("auto")
+    if device.type != "cuda":
+        pytest.skip("no usable discrete GPU available")
+    torch.cuda.set_device(device)  # bare "cuda" and torch.cuda.synchronize() then mean the right card

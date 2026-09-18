@@ -6,6 +6,7 @@ import pytest
 import torch
 
 from omniscan.core.config import SlicerConfig
+from omniscan.gpu.device import resolve_device
 from omniscan.slicer.bands import find_uniform_bands, row_stats
 from omniscan.slicer.cuts import plan_cuts
 from tests.fixtures.strips import art, gradient, solid, stack
@@ -97,5 +98,5 @@ def test_cuts_on_gpu_match_cpu() -> None:
         art(3000, W, 23),
     )
     cpu = _plan(strip, cfg)
-    gpu = _plan(strip.to("cuda"), cfg)
+    gpu = _plan(strip.to(resolve_device()), cfg)
     assert [(c.y, c.forced) for c in cpu] == [(c.y, c.forced) for c in gpu]
