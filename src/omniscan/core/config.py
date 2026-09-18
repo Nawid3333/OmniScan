@@ -46,6 +46,22 @@ class SlicerConfig(BaseModel):
     max_drift: float = 2.0
 
 
+class DetectConfig(BaseModel):
+    repo: str = "ogkalu/comic-text-and-bubble-detector"  # RT-DETR-v2: bubble / text_bubble / text_free
+    revision: str | None = None  # pin a HF commit hash once a model has been validated
+    threshold: float = 0.3  # minimum detector score kept before merging
+    tile_px: int = 1280  # tile side in strip pixels (capped at the strip width); resized to 640 for the model
+    overlap: float = (
+        0.5  # fraction of a tile shared with its neighbour (every object <= tile*overlap fits whole)
+    )
+    batch_size: int = 8  # tiles per forward pass
+    nms_iou: float = 0.5  # same-class IoU above which the lower-scored box is dropped
+    contain_thr: float = 0.85  # a tile-edge box mostly inside a same-class box is dropped
+    edge_penalty: float = 0.15  # score penalty for boxes cut by an internal tile edge
+    merge_bubble_text: bool = True  # several text boxes inside one bubble become one region
+    reading_direction: Literal["ltr", "rtl"] = "ltr"  # order of regions within a row
+
+
 class OllamaConfig(BaseModel):
     local_url: str = "http://localhost:11434"
     cloud_url: str = "https://ollama.com"
@@ -118,6 +134,7 @@ class Config(BaseSettings):
     paths: PathsConfig = PathsConfig()
     gpu: GpuConfig = GpuConfig()
     slicer: SlicerConfig = SlicerConfig()
+    detect: DetectConfig = DetectConfig()
     ollama: OllamaConfig = OllamaConfig()
     relay: RelayConfig = RelayConfig()
     ocr: OcrConfig = OcrConfig()

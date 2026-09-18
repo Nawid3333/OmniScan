@@ -7,10 +7,10 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from omniscan.core.config import Config
+from omniscan.core.paths import list_images
 from omniscan.core.schemas import IngestArtifact
 from omniscan.core.stage import ChapterContext
-from omniscan.gpu.codec.select import get_codec
-from omniscan.ingest.strip import build_strip, jpeg_paths
+from omniscan.ingest.strip import load_strip
 from omniscan.slicer import slice_strip
 
 
@@ -23,7 +23,7 @@ class SliceStage:
 
     def inputs(self, ctx: ChapterContext) -> list[Path]:
         """Files whose content determines this stage's output (raw images and/or upstream artifacts)."""
-        return [ctx.paths.artifact("ingest.json")]
+        return [ctx.paths.artifact("ingest.json"), *list_images(ctx.paths.raw_dir)]
 
     def outputs(self, ctx: ChapterContext) -> list[str]:
         """Artifact names (relative to the chapter work dir) this stage writes."""
@@ -40,21 +40,8 @@ class SliceStage:
             raise FileNotFoundError("ingest.json missing — run the ingest stage first")
         ingest = IngestArtifact.load(ingest_path)
 
-        codec = get_codec(ctx.cfg)
-        try:
-            strip = ctx.lazy(
-                "strip",
-                lambda: build_strip(
-                    ingest,
-                    jpeg_paths(ingest, ctx.paths.raw_dir, ctx.paths.work_dir / "converted"),
-                    codec,
-                ),
-            )
-            slices = slice_strip(strip, ctx.cfg.slicer, ingest.files)
-        finally:
-            close = getattr(codec, "close", None)
-            if close is not None:
-                close()
+        strip = load_strip(ctx, ingest)
+        slices = slice_strip(strip, ctx.cfg.slicer, ingest.files)
 
         slices.save(ctx.paths.artifact("slices.json"))
         return {

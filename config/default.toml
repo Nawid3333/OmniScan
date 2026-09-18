@@ -20,6 +20,18 @@ hard_max_height = 15000
 uniform_tol = 10
 max_drift = 2.0
 
+[detect]
+repo = "ogkalu/comic-text-and-bubble-detector"
+threshold = 0.3
+tile_px = 1280
+overlap = 0.5
+batch_size = 8
+nms_iou = 0.5
+contain_thr = 0.85
+edge_penalty = 0.15
+merge_bubble_text = true
+reading_direction = "ltr"   # ltr | rtl (manga)
+
 [ollama]
 local_url = "http://localhost:11434"
 cloud_url = "https://ollama.com"

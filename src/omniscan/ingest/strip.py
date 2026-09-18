@@ -8,7 +8,9 @@ from pathlib import Path
 import torch
 
 from omniscan.core.schemas import IngestArtifact
+from omniscan.core.stage import ChapterContext
 from omniscan.gpu.codec.base import JpegCodec
+from omniscan.gpu.codec.select import get_codec
 
 
 def jpeg_paths(ingest: IngestArtifact, raw_dir: Path, cache_dir: Path) -> list[Path]:
@@ -75,3 +77,20 @@ def _resize(image: torch.Tensor, height: int, width: int) -> torch.Tensor:
         .to(torch.uint8)
         .squeeze(0)
     )
+
+
+def load_strip(ctx: ChapterContext, ingest: IngestArtifact) -> torch.Tensor:
+    """The chapter strip (uint8 [3, H, W] on the configured device), decoded once per chapter pass and shared."""
+
+    def build() -> torch.Tensor:
+        codec = get_codec(ctx.cfg)
+        try:
+            return build_strip(
+                ingest, jpeg_paths(ingest, ctx.paths.raw_dir, ctx.paths.work_dir / "converted"), codec
+            )
+        finally:
+            close = getattr(codec, "close", None)
+            if close is not None:
+                close()
+
+    return ctx.lazy("strip", build)
