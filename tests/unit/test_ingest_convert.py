@@ -8,13 +8,12 @@ from PIL import Image
 from tests.fixtures import images
 
 from omniscan.core.manifest import hash_file
+from omniscan.ingest.convert import convert_to_jpeg, needs_conversion
 
 
 def test_plain_jpeg_needs_no_conversion(tmp_path: Path) -> None:
     src = images.plain_jpeg(tmp_path / "page.jpg")
     assert src.exists()
-    from omniscan.ingest.convert import convert_to_jpeg, needs_conversion
-
     assert needs_conversion(src) is False
     out = convert_to_jpeg(src, tmp_path / "cache", 0)
     assert out.converted is False
@@ -24,8 +23,6 @@ def test_plain_jpeg_needs_no_conversion(tmp_path: Path) -> None:
 
 def test_rotated_jpeg_is_upright_after_conversion(tmp_path: Path) -> None:
     src = images.rotated_jpeg(tmp_path / "page.jpg", size=(300, 400))
-    from omniscan.ingest.convert import convert_to_jpeg, needs_conversion
-
     assert needs_conversion(src) is True
     cache = tmp_path / "cache"
     out = convert_to_jpeg(src, cache, 3)
@@ -40,8 +37,6 @@ def test_rotated_jpeg_is_upright_after_conversion(tmp_path: Path) -> None:
 
 def test_png_with_alpha_flattens_to_white(tmp_path: Path) -> None:
     src = images.png_with_alpha(tmp_path / "page.png")
-    from omniscan.ingest.convert import convert_to_jpeg, needs_conversion
-
     assert needs_conversion(src) is True
     out = convert_to_jpeg(src, tmp_path / "cache", 0)
     assert out.converted is True
@@ -51,8 +46,6 @@ def test_png_with_alpha_flattens_to_white(tmp_path: Path) -> None:
 
 
 def test_cmyk_and_grayscale_convert_to_rgb(tmp_path: Path) -> None:
-    from omniscan.ingest.convert import convert_to_jpeg, needs_conversion
-
     for name, fn in (("cmyk", images.cmyk_jpeg), ("gray", images.grayscale_jpeg)):
         src = fn(tmp_path / f"{name}.jpg")
         assert needs_conversion(src) is True, name
@@ -64,8 +57,6 @@ def test_cmyk_and_grayscale_convert_to_rgb(tmp_path: Path) -> None:
 
 def test_webp_suffix_triggers_conversion(tmp_path: Path) -> None:
     src = images.webp_image(tmp_path / "page.webp")
-    from omniscan.ingest.convert import convert_to_jpeg, needs_conversion
-
     assert needs_conversion(src) is True
     out = convert_to_jpeg(src, tmp_path / "cache", 0)
     assert out.converted is True
@@ -73,8 +64,6 @@ def test_webp_suffix_triggers_conversion(tmp_path: Path) -> None:
 
 
 def test_rerun_after_source_change_writes_new_bytes(tmp_path: Path) -> None:
-    from omniscan.ingest.convert import convert_to_jpeg
-
     src = images.rotated_jpeg(tmp_path / "page.jpg", color=(60, 200, 60))
     cache = tmp_path / "cache"
     first = convert_to_jpeg(src, cache, 0)
