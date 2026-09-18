@@ -46,19 +46,19 @@
   let cutLines = $derived.by((): CutLine[] => {
     if (!slicesArtifact || files.length === 0) return [];
     const lines: CutLine[] = [];
-    const addBoundary = (yStrip: number, slice: Slice | null): void => {
+    const slices = slicesArtifact.slices;
+    // Slice.forced_cut means "the cut at THIS slice's y1 was forced" (core/schemas.py), so the line at
+    // slice[i].y0 is red when the PREVIOUS slice's forced_cut is set. The first line has no preceding cut.
+    slices.forEach((slice: Slice, i: number) => {
       lines.push({
-        y: stripYToStackY(files, yStrip),
-        forced: slice !== null && slice.forced_cut,
-        label: slice === null ? null : String(slice.y1 - slice.y0),
+        y: stripYToStackY(files, slice.y0),
+        forced: i > 0 && slices[i - 1].forced_cut,
+        label: String(slice.y1 - slice.y0),
       });
-    };
-    for (const slice of slicesArtifact.slices) {
-      addBoundary(slice.y0, slice);
-    }
-    const last = slicesArtifact.slices.at(-1);
+    });
+    const last = slices.at(-1);
     if (last) {
-      addBoundary(last.y1, null);
+      lines.push({ y: stripYToStackY(files, last.y1), forced: last.forced_cut, label: null });
     }
     return lines;
   });
