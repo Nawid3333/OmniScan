@@ -63,6 +63,8 @@ re-cuts slices, so it belongs to export).
    detection, `doctor` check that translation-profile models exist, model pinning/integrity.
 
 ## Waiting on you (the user)
+The full list (about 50 questions with my defaults) is **[docs/OPEN_QUESTIONS.md](OPEN_QUESTIONS.md)** — ask 2–3 of them at natural pauses
+and record answers there. The most pressing ones:
 - **1–2 real Korean raw chapters** (`omniscan import "<folder>" --series Sample --chapter "Chapter 1"`): needed to tune
   detection/OCR on real Korean text. Everything so far was validated on English/synthetic material.
 - Optional: `gh auth login` in WSL (enables PRs); Cloudflare token + account id, extract.pics key, and the hook URL
