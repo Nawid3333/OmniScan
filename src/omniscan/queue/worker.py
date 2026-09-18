@@ -59,7 +59,7 @@ def run_queue(
         try:
             executor(job)
         except PermanentJobError as exc:
-            final = store.fail(job.id, f"{type(exc).__name__}: {exc}", retry=False)
+            final = store.fail(job.id, str(exc), retry=False)
             finished.append(final)
             failed += 1
             _notify(notifier, "job_failed", final)

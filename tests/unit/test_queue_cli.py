@@ -121,7 +121,7 @@ def test_queue_run_fails_permanent_stage(patched_cfg: Config) -> None:
 
     result = runner.invoke(app, ["queue", "run"])
     assert result.exit_code == 1
-    assert "job 1 failed: PermanentJobError: stage 'detect' is not implemented yet" in result.output
+    assert "job 1 failed: stage 'detect' is not implemented yet" in result.output
     assert "failed=1" in result.output
 
     result = runner.invoke(app, ["queue", "list"])

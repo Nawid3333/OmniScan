@@ -96,7 +96,7 @@ def test_permanent_job_error_does_not_retry(store: QueueStore) -> None:
     final = summary.finished[0]
     assert final.status == "failed"
     assert final.attempts == 1
-    assert final.error == "PermanentJobError: stage 'detect' is not implemented yet"
+    assert final.error == "stage 'detect' is not implemented yet"
     assert summary.done == 0 and summary.failed == 1 and summary.retried == 0
     assert events == ["job_failed", "queue_empty"]
 
