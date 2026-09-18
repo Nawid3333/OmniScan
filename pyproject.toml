@@ -41,6 +41,11 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/omniscan"]
 
+# AMD lists  (Linux-only wheels) as an unconditional torch dependency; Windows has no triton and does not
+# need it (only torch.compile does), so require it on Linux only. Keeps uv.lock installable on Windows.
+[tool.uv]
+override-dependencies = ["triton; sys_platform == 'linux'"]
+
 # AMD ROCm 10 wheel index first (torch, torchvision, triton, rocm-sdk-*, amd-*-device-gfx1201).
 # first-index strategy: a package found on the AMD index is only taken from there (prevents
 # dependency confusion with same-named PyPI projects like "rocm").

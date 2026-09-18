@@ -2,6 +2,9 @@ version = 1
 revision = 3
 requires-python = "==3.14.*"
 
+[manifest]
+overrides = [{ name = "triton", marker = "sys_platform == 'linux'" }]
+
 [[package]]
 name = "amd-torch-device-gfx12-0"
 version = "2.13.0+rocm10.0.0"
@@ -879,7 +882,7 @@ dependencies = [
     { name = "rocm-bootstrap" },
     { name = "setuptools" },
     { name = "sympy" },
-    { name = "triton" },
+    { name = "triton", marker = "sys_platform == 'linux'" },
     { name = "typing-extensions" },
 ]
 wheels = [
