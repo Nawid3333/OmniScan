@@ -1,0 +1,42 @@
+# Python / uv
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.pyright/
+
+# Data — never commit raws, outputs, models (copyright + size)
+library/
+work/
+output/
+samples/
+models/
+*.npz
+
+# Secrets
+.env
+.env.*
+secrets.env
+
+# Builder agent logs
+.builder/logs/
+
+# Relay (Cloudflare Worker)
+relay/node_modules/
+relay/.wrangler/
+relay/.dev.vars
+
+# Web frontend
+src/omniscan/web/frontend/node_modules/
+src/omniscan/web/frontend/dist/
+
+# Editors / OS
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db

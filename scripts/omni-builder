@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# omni-builder — run a task card headless with Claude Code on Ollama (GLM builder).
+#
+# Usage:
+#   omni-builder run <CARD_ID> [--model MODEL] [--max-turns N]   # new run in its own worktree
+#   omni-builder resume <CARD_ID> <FEEDBACK_FILE> [--model MODEL] # continue last session with review feedback
+#   omni-builder smoke                                            # 1-turn connectivity test
+#
+# Env overrides: OMNI_REPO (default ~/projects/omniscan), OMNI_WT (default ~/projects/omniscan-wt),
+#                OMNI_SLOTS (parallel builders, default 2), OLLAMA_URL (default http://localhost:11434)
+set -euo pipefail
+
+REPO="${OMNI_REPO:-$HOME/projects/omniscan}"
+WT_ROOT="${OMNI_WT:-$HOME/projects/omniscan-wt}"
+SLOTS="${OMNI_SLOTS:-2}"
+OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
+LOG_DIR="$REPO/.builder/logs"
+LOCK_DIR="${XDG_RUNTIME_DIR:-/tmp}/omni-builder"
+MODEL="glm-5.3-flash:cloud"
+MAX_TURNS=150
+
+die() { echo "omni-builder: $*" >&2; exit 1; }
+
+export ANTHROPIC_BASE_URL="$OLLAMA_URL"
+export ANTHROPIC_AUTH_TOKEN="ollama"
+export ANTHROPIC_API_KEY=""
+export ANTHROPIC_DEFAULT_HAIKU_MODEL="glm-5.3-flash:cloud"
+export CLAUDE_CODE_SUBAGENT_MODEL="glm-5.3-flash:cloud"
+export CLAUDE_CODE_MAX_OUTPUT_TOKENS="32000"
+export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1"
+export DISABLE_AUTOUPDATER="1"
+export API_TIMEOUT_MS="600000"
+
+acquire_slot() {
+  mkdir -p "$LOCK_DIR"
+  while true; do
+    for i in $(seq 1 "$SLOTS"); do
+      exec {SLOT_FD}>"$LOCK_DIR/slot$i.lock"
+      if flock -n "$SLOT_FD"; then
+        echo "omni-builder: acquired slot $i/$SLOTS" >&2
+        return 0
+      fi
+      exec {SLOT_FD}>&-
+    done
+    echo "omni-builder: all $SLOTS slots busy, waiting..." >&2
+    sleep 30
+  done
+}
+
+check_ollama() {
+  curl -fsS -m 5 "$OLLAMA_URL/api/version" >/dev/null \
+    || die "Ollama not reachable at $OLLAMA_URL (is WSL mirrored networking on and Ollama running on Windows?)"
+}
+
+parse_opts() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --model) MODEL="$2"; shift 2 ;;
+      --max-turns) MAX_TURNS="$2"; shift 2 ;;
+      *) die "unknown option: $1" ;;
+    esac
+  done
+}
+
+run_claude() {  # $1 = workdir, $2 = log file, rest = extra claude args
+  local workdir="$1" log="$2"; shift 2
+  cd "$workdir"
+  claude -p --model "$MODEL" --max-turns "$MAX_TURNS" \
+    --permission-mode acceptEdits --settings "$REPO/.builder/settings.json" \
+    --output-format stream-json --verbose "$@" | tee -a "$log" \
+    | grep -o '"session_id":"[^"]*"' | head -1 | cut -d'"' -f4 > "$log.session.tmp" || true
+  if [[ -s "$log.session.tmp" ]]; then mv "$log.session.tmp" "${log%.jsonl}.session"; else rm -f "$log.session.tmp"; fi
+}
+
+cmd="${1:-}"; shift || true
+mkdir -p "$LOG_DIR"
+case "$cmd" in
+  smoke)
+    parse_opts "$@"; check_ollama
+    cd "$REPO"
+    claude -p --model "$MODEL" --max-turns 3 --settings "$REPO/.builder/settings.json" \
+      "Run: uv run python --version. Then reply with exactly one line: SMOKE OK <python version>."
+    ;;
+  run)
+    card="${1:-}"; [[ -n "$card" ]] || die "usage: omni-builder run <CARD_ID>"; shift
+    parse_opts "$@"
+    spec="$REPO/docs/tasks/$card.md"; [[ -f "$spec" ]] || die "missing task card $spec"
+    check_ollama; acquire_slot
+    wt="$WT_ROOT/$card"
+    if [[ ! -d "$wt" ]]; then
+      git -C "$REPO" worktree add -q "$wt" -b "$card" main
+      # share the venv to avoid re-downloading multi-GB ROCm wheels per worktree
+      ln -s "$REPO/.venv" "$wt/.venv"
+    fi
+    log="$LOG_DIR/$card.jsonl"
+    echo "omni-builder: running $card with $MODEL in $wt (log: $log)" >&2
+    run_claude "$wt" "$log" "$(cat "$spec")"
+    echo "omni-builder: $card finished; report: $wt/REPORT.md" >&2
+    ;;
+  resume)
+    card="${1:-}"; feedback="${2:-}"; [[ -n "$card" && -f "$feedback" ]] || die "usage: omni-builder resume <CARD_ID> <FEEDBACK_FILE>"; shift 2
+    parse_opts "$@"
+    session_file="$LOG_DIR/$card.session"; [[ -s "$session_file" ]] || die "no session recorded for $card"
+    check_ollama; acquire_slot
+    run_claude "$WT_ROOT/$card" "$LOG_DIR/$card.jsonl" --resume "$(cat "$session_file")" "$(cat "$feedback")"
+    ;;
+  *)
+    sed -n '2,11p' "$0"; exit 1 ;;
+esac

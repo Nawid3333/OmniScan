@@ -1,0 +1,72 @@
+[project]
+name = "omniscan"
+version = "0.1.0"
+description = "GPU end-to-end manhwa/manga translator (KO/ZH/JA -> EN) for AMD ROCm"
+readme = "README.md"
+requires-python = ">=3.14,<3.15"
+dependencies = [
+    # ROCm 10 PyTorch for the RX 9070 XT (gfx1201) — served by AMD's index below
+    "torch[device-gfx1201]==2.13.0+rocm10.0.0",
+    "torchvision[device-gfx1201]==0.28.0+rocm10.0.0",
+    "numpy>=2.3",
+    "pillow>=11.3",
+    "pydantic>=2.11",
+    "pydantic-settings>=2.10",
+    "typer>=0.16",
+    "rich>=14",
+    "httpx>=0.28",
+    "psutil>=7",
+    "transformers>=5.4",
+    "huggingface-hub>=1.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4",
+    "ruff>=0.12",
+    "pyright>=1.1.403",
+    "pre-commit>=4.2",
+]
+
+[project.scripts]
+omniscan = "omniscan.cli:app"
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/omniscan"]
+
+# AMD ROCm 10 wheel index first (torch, torchvision, triton, rocm-sdk-*, amd-*-device-gfx1201).
+# first-index strategy: a package found on the AMD index is only taken from there (prevents
+# dependency confusion with same-named PyPI projects like "rocm").
+[[tool.uv.index]]
+name = "rocm10"
+url = "https://stable.repo.amd.com/rocm/whl-next/"
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+default = true
+
+[tool.ruff]
+line-length = 110
+target-version = "py314"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "PTH", "N"]
+
+[tool.pyright]
+pythonVersion = "3.14"
+include = ["src", "tests"]
+typeCheckingMode = "standard"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -q"
+markers = [
+    "gpu: needs the ROCm GPU",
+    "network: needs network / Ollama",
+]

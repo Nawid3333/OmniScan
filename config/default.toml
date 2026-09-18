@@ -1,0 +1,26 @@
+# OmniScan defaults. Override per machine in ~/.config/omniscan/config.toml
+# or with env vars like OMNISCAN_GPU__VRAM_BUDGET_GIB=13. Secrets never go here.
+
+[paths]
+# library_root = "/home/limex/omniscan/library"
+# work_root    = "/home/limex/omniscan/work"
+# output_root  = "/home/limex/omniscan/output"
+
+[gpu]
+device = "cuda:0"
+vram_budget_gib = 14.5
+codec = "auto"          # auto | rocjpeg | hybrid | turbo (turbo = benchmark baseline only)
+
+[slicer]
+band_min_px = 50
+target_height = 3000
+min_height = 1500
+max_height = 6000
+hard_max_height = 15000
+uniform_tol = 10
+max_drift = 2.0
+
+[ollama]
+local_url = "http://localhost:11434"
+cloud_url = "https://ollama.com"
+request_timeout_s = 600.0
