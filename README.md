@@ -82,4 +82,5 @@ See the full key reference and per-command details in the user guide:
   web viewer, troubleshooting
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — architecture and contracts
 - [docs/PLAN.md](docs/PLAN.md) — the full build plan
+- [docs/CHECKPOINT.md](docs/CHECKPOINT.md) — current state, evidence gathered, and how to resume
 - [CLAUDE.md](CLAUDE.md) — contributor/agent rules

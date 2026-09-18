@@ -1,5 +1,7 @@
 # OmniScan — Build Plan (Manhwa/Manga Translator)
 
+> **Current state and how to resume: [docs/CHECKPOINT.md](CHECKPOINT.md).** This file is the plan; that one is the snapshot.
+
 ## Context
 Goal: drop in raw Korean/Chinese/Japanese chapters (`<Series>/Chapter N/`) and get back English slices that look like an official release. The pipeline removes and inpaints the original text, letters English into the bubbles, keeps names consistent across hundreds of chapters, and later replaces SFX.
 Greenfield project. It is built in **WSL2 only** (no dual boot) and runs **GPU end-to-end** on the RX 9070 XT, using as much VRAM as possible.
