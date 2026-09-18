@@ -65,3 +65,14 @@ def webp_image(path: Path, size: tuple[int, int] = (250, 180)) -> Path:
     """Write a plain RGB WebP."""
     Image.new("RGB", size, (120, 40, 200)).save(path, format="WEBP")
     return path
+
+
+def gradient_jpeg(path: Path, size: tuple[int, int] = (400, 300), invert: bool = False) -> Path:
+    """Write a JPEG with a left-to-right luminance ramp (falling when inverted); non-uniform content."""
+    w, h = size
+    img = Image.new("L", size)
+    img.putdata(
+        [(w - 1 - x) * 255 // (w - 1) if invert else x * 255 // (w - 1) for y in range(h) for x in range(w)]
+    )
+    img.convert("RGB").save(path, format="JPEG", quality=95)
+    return path
