@@ -295,7 +295,8 @@ Run the web debug tool's API (pair with `npm run dev` in `webui/` for the UI).
 | `--reload` | auto-reload on code changes |
 
 Serves existing artifacts read-only: `/api/series`, `/api/series/{s}/chapters`,
-`/api/series/{s}/chapters/{c}/ingest`, `/api/series/{s}/chapters/{c}/slices` and
+`/api/series/{s}/chapters/{c}/ingest`, `/api/series/{s}/chapters/{c}/slices`,
+`/api/series/{s}/chapters/{c}/ocr` (the OCR stage's `ocr.json`) and
 `/api/series/{s}/chapters/{c}/pages/{index}` (raw page bytes). GET-only; it never writes.
 
 ```bash
@@ -325,8 +326,16 @@ The Slicer view stacks the raw pages and overlays:
 - the **cut lines** between slices (navy; a **forced cut** is red),
 - the **original raw-file boundaries** as dashed gray lines.
 
-There is no OCR view yet (no `OcrView.svelte` in `webui/src/`). The whole tool is read-only: the API
-only answers GET requests and never writes artifacts.
+The **OCR view** (switch with the `OCR` button above the picker) draws every OCR region from the
+chapter's `ocr.json` on the same stacked pages. Boxes are colored by kind (bubble text blue, free text
+orange, SFX purple, watermark gray); the label is `reading order · confidence`. A **dashed** outline marks a
+low-confidence region (confidence below 0.5) and a **yellow** outer box plus a `≠` marks a region where the
+second-opinion reading (`ocr_alt`) differs from the main text. Checkboxes hide/show kinds, and clicking a
+region opens a side panel with its full detail (id, language, orientation, per-line engine/score/text).
+No OCR stage exists yet, so this view only has data once a chapter has an `ocr.json`; until then it shows
+`no ocr.json yet`.
+
+The whole tool is read-only: the API only answers GET requests and never writes artifacts.
 
 ## Resuming and re-running
 

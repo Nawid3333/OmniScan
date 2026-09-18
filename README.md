@@ -24,7 +24,7 @@ packaged into CBZ/PDF.
 | typeset | not implemented |
 | export | not implemented |
 | pack | working — `omniscan pack` (CBZ/PDF of finished output) |
-| web viewer | working — `omniscan serve` + `npm run dev` (read-only Slicer view) |
+| web viewer | working — `omniscan serve` + `npm run dev` (read-only Slicer view and OCR view; the OCR view needs an `ocr.json`, which no stage produces yet) |
 
 "working" = usable from the CLI today. "module only" = the code and its own sub-commands exist, but no
 pipeline stage consumes it yet.
