@@ -26,6 +26,12 @@ reference`. Web views: Slicer, OCR (reads `ocr.json`), Translation, Reader, Filt
   params, classes bubble / text_bubble / text_free) loads and runs on the RX 9070 XT via `transformers`; on real pages it
   finds the speech bubbles, the text inside and free-standing SFX (missed two small "PLOP" SFX at threshold 0.3).
   Not benchmarked for speed; fp16 untested.
+- **Windows native works** (`docs/benchmarks/windows-native.md`): the pinned ROCm PyTorch installs from AMD's `win_amd64`
+  wheels and runs on the RX 9070 XT; `uv sync --frozen` works (after a `triton` override, commit `56847f9`); the whole test
+  suite passes in 18 s (WSL ≈ 87 s); the detector gives identical detections (fp16 ≈ 2.4× fp32 on both); PaddleOCR
+  Korean/Chinese/Japanese recognition is correct; `omniscan doctor` runs. So neither WSL nor a Linux container is required.
+  Open items: the iGPU is `cuda:0` on Windows and crashes (use `HIP_VISIBLE_DEVICES=1` until real GPU selection exists),
+  `doctor` has Linux-only rows, `scripts/omni-builder` is bash (port to Python), `.gitattributes` for line endings.
 - **Real-data slice run:** two Pepper&Carrot episodes (CC BY 4.0, David Revoy) in `~/omniscan/library/PepperCarrot/`
   (with `ATTRIBUTION.txt`; never in the repo). 2481 px pages stitched to 11 222 / 19 078 px strips, cut into 3 / 6 slices,
   no forced cuts, 1.8 s / 0.6 s. Artifacts in `~/omniscan/work/PepperCarrot/`.
@@ -58,7 +64,10 @@ re-cuts slices, so it belongs to export).
    `scripts/paddle_models_check.py`; detection / line grouping is not).
 2. C5 judge + story memory + glossary post-check (text-only work; can start before OCR exists), then C6 inpaint,
    C7 typeset, export.
-3. Unblocked builder cards (flash, up to 2 at a time): **acquire plumbing** (sources.toml, resumable downloader, non-chapter
+3. **Cross-platform groundwork** (from the Windows check): GPU selection by per-device smoke test (skip the iGPU),
+   platform-aware `doctor`, port `scripts/omni-builder` to Python, `.gitattributes` (`* text=auto eol=lf`), a Windows CPU CI job,
+   then a first PyInstaller/Nuitka smoke build on Windows.
+4. Unblocked builder cards (flash, up to 2 at a time): **acquire plumbing** (sources.toml, resumable downloader, non-chapter
    image filter, DRM-domain warning — everything except the extract.pics request/response shapes), duplicate-chapter
    detection, `doctor` check that translation-profile models exist, model pinning/integrity.
 
