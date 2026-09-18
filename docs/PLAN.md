@@ -67,7 +67,7 @@ Work is split: a **GLM builder agent** (Claude Code CLI on your Ollama, **glm-5.
 **Who builds what (so Claude only does the heavy parts):**
 | GLM builder (glm-5.3-flash via Ollama) — ~20 cards, most of the code volume | Claude (Opus) — ~12 cards + all reviews |
 |---|---|
-| B1 scaffold + `doctor` (pilot) · B2 turbo baseline + codec benchmark harness · B3 ingest · B4 slicer · B5/B7/B10/B11 debug views · B6 promo filter · B8 Ollama client · B9 glossary store · B12 export + reader · B13 editor UI · B14 page mode · B15 watermark (fixed) · B16 LAN mode · B17 Docker · B18 Cloudflare relay + GitHub Action · B19 `acquire` downloader · B20 reference-mode infra + Compare view | M0 environment · C1 contracts/VRAM manager · C2 hybrid GPU JPEG codec · C3/C4 detection + OCR · C5 translation/judge/glossary logic · C6 inpainting · C7 typesetting · C8 incremental recompute · C9/C10 zh/ja packs · C11 watermark detector · C12 reference alignment + calibration · SFX (M10) |
+| B1 scaffold + `doctor` (pilot) · B2 turbo baseline + codec benchmark harness · B3 ingest · B4 slicer · B5/B7/B10/B11 debug views · B6 promo filter · B8 Ollama client · B9 glossary store · B12 export + reader · B13 editor UI · B14 page mode · B15 watermark (fixed) · B16 LAN mode · B17 Docker · B18 Cloudflare relay + GitHub Action · B19 `acquire` downloader (batch + ad-hoc paste-URL) · B20 reference-mode infra + Compare view · B21 local import (loose files/folders → library layout) · B22 export formats (CBZ/PDF) · B23 job queue + notifications | M0 environment · C1 contracts/VRAM manager · C2 hybrid GPU JPEG codec · C3/C4 detection + OCR · C5 translation/judge/glossary logic · C6 inpainting · C7 typesetting · C8 incremental recompute · C9/C10 zh/ja packs · C11 watermark detector · C12 reference alignment + calibration · SFX (M10) |
 | Also: bulk research (reading library docs into `docs/research/`), writing tests/fixtures, docs | Also: writing every task card, reviewing every PR, fixing what fails review twice |
 
 The builder starts right after M0: **B1 is the pilot** (it calibrates card style and token/turn budget), then B2/B3/B4 and B18/B19 run on the two builder slots while Claude builds C1/C2.
@@ -255,7 +255,29 @@ tests/ unit/ fixtures/synthetic/ e2e/      fonts/ (OFL defaults + yours)     mod
   - a WebSocket client receives an event within 1 s
   - events missed while offline are replayed via `/events?after=`
 - **B19:** `omniscan acquire` (`sources.toml`, batch submit, WebSocket wait, ordered + resumable download, ZIP fallback, non-chapter image filter). *Accept:* a mocked extract.pics + relay end-to-end test writes `Chapter N/0001.jpg…` in page order.
+  - **Ad-hoc mode:** `omniscan acquire <Series> --url <chapter_url> [--url <chapter_url> ...]` (or one URL per line piped
+    on stdin) runs a single extraction for just those links without editing `sources.toml` first — the quick path
+    for "a new chapter just came out, grab it now." Auto-detects the chapter number from the URL/page title when
+    possible; falls back to prompting or `--chapter N`. On success it also appends the link to `sources.toml` so
+    the series' link history stays complete for later re-runs.
+  - **Scope boundary:** acquisition targets scanlation/fan raw aggregators (the kind extract.pics already points
+    at), not paid DRM-protected official platforms (Naver Webtoon, Kakao(Page), Lezhin, Ridibooks, Bomtoon,
+    Kuaikan) — several of those render pages as obfuscated canvases specifically to block extraction, and bypassing
+    that is a different, much riskier problem than this project takes on. `doctor`/`acquire` should recognize and
+    warn on a known DRM-platform domain rather than silently failing weirdly.
 - **[You]:** paste the hook URL into the extract.pics project → live test on one chapter URL.
+
+### M2c — Local import [B]
+- **B21:** `omniscan import <path> [--series NAME] [--chapter N]` — the second acquisition path, for raws you
+  already have on disk (a scanlation group's own working files, a manually downloaded archive, a USB drive of
+  scans) instead of pulling from the network. Accepts a single folder, a folder-of-folders (auto-splitting into
+  chapters by subfolder name via the existing `chapter_number()`/`natural_key()` parsing in `core/paths.py`), or a
+  loose flat dump of images (grouped by filename-prefix heuristics, flagged for confirmation when ambiguous rather
+  than guessed silently). Copies (never moves, unless `--move` is passed) into
+  `library_root/<Series>/Chapter N/`, running the same ingest JPEG-normalisation any other raw goes through.
+  *Accept:* importing a nested folder tree reproduces the right `<Series>/Chapter N/` layout; an ambiguous flat
+  dump is reported, not guessed; re-importing the same source is a no-op (content-hash de-dup, no duplicate
+  files).
 
 ### M3 — Promo filter [B]
 - **B6:** file-level + slice-level hooks, `_filtered/` + report, `omniscan filter restore`, a **series-wide Filtered review panel** with a Restore button.
@@ -343,6 +365,43 @@ One packaged application (Windows `.exe`, macOS `.app`, Linux binary) instead of
 - Builder loop: every merged card has a PR, a green CI-equivalent (pytest/ruff/pyright) and a REPORT.md.
 - Acquisition: the relay vitest suite is green in the GitHub Action. A live extract.pics chapter → event arrives over the WebSocket with no polling → the chapter folder is written in order.
 - Reference mode: on a series with translated chapters, alignment precision is spot-checked in the Compare view. Auto-locked terms match the human translation. The calibration report ranks the profiles, and the chosen setup beats the default on held-out reference chapters.
+
+## Backlog — scoped out for now, don't lose these
+Things worth building that don't have a card yet; each gets promoted to a real milestone/card when its
+dependencies land. Checked against prior art (`zyddnys/manga-image-translator` is the closest comparable OSS
+project — full detect/OCR/translate/inpaint/typeset pipeline, multi-backend translation, 20+ languages; it
+validates the overall pipeline shape but is CUDA/Nvidia-first and not GPU-VRAM-budgeted the way this project is).
+
+- **Export formats beyond flat JPEG slices:** CBZ (zip of the output images, what most reader apps expect) and
+  PDF, at minimum. A long-strip webtoon export (one tall image) is also worth it for manhwa specifically since
+  that's closer to how it's natively read. Candidate card: **B22**, sits right after C7/B12 (typeset + export).
+- **Job queue + notifications:** once a library has many series/chapters queued, running things one at a time
+  from the CLI doesn't scale — a persistent queue (priority, pause/resume, retry-on-failure) with a completion
+  notification (desktop toast once M13's app exists; a webhook/log line until then). Candidate card: **B23**.
+- **Model management:** HF model downloads are currently implicit (whatever `transformers`/`huggingface-hub`
+  pulls on first use). Needs explicit version pinning, an integrity check surfaced in `omniscan doctor`, and a
+  documented rule that **a model upgrade bumps the owning stage's `version`** in `core/stage.py` terms (so the
+  resumability hash correctly invalidates old output) — this rule should go in `docs/ARCHITECTURE.md` once C1
+  is revisited, it's cheap to write down now so it isn't forgotten.
+- **Cost/usage tracking for cloud LLM calls:** directly motivated by burning ~5M tokens / $26.77 on a single
+  stuck builder run this session. Translation runs against Ollama Cloud should log token usage and estimated
+  cost per chapter/series (the `CandidateRun.usage` field in `core/schemas.py` already has a place to put this
+  — it just isn't populated by anything yet), with an optional budget cap that pauses a batch run rather than
+  silently spending through a rate limit.
+- **Per-chapter QA report:** formalize the metrics already listed under Verification (OCR confidence
+  distribution, glossary violation count, typeset overflow count, promo-filter false-positive rate) into one
+  `qa.json` per chapter, surfaced as a summary badge in the debug views (B7/B10/B11) instead of only being
+  eyeballed in raw JSON.
+- **Chapter watch / incremental catch-up:** for an ongoing series, a way to say "check for new chapters since
+  last time" (re-run `acquire`'s link discovery, diff against `sources.toml` / already-ingested chapters) rather
+  than re-specifying the full chapter list each time.
+- **Edit history in the manual editor (B13):** a single incremental recompute (C8) isn't the same as being able
+  to undo a bad manual edit — worth a lightweight version history per region/slice (even just N previous
+  `final.json`/`layout.json` snapshots) before B13 ships.
+- **Duplicate/near-duplicate chapter detection:** guard against the same raw chapter being ingested twice under
+  two different folder names (e.g. re-acquired after a rename) — reuse the pHash machinery from B6.
+- **Privacy:** the packaged app (M13) handles copyrighted raw scans; it should not phone home any telemetry by
+  default. Worth stating explicitly once M13 is picked back up.
 
 ## Risks / watch items
 - The pip-installed ROCm in the torch wheels vs the system ROCm 10 + librocdxg in WSL → verified in M0.3.
