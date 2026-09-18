@@ -26,10 +26,7 @@ class ConvertedImage:
 
 def _needs_rotation(img: Image.Image) -> bool:
     """True if the image's EXIF Orientation tag requires a transpose."""
-    try:
-        return img.getexif().get(_EXIF_ORIENTATION, 1) != 1
-    except Exception:  # unreadable/malformed EXIF must not crash ingest
-        return False
+    return img.getexif().get(_EXIF_ORIENTATION, 1) != 1
 
 
 def needs_conversion(path: Path) -> bool:
