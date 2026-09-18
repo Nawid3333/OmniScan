@@ -25,6 +25,10 @@
       "Bash(grep:*)",
       "Bash(find:*)",
       "Bash(mkdir:*)",
+      "Bash(cd:*)",
+      "Bash(touch:*)",
+      "Bash(cp:*)",
+      "Bash(mv:*)",
       "Bash(npm:*)",
       "Bash(npx:*)",
       "Bash(node:*)"
