@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import os
+import warnings
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 
@@ -17,6 +18,10 @@ from PIL import Image, ImageOps, JpegImagePlugin
 
 from omniscan.gpu.codec.base import JpegInfo, Subsampling
 from omniscan.gpu.device import resolve_device
+
+# PIL hands out read-only arrays and the codec only ever reads them (copy into a tensor), so torch's
+# "array is not writable" warning is noise that would otherwise appear once in every CLI run.
+warnings.filterwarnings("ignore", message="The given NumPy array is not writable", category=UserWarning)
 
 _EXIF_ORIENTATION = 0x0112  # EXIF Orientation tag id
 _GET_SAMPLING_CODES = {0: "444", 1: "422", 2: "420"}  # newer Pillow: get_sampling -> code
