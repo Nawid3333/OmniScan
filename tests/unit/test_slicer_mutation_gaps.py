@@ -13,7 +13,7 @@ from omniscan.slicer import slice_by_pages
 from omniscan.slicer.bands import find_uniform_bands, row_stats
 from omniscan.slicer.cuts import plan_cuts
 from omniscan.slicer.slice import slice_strip
-from tests.fixtures.strips import art, gradient, solid, stack, noisy_solid
+from tests.fixtures.strips import art, gradient, noisy_solid, solid, stack
 
 W = 720
 
@@ -112,9 +112,14 @@ def test_forced_cut_lands_on_least_detail_row() -> None:
 
 # ---------------------------------------------------------------- cost penalties (SMALL config)
 
-SMALL_CFG = dict(
-    band_min_px=50, target_height=500, min_height=250, max_height=1000, hard_max_height=2500,
-    uniform_tol=10, max_drift=2.0,
+SMALL_CFG = dict(  # all int so pyright accepts **SMALL_CFG into SlicerConfig
+    band_min_px=50,
+    target_height=500,
+    min_height=250,
+    max_height=1000,
+    hard_max_height=2500,
+    uniform_tol=10,
+    max_drift=2,
 )
 
 
@@ -140,7 +145,9 @@ def test_cost_penalises_only_above_max_height() -> None:
 
 def test_dp_breaks_position_ties_by_earlier_cut() -> None:
     """Equal-cost paths tie-break on fewest cuts, then earliest positions: [250] beats [750]."""
-    strip = stack(art(200, W, 14), solid(100, W, (7, 7, 7)), art(400, W, 15), solid(100, W, (8, 8, 8)), art(200, W, 16))
+    strip = stack(
+        art(200, W, 14), solid(100, W, (7, 7, 7)), art(400, W, 15), solid(100, W, (8, 8, 8)), art(200, W, 16)
+    )
     assert [c.y for c in _small_cuts(strip)] == [250]
 
 
@@ -163,7 +170,9 @@ def test_no_cuts_when_gap_equals_hard_max() -> None:
 
 def test_min_height_penalty_is_small_enough_to_lose() -> None:
     """With a wide max_height the 4-point sub-minimum penalty loses to one huge slice: cuts == [100]."""
-    cfg = SlicerConfig(band_min_px=50, target_height=500, min_height=250, max_height=10000, hard_max_height=25000)
+    cfg = SlicerConfig(
+        band_min_px=50, target_height=500, min_height=250, max_height=10000, hard_max_height=25000
+    )
     strip = stack(art(50, W, 20), solid(100, W, (11, 11, 11)), art(19850, W, 21))  # centre 100, H=20000
     stats = row_stats(strip, cfg.uniform_tol)
     bands = find_uniform_bands(stats, cfg.band_min_px, cfg.uniform_tol, cfg.max_drift)
@@ -231,6 +240,7 @@ def test_max_height_penalty_magnitude_is_decisive() -> None:
 
 # ---------------------------------------------------------------- slice_strip artifact pins
 
+
 def test_artifact_records_params_and_bands() -> None:
     """slice_strip copies the effective config into params and the detected bands into the artifact."""
     cfg = SlicerConfig()
@@ -254,7 +264,9 @@ def test_slice_strip_uses_configured_tol() -> None:
 
 def test_band_of_exactly_min_band_px_drives_cut() -> None:
     """A band of exactly band_min_px rows yields its centre cut (band_min_px + 1 would drop it)."""
-    cfg = SlicerConfig(band_min_px=50, target_height=1250, min_height=250, max_height=2000, hard_max_height=2500)
+    cfg = SlicerConfig(
+        band_min_px=50, target_height=1250, min_height=250, max_height=2000, hard_max_height=2500
+    )
     strip = stack(art(1000, W, 33), solid(50, W, (60, 60, 60)), art(1450, W, 34))  # band [1000, 1050), H=2500
     arti = slice_strip(strip, cfg)
     assert len(arti.bands) == 1
@@ -265,12 +277,37 @@ def test_band_of_exactly_min_band_px_drives_cut() -> None:
 
 def test_cut_on_file_boundary_excludes_next_file() -> None:
     """A slice ending exactly at a file's y0 does not list that file (strict overlap test)."""
-    cfg = SlicerConfig(band_min_px=50, target_height=1000, min_height=500, max_height=2000, hard_max_height=2000)
+    cfg = SlicerConfig(
+        band_min_px=50, target_height=1000, min_height=500, max_height=2000, hard_max_height=2000
+    )
     strip = stack(art(950, W, 35), solid(100, W, (70, 70, 70)), art(950, W, 36))  # centre 1000
     files = [_page(0, 0, 1000), _page(1, 1000, 2000)]
     arti = slice_strip(strip, cfg, source_files=files)
     assert [c.y for c in _cuts_for(strip, cfg)] == [1000]
     assert [s.source_files for s in arti.slices] == [[0], [1]]
+
+
+def test_least_detail_window_excludes_segment_start() -> None:
+    """The least-detail window is clipped to (a, b): a detail-0 row AT the segment start must not win."""
+    cfg = SlicerConfig(band_min_px=50, target_height=100, min_height=50, max_height=100, hard_max_height=200)
+    strip = stack(art(100, W, 70), solid(40, W, (1, 1, 1)), art(61, W, 71))  # H=201 > hard 200: forced cuts
+    strip[:, 0, :] = 128  # row 0: detail 0, but row 0 == a is outside the window
+    strip[:, 100:140, 5] = 11  # solid block rows 100-139: detail 10 (no band: 40 < 50)
+    stats = row_stats(strip, cfg.uniform_tol)
+    bands = find_uniform_bands(stats, cfg.band_min_px, cfg.uniform_tol, cfg.max_drift)
+    assert bands == []
+    cuts = plan_cuts(strip.shape[1], bands, stats.detail, cfg)
+    assert [c.y for c in cuts] == [100, 134]  # least-detail rows inside (0, 201), ties -> closest to t
+    assert all(c.forced for c in cuts)
+
+
+def test_slice_strip_tol_boundary_row_splits_band() -> None:
+    """A row whose outlier sits at med+(tol+1) is non-uniform: slice_strip must split the band there."""
+    cfg = SlicerConfig(**SMALL_CFG)
+    outlier = _one_outlier_row_strip(100, 89)  # |89 - 100| = 11 > tol 10
+    strip = stack(solid(900, W, (100, 100, 100)), outlier, art(500, W, 61))  # H=1500
+    arti = slice_strip(strip, cfg)
+    assert [s.y0 for s in arti.slices] == [0, 25, 875]  # band (0, 900) -> edges 25, 875
 
 
 def _cuts_for(strip: torch.Tensor, cfg: SlicerConfig) -> list:
