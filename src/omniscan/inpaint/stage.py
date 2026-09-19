@@ -19,7 +19,9 @@ class InpaintStage:
     """Flat-fill the text of every OCR region (satisfies core.stage.Stage); no GPU model group needed."""
 
     name: ClassVar[str] = "inpaint"
-    version: ClassVar[int] = 1
+    version: ClassVar[int] = (
+        2  # 2: strips decoded before the CUDA staging-buffer fix (2026-09-19) held duplicated pages
+    )
     gpu_group: ClassVar[str | None] = None
 
     def inputs(self, ctx: ChapterContext) -> list[Path]:

@@ -92,7 +92,9 @@ class TurboCodec:
             if staging is not None:
                 stage = staging[:, :h, :]
                 stage.copy_(tensor)
-                out[:, y : y + h, :].copy_(stage, non_blocking=True)
+                # blocking on purpose: `staging` is reused for the next page, so an async copy would let that
+                # page overwrite the buffer before this one has been transferred (pages ended up duplicated)
+                out[:, y : y + h, :].copy_(stage)
             else:
                 out[:, y : y + h, :].copy_(tensor.to(self.device))
 

@@ -118,3 +118,21 @@ def test_decode_on_cuda(tmp_path) -> None:
     tensor = TurboCodec(resolve_device()).decode(data)
     assert tensor.is_cuda
     assert tensor.shape == (3, 300, 400)
+
+
+@pytest.mark.gpu
+def test_decode_into_gpu_strip_keeps_large_pages_apart(tmp_path) -> None:
+    """Regression: one shared pinned staging buffer plus async copies made large pages overwrite each other."""
+    colors = [(20 * i + 10, 255 - 25 * i, (60 * i) % 256) for i in range(8)]
+    width, height = 800, 1400
+    datas = [plain_jpeg(tmp_path / f"{i}.jpg", (width, height), c).read_bytes() for i, c in enumerate(colors)]
+    device = resolve_device()
+    out = torch.zeros((3, height * len(colors), width), dtype=torch.uint8, device=device)
+
+    TurboCodec(device).decode_into(datas, out, [height * i for i in range(len(colors))])
+    torch.cuda.synchronize(device)
+
+    for i, color in enumerate(colors):
+        page = out[:, height * i : height * (i + 1)].float()
+        expected = torch.tensor(color, dtype=torch.float32, device=device)[:, None, None]
+        assert (page - expected).abs().mean().item() < 3, f"page {i} does not hold its own colour {color}"

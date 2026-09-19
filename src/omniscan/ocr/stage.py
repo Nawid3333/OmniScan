@@ -24,7 +24,9 @@ class OcrStage:
     """Read the text of detected regions with PP-OCRv5 (satisfies core.stage.Stage)."""
 
     name: ClassVar[str] = "ocr"
-    version: ClassVar[int] = 1
+    version: ClassVar[int] = (
+        2  # 2: strips decoded before the CUDA staging-buffer fix (2026-09-19) held duplicated pages
+    )
     gpu_group: ClassVar[str | None] = VISION_GROUP
 
     def inputs(self, ctx: ChapterContext) -> list[Path]:
