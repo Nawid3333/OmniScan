@@ -4,11 +4,58 @@
 
 ## Context
 Goal: drop in raw Korean/Chinese/Japanese chapters (`<Series>/Chapter N/`) and get back English slices that look like an official release. The pipeline removes and inpaints the original text, letters English into the bubbles, keeps names consistent across hundreds of chapters, and later replaces SFX.
-Greenfield project. It is built in **WSL2 only** (no dual boot) and runs **GPU end-to-end** on the RX 9070 XT, using as much VRAM as possible.
+Greenfield project. It runs **GPU end-to-end** on the RX 9070 XT, using as much VRAM as possible. It was planned for WSL2 but is now built and run on **Windows 11 natively** (see "Plan revisions" below; where the text below still says WSL, that is the founding plan).
 Raws come in through an **acquisition layer** (the extract.pics API plus a webhook relay in the repo). **Chapters that are already translated** in a series act as a reference baseline for translating the rest.
 Work is split: a **GLM builder agent** (Claude Code CLI on your Ollama, **glm-5.3-flash:cloud**) builds the well-specified parts. **Claude (Opus)** writes the task cards, builds the hard parts, and reviews and merges everything.
 
-## Verified environment (checked live, 2026-09-18)
+## Plan revisions (2026-09-19) — these win over the older text below
+Status by milestone (details in [CHECKPOINT.md](CHECKPOINT.md); the ordered work queue is [NEXT.md](NEXT.md)):
+
+| Milestone | Status |
+|---|---|
+| M0 environment | done — moved to Windows-native; the WSL steps (1, 2, 5) and B17 "Docker for ROCm on WSL" are obsolete |
+| M1 foundation | done (contracts, `VramManager`, scaffold, `doctor`) |
+| M2 codec / ingest / slicer / viewer | done except C2 (hybrid GPU codec): the CPU `turbo` codec is the baseline until a real chapter is profiled |
+| M2b acquisition | relay built but not deployed; `acquire` not built (extract.pics docs unavailable, question A4) |
+| M2c import | done (B21) |
+| M3 promo filter | done (B6, B30) |
+| M4 detect + OCR | C3 half built on branch `C3`; C4 not started; OCR view done (B7) |
+| M5 translation | Ollama client, glossary, candidate runs, review view done (B8, B9, B29, B10); judge (C5) not started |
+| M5b reference mode | not started |
+| M6 inpaint, M7 typeset + export | not started (Reader view B12 and CBZ/PDF packaging B22 exist; the export stage does not) |
+| M8, M9, M10, M11, M13 | not started (B14 page-mode slicer and B15 watermark regions exist as modules) |
+| M12 | job queue done (B23); LAN mode not started |
+
+Changes to the plan:
+1. **Windows-native**, no WSL and no Linux container (`docs/benchmarks/windows-native.md`, `docs/DECISIONS.md`).
+2. **Builders implement almost everything.** The "Who builds what" table is superseded. The director owns the contracts
+   (`core/**`), the exact algorithm specs, live tuning on real pages and review; builders implement pieces sized like card B29
+   (exact signatures, golden values, fake-model tests) — including what used to be "Claude cards". Splits: **C3** detect ·
+   **C4** → C4a OCR core, C4b second-opinion reader, C4c zh/ja packs · **C5** → C5a post-check + agreement, C5b judge,
+   C5c story memory + glossary proposals · **C6** → C6a mask + flat fill, C6b LaMa · **C7** → C7a layout engine, C7b renderer +
+   export, C7c polygon fitting / font roles / colour matching. Test fixtures (X1, synthetic Korean pages) and mutation-review
+   cards (Q) are builder work too.
+3. **Walking skeleton before quality.** Every stage first ships in a simple v1 and `omniscan run` chains them on synthetic Korean
+   pages; LaMa, second-opinion OCR, polygon fitting and SFX come after. Real Korean raws (question A1) replace the synthetic fixtures for tuning.
+4. **Detection as built:** tiles of min(1280, strip width) with 0.5 overlap, resized to 640² (the model's training size).
+   Detect writes `regions.json` only — no text masks (C6 derives them from OCR line boxes) and no cut validator (a region crossing
+   a cut only matters when export re-cuts slices).
+5. **OCR:** transformers 5.17 ships PP-OCRv5/v6 *detection* and recognition model classes and `PaddlePaddle/*_det_safetensors`
+   repos exist, so both halves can run through PyTorch. C4 starts with a GPU probe; the fallback is running recognition directly
+   on the detector's `text_bubble` boxes.
+6. **Render-pass contract:** stage outputs stay JSON / `.npz`. `inpaint` writes `inpaint.json` + `patches.npz` (cleaned crops),
+   `typeset` writes `layout.json`, `export` decodes the strip once, composites patches and glyphs onto it, cuts the slices and
+   encodes. Glyph rasterisation (FreeType) runs on the CPU into small patches; compositing is on the GPU (question F9).
+7. **Judge economics:** the judge only sees lines where candidates disagree (agreement below 0.9) or a locked term is violated,
+   with one repair round for violations (question D5).
+8. **Portability:** `pyproject.toml` pins torch to AMD's ROCm build unconditionally, so only ROCm machines can install the project
+   today. Backend selection (ROCm / CUDA / CPU / MPS through uv extras, or the runtime-download model of question B4) and a CPU CI
+   matrix (Windows / Linux / macOS) are planned as P1/P2; they shape `pyproject.toml`, so decide early.
+9. **QA loop:** every logic card gets a mutation check; mutation-review cards hand that job to builders; one large Claude
+   verification pass at the end (question F7). Every Hugging Face model is pinned by `revision` in config once validated
+   (`DetectConfig.revision` is the pattern), and a stage's `version` is bumped when its model changes.
+
+## Verified environment (WSL2 era, checked live 2026-09-18 — historical)
 | Item | State |
 |---|---|
 | GPU | RX 9070 XT, gfx1201, 16 GB VRAM (+ iGPU), driver 32.0.31041.1004 |
@@ -149,7 +196,7 @@ promo_examples/global/*.jpg  promo_examples/<Series>/*.jpg
    - b. **promo pre-check (file level)** on each file's region of the strip; matches are removed from the strip on the GPU and the raw file is copied to `_filtered/`.
    - c. **slicer:** per-row uniformity on the GPU (JPEG-noise tolerant, slow vertical gradients allowed) → cut only inside uniform bands **≥ 50 px** (cut at band centre) → DP picks cuts near the target height (default 3000, range 1500–6000, hard max 15000, never > 65,535) → `blank=true` for fully uniform slices (**they skip OCR, inpainting and typesetting**) → forced cut at the lowest-detail row if no band is found (flagged red).
    - d. **promo filter (slice level):** pHash/dHash + small embedder (SigLIP2/DINOv2) vs the examples.
-   - e. **detect:** `ogkalu/comic-text-and-bubble-detector` (RT-DETR-v2, Apache-2.0: bubble / text_bubble / text_free), tiled at 640 + text masks. **Cut validator:** if a region crosses a cut, the two slices are merged.
+   - e. **detect:** `ogkalu/comic-text-and-bubble-detector` (RT-DETR-v2, Apache-2.0: bubble / text_bubble / text_free), tiled (see Plan revisions #4; no text masks and no cut validator here).
    - f. **ocr:** PP-OCRv6 det → rec (Korean: korean_PP-OCRv5_mobile_rec) batched on the GPU → lines grouped into regions → reading order → confidence. Low confidence → PaddleOCR-VL-1.5. Writes `ocr.json` + set-of-marks thumbnails for the judge.
 3. **text pass:** glossary extraction → translation runs (independent, resumable, throttled) → judge → glossary post-check/repair.
 4. **render pass (per chapter; decode again once):** inpaint (flat fill for uniform bubble interiors, LaMa for text over art) → typeset (fit to the bubble polygon, font roles, hyphenation, size search, stroke, colour match; overflow → LLM condense) → composite **edited patches onto the original pixels only** → encode → write output.
@@ -285,7 +332,7 @@ tests/ unit/ fixtures/synthetic/ e2e/      fonts/ (OFL defaults + yours)     mod
 - **B6:** file-level + slice-level hooks, `_filtered/` + report, `omniscan filter restore`, a **series-wide Filtered review panel** with a Restore button.
 
 ### M4 — Detection + OCR [C] (+ view [B])
-- **C3:** detector (tiling, NMS across tiles), masks, cut validator/merge.
+- **C3:** detector (tiling, NMS across tiles, regions); masks and the cut validator moved out (Plan revisions #4).
 - **C4:** OCR engines via transformers; region grouping; reading order; PaddleOCR-VL fallback.
   - `bench_ocr.py`: PP-OCRv5 vs v6 det, fallback rate, and your local Ollama OCR models (glm-ocr, deepseek-ocr) as extra second-opinion candidates.
 - **B7:** OCR view (boxes by kind, confidence, disagreements).

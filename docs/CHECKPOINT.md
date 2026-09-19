@@ -66,6 +66,8 @@ the PLAN's "cut validator" (all later stages work in strip space; a region cross
 re-cuts slices, so it belongs to export).
 
 ## Next, in priority order
+**The current ordered work queue, builder cards and review tiers are in [NEXT.md](NEXT.md)** (written after this list; it wins where
+they differ — e.g. C3 is now a builder card, `docs/tasks/C3.md`, instead of a director task). Summary of the earlier list:
 1. Finish C3 (above), then **C4 OCR** (`PaddlePaddle/korean_PP-OCRv5_mobile_rec_safetensors` recognition is verified via
    `scripts/paddle_models_check.py`; detection / line grouping is not).
 2. C5 judge + story memory + glossary post-check (text-only work; can start before OCR exists), then C6 inpaint,

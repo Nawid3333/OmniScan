@@ -17,6 +17,7 @@ Repo: `V:\OmniScan` (Windows 11 native) · GitHub `Nawid3333/OmniScan` (private)
 1. **This file.**
 2. `CLAUDE.md` — the rules every coding agent in this repo follows (also the builders' contract).
 3. `docs/CHECKPOINT.md` — current state, evidence gathered, the half-built card (C3), ordered next steps, the work loop.
+3a. `docs/NEXT.md` — the ordered work queue: which builder cards to launch, which to write, what the director does in parallel.
 4. `docs/OPEN_QUESTIONS.md` — questions the owner has not answered yet, each with the default we use meanwhile.
 5. `docs/PLAN.md` — the master plan (milestones, cards, architecture, backlog). `docs/ARCHITECTURE.md` — contracts.
 6. `docs/DECISIONS.md` — why the important choices were made, with the evidence.
