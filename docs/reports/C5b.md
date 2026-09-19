@@ -87,3 +87,9 @@ no raw manga in the repo.
    but `queue/executor.py`'s `STAGE_TABLE` has only `ingest` and `slice` (translate is likewise absent), so a
    queued judge job fails with "stage 'judge' is not implemented yet". I assumed a later card wires pipeline
    stages into the queue in one go — confirm, or point me at a card that wants `judge` wired now.
+## Review addendum (director)
+Answer to Question 1: correct — the queue's `STAGE_TABLE` gets all pipeline stages in one go with the `omniscan run` orchestrator card (R1); nothing to do here.
+Rebased over C3 (stub-list conflict in README/USER_GUIDE resolved: `detect` and `judge` are both real now). Mutation check, 23 mutants over `judge.py` (always_judge threshold/ignored, agree check inverted, clean check inverted, auto-pick ignoring violations,
+rationale boundary and cut length, alphabetical order reversed, `prefer` ignored, dedupe by raw text, repair round bound, repair counter, merge sources swapped, `judge_failed` flag, `violations_left` source, last-id-wins, empty merge text accepted,
+no whitespace collapse, `cloud`/`think` ignored, empty repair problems, problem text format, fallback ignoring violations): **all 23 killed**.
+Live check against the real Ollama daemon (3 profiles' candidate runs → `omniscan judge`) is still to do once builder slots are free (the Pro plan allows 3 concurrent requests).
