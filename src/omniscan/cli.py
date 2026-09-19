@@ -6,6 +6,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
 
+import httpx
 import typer
 from PIL import Image
 from rich.console import Console
@@ -1063,3 +1064,206 @@ def queue_clear() -> None:
 
 
 app.add_typer(queue_app, name="queue")
+
+models_app = typer.Typer(no_args_is_help=True, help="Model catalog: list, download, remove, verify models.")
+
+
+def _ollama_model_names(base_url: str, timeout_s: float = 2.0) -> set[str] | None:
+    """The daemon's pulled model tags, or None when Ollama is unreachable within `timeout_s`."""
+    try:
+        response = httpx.get(f"{base_url}/api/tags", timeout=timeout_s)
+        response.raise_for_status()
+        return {model["name"] for model in response.json().get("models", [])}
+    except httpx.HTTPError, ValueError, KeyError, TypeError:
+        return None
+
+
+def _models_progress(steps: dict[str, int]) -> Callable[[str, int, int | None], None]:
+    """Progress printer: `id: 42% (66/158 MB)`, at most once per 5 % step per model."""
+
+    def on_progress(model_id: str, done: int, total: int | None) -> None:
+        if total is None or total <= 0:
+            return
+        percent = int(done * 100 / total)
+        step = percent // 5
+        if step > steps.get(model_id, -1):
+            steps[model_id] = step
+            typer.echo(f"{model_id}: {percent}% ({done // 1_000_000}/{total // 1_000_000} MB)")
+
+    return on_progress
+
+
+@models_app.command("list")
+def models_list(
+    as_json: Annotated[bool, typer.Option("--json", help="Emit a JSON object instead of text rows.")] = False,
+) -> None:
+    """List every catalog model with its size, purpose and install status."""
+    from omniscan.models.catalog import load_catalog
+    from omniscan.models.store import install_path, model_status
+
+    cfg = get_config()
+    entries = load_catalog()
+    ollama_names = _ollama_model_names(cfg.ollama.local_url)
+    statuses = {
+        entry.id: model_status(entry, cfg.paths.models_dir, ollama_names=ollama_names) for entry in entries
+    }
+    if as_json:
+        payload = {
+            "models_dir": str(cfg.paths.models_dir),
+            "models": [
+                {
+                    "id": entry.id,
+                    "name": entry.name,
+                    "kind": entry.kind,
+                    "required": entry.required,
+                    "format": entry.format,
+                    "size_mb": entry.size_mb,
+                    "license": entry.license,
+                    "description": entry.description,
+                    "used_by": entry.used_by,
+                    "status": statuses[entry.id],
+                    "installed_path": str(path)
+                    if (path := install_path(entry, cfg.paths.models_dir))
+                    and statuses[entry.id] == "installed"
+                    else None,
+                }
+                for entry in entries
+            ],
+        }
+        typer.echo(json.dumps(payload, indent=2, ensure_ascii=False))
+        return
+    for entry in entries:
+        typer.echo(
+            f"{entry.id}  {entry.kind}  {entry.size_mb} MB  "
+            f"{'required' if entry.required else 'optional'}  {statuses[entry.id]}  {entry.description}"
+        )
+    missing_required = [e for e in entries if e.required and statuses[e.id] in ("missing", "corrupt")]
+    if missing_required:
+        typer.echo(
+            f"{len(missing_required)} required model(s) missing, {sum(e.size_mb for e in missing_required)} MB to download"
+        )
+    else:
+        typer.echo("all required models installed")
+
+
+@models_app.command("download")
+def models_download(
+    ids: Annotated[
+        list[str] | None, typer.Argument(help="Model id(s) from the catalog. Default: none.")
+    ] = None,
+    required: Annotated[
+        bool,
+        typer.Option("--required", help="Also download every required model that is not installed."),
+    ] = False,
+) -> None:
+    """Download the named models (plus every missing required one with --required)."""
+    from omniscan.models.catalog import load_catalog
+    from omniscan.models.download import ModelDownloadError, download_model
+    from omniscan.models.store import model_status
+
+    cfg = get_config()
+    entries = {entry.id: entry for entry in load_catalog()}
+    named = list(dict.fromkeys(ids or []))
+    unknown = [model_id for model_id in named if model_id not in entries]
+    if unknown:
+        typer.echo(
+            f"models: unknown model id(s) {', '.join(unknown)} (known: {', '.join(entries)})", err=True
+        )
+        raise typer.Exit(2)
+    selected_ids = list(named)
+    if required:
+        for model_id, entry in entries.items():
+            if model_id in selected_ids or not entry.required:
+                continue
+            status = model_status(entry, cfg.paths.models_dir, ollama_names=None)
+            if status == "installed":
+                typer.echo(f"{model_id}: already installed")
+            else:  # missing or corrupt: (re-)download it
+                selected_ids.append(model_id)
+    if not selected_ids and not required:
+        typer.echo("models: nothing to download (no ids given and no required model is missing)", err=True)
+        raise typer.Exit(2)
+    ollama_names = _ollama_model_names(cfg.ollama.local_url)
+    steps: dict[str, int] = {}
+    failed = False
+    for model_id in selected_ids:
+        entry = entries[model_id]
+        if entry.format == "ollama" and ollama_names is not None and entry.ollama_name in ollama_names:
+            typer.echo(f"{entry.id}: already installed")
+            continue
+        try:
+            source = download_model(
+                entry,
+                cfg.paths.models_dir,
+                ollama_url=cfg.ollama.local_url,
+                on_progress=_models_progress(steps),
+            )
+        except ModelDownloadError as exc:
+            typer.echo(f"models: {exc}", err=True)
+            failed = True
+            continue
+        if source == "already installed":
+            typer.echo(f"{entry.id}: already installed")
+        else:
+            typer.echo(f"{entry.id}: installed from {source}")
+    if failed:
+        raise typer.Exit(1)
+
+
+@models_app.command("remove")
+def models_remove(ids: Annotated[list[str], typer.Argument(help="Model id(s) from the catalog.")]) -> None:
+    """Remove installed models (their folder, file, or the Ollama daemon's copy)."""
+    from omniscan.models.catalog import load_catalog
+    from omniscan.models.download import ModelDownloadError, remove_model
+
+    cfg = get_config()
+    entries = {entry.id: entry for entry in load_catalog()}
+    unknown = [model_id for model_id in ids if model_id not in entries]
+    if unknown:
+        typer.echo(
+            f"models: unknown model id(s) {', '.join(unknown)} (known: {', '.join(entries)})", err=True
+        )
+        raise typer.Exit(2)
+    failed = False
+    for model_id in dict.fromkeys(ids):
+        try:
+            removed = remove_model(entries[model_id], cfg.paths.models_dir, ollama_url=cfg.ollama.local_url)
+        except ModelDownloadError as exc:
+            typer.echo(f"models: {exc}", err=True)
+            failed = True
+            continue
+        typer.echo(f"{model_id}: removed" if removed else f"{model_id}: nothing to remove")
+    if failed:
+        raise typer.Exit(1)
+
+
+@models_app.command("verify")
+def models_verify(
+    ids: Annotated[
+        list[str] | None, typer.Argument(help="Model id(s). Default: every non-llm model.")
+    ] = None,
+) -> None:
+    """Recompute model statuses (hash checks); exit 1 when one is corrupt."""
+    from omniscan.models.catalog import load_catalog
+    from omniscan.models.download import verify_models
+
+    cfg = get_config()
+    entries = {entry.id: entry for entry in load_catalog()}
+    if ids:
+        unknown = [model_id for model_id in ids if model_id not in entries]
+        if unknown:
+            typer.echo(
+                f"models: unknown model id(s) {', '.join(unknown)} (known: {', '.join(entries)})", err=True
+            )
+            raise typer.Exit(2)
+        selected = [entry for entry in entries.values() if entry.id in set(ids)]
+    else:
+        selected = [entry for entry in entries.values() if entry.kind != "llm"]
+    statuses = verify_models(selected, cfg.paths.models_dir)
+    for entry in selected:
+        typer.echo(f"{entry.id}: {statuses[entry.id]}")
+    if any(status == "corrupt" for status in statuses.values()):
+        raise typer.Exit(1)
+
+
+app.add_typer(models_app, name="models")

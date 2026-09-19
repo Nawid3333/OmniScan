@@ -55,7 +55,7 @@ Every key in `config/default.toml`:
 | `paths.work_root` | where artifacts and per-series dbs live | yes |
 | `paths.output_root` | where final English chapters live | yes |
 | `paths.promo_examples` | where promo-filter example images live | yes (`filter run`) |
-| `paths.models_dir` | local cache for model weights | yes (LaMa weights for `omniscan inpaint --lama`) |
+| `paths.models_dir` | local cache for model weights (managed by `omniscan models`; catalog in `config/models.toml`) | yes (LaMa weights for `omniscan inpaint --lama`; the vision models land there too, card U2b) |
 | `gpu.device` | torch device: `auto` (default: strongest discrete GPU, else Apple MPS, else CPU), `cpu`, `mps`, `cuda:N` | yes (a named GPU that is unreachable falls back to CPU) |
 | `gpu.vram_budget_gib` | VRAM budget in GiB | yes (the comic detector loads inside this budget) |
 | `gpu.codec` | `auto` / `rocjpeg` / `hybrid` / `turbo` | only `auto`/`turbo` work — both run the CPU `turbo` codec; `rocjpeg`/`hybrid` are not implemented yet |
@@ -615,6 +615,34 @@ GET-only and never writes.
 
 ```bash
 uv run omniscan serve
+```
+
+### `omniscan models`
+
+Manage the model catalog (`config/models.toml`): every model OmniScan can download, with its
+purpose, size and licence — the three Hugging Face vision models and the LaMa file (mirrored
+unchanged as assets of this repo's GitHub release `models-v1`, with automatic fallback to the
+upstream source when the mirror is unreachable), plus the Ollama LLMs. Weights land in
+`paths.models_dir` (`<models_dir>/<id>/` for the zips, `<models_dir>/lama/big-lama.pt` for LaMa);
+every download is sha256-verified. See [docs/MODELS.md](MODELS.md) for the per-model notices.
+
+| Subcommand | Effect |
+|---|---|
+| `list [--json]` | print one row per model (`id`, `kind`, `size`, `required`/`optional`, `status`, `description`) plus a footer with the total size of the missing required models. `--json` emits a machine-readable object (the stable interface a future settings screen will use); the Ollama statuses show `unknown` when the daemon is unreachable |
+| `download <id>... [--required]` | download the named models; `--required` also downloads every required model that is not installed. Progress is printed at most once per 5 % step; a failing model is reported on stderr and the others are still tried (exit 1). Unknown ids exit 2 |
+| `remove <id>...` | delete installed models (their folder, the LaMa file, or the Ollama daemon's copy). Prints `removed` or `nothing to remove` per model; unknown ids exit 2 |
+| `verify [<id>...]` | recompute the statuses (missing/installed/corrupt/cloud/unknown); default: every non-llm model. Exit 1 when one is `corrupt` |
+
+Statuses: `installed` (present and verified), `missing`, `corrupt` (size or sha256 mismatch — delete
+and re-download), `cloud` (Ollama Cloud model, nothing on disk), `unknown` (Ollama unreachable).
+
+```bash
+uv run omniscan models list
+uv run omniscan models list --json
+uv run omniscan models download --required
+uv run omniscan models download inpaint-big-lama llm-gemma4-12b
+uv run omniscan models remove llm-gemma4-12b
+uv run omniscan models verify
 ```
 
 ### `omniscan queue`
