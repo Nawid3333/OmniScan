@@ -51,9 +51,9 @@ the logic + the report's Questions; **T3** = also a live GPU/real-page check by 
 | 2 | **C4a** | OCR stage: PP-OCRv5 line detection + Korean recognition → `ocr.json` | C3, X1 | T3 | ✔ merged (21/21 mutants killed; live chain on synthetic Korean: CER 0.03, `ocr.drop_conf` drops junk regions: 19 → 17 = truth) |
 | 2 | **C6a** | Inpaint v1: masks + flat fill → `inpaint.json` + `patches.npz` | X1, contracts | T2 | ✔ merged (visual check: bubbles identical to the text-free page) |
 | 2 | **C7b** | Typeset stage → `layout.json` | C7a, contracts | T2 | ✔ merged (16/16 mutants killed) |
-| 3 | **C7c** | Glyph renderer (`typeset/render.py`) + GPU compositing + `export` stage → `output/<Series>/<Chapter>/0001.jpg…` + `export.json` | C6a, C7b | T3 | **running** (`docs/tasks/C7c.md`) |
-| 3 | **C6b** | LaMa stage (`inpaint_lama`): fixed 512² windows, fp32, weights fetched with sha256 check → `patches_lama.npz` | C6a, `docs/benchmarks/lama-probe.md` | T3 | **running** (`docs/tasks/C6b.md`) |
-| 3 | **R1** | `omniscan run`: stage order, VRAM group sequencing (vision → local Ollama → torch), resumable, queue `STAGE_TABLE` gets every stage | C4a, C6a, C7b, C7c | T2 (director reviews the sequencing) | **card written** (`docs/tasks/R1.md`); launch after C4a, C6b, C7c merge |
+| 3 | **C7c** | Glyph renderer (`typeset/render.py`) + GPU compositing + `export` stage → `output/<Series>/<Chapter>/0001.jpg…` + `export.json` | C6a, C7b | T3 | ✔ merged (25/25 mutants killed; live export of KoreanDemo in 0.7 s) |
+| 3 | **C6b** | LaMa stage (`inpaint_lama`): fixed 512² windows, fp32, weights fetched with sha256 check → `patches_lama.npz` | C6a, `docs/benchmarks/lama-probe.md` | T3 | ✔ merged (21/21 mutants killed; live: LaMa removes free text on the gradient cleanly, 0.18 s after a ~25 s warm-up) |
+| 3 | **R1** | `omniscan run`: stage order, VRAM group sequencing (vision → local Ollama → torch), resumable, queue `STAGE_TABLE` gets every stage | C4a, C6a, C7b, C7c | T2 (director reviews the sequencing) | **running** (`docs/tasks/R1.md`) |
 | 3 | **E2E** | Golden test: synthetic Korean chapter → full pipeline with a fake LLM client → output images exist, text removed, English inside boxes | R1 | T1 | — |
 | 3 | **C5c** | Story memory (per-chapter summaries in `series.db`) + glossary proposals from OCR text | C5b patterns | T2 | write card |
 | 3 | **B11'** | Web views: raw \| mask \| clean slider and a layout overlay (Svelte/TS) | C6a, C7b | T2 | — |

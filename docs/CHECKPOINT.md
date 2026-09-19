@@ -5,14 +5,14 @@
 Local data (sample library, work artifacts, outputs) lives in `V:\OmniScan\data\` (gitignored); machine config in `C:\Users\limex\.config\omniscan\config.toml` (paths only; the GPU is chosen by `gpu.device = "auto"`).
 
 ## State in one paragraph
-Every stage of the pipeline exists or is in review. Merged and reviewed: ingest, slice, promo filter, **detect (C3)**, translate candidate runs, **judge (C5a/C5b)**, **inpaint v1 flat fill (C6a)**, **typeset layout engine and stage (C7a/C7b)**, glossary, watermark regions,
-job queue, import, CBZ/PDF packaging, the web debug tool (5 views), synthetic Korean test pages (X1). About 2 500 tests, ruff and pyright clean, all passing on Windows in ~1 minute. **Running builders** (2026-09-19 17:00): **C4a** (OCR stage), **C6b** (LaMa stage), **C7c** (glyph renderer + export).
-Card **R1** (`omniscan run`, three passes, queue integration) is written and starts when those three merge; after it: an end-to-end golden test on synthetic Korean pages, then tuning on real Korean raws (question A1 still open — everything real so far is English Pepper&Carrot).
+Every stage of the pipeline exists and is merged except the orchestrator (R1, running). Merged and reviewed: ingest, slice, promo filter, **detect (C3)**, translate candidate runs, **judge (C5a/C5b)**, **inpaint v1 flat fill (C6a)**, **typeset layout engine and stage (C7a/C7b)**, glossary, watermark regions,
+job queue, import, CBZ/PDF packaging, the web debug tool (5 views), synthetic Korean test pages (X1). About 2 500 tests, ruff and pyright clean, all passing on Windows in ~1 minute. **OCR (C4a)**, **LaMa (C6b)** and **export (C7c)** are merged too; a hand-driven run of `ocr → inpaint --lama → typeset → export` on the synthetic Korean chapter produces English pages (placeholder English lines; real translation still to do).
+**Running builder:** **R1** (`omniscan run`, three passes, queue integration); after it: an end-to-end golden test on synthetic Korean pages, then tuning on real Korean raws (question A1 still open — everything real so far is English Pepper&Carrot).
 
 ## What works today (CLI)
 `doctor`, `import`, `ingest`, `slice`, **`detect`**, `filter run|restore`, `glossary list|export|import`, `watermark add|list|remove`, `translate` (candidate runs; needs `ocr.json`), **`judge`** (`final.json`; needs `ocr.json` + runs), **`inpaint`** (flat fill; needs `ocr.json`), **`typeset`** (`layout.json`; needs `ocr.json`, `final.json`, `inpaint.json`),
-`pack` (CBZ/PDF), `serve` (+ `npm run dev` in `webui/`), `queue add|list|run|pause|resume|cancel|retry|clear`. Stubs (exit 2): `acquire ocr export run reference` (`ocr` and `export` are being built). Web views: Slicer, OCR (reads `ocr.json`), Translation, Reader, Filtered.
-Run everything with `uv run ...` from `V:\OmniScan`. Nothing writes `ocr.json` yet until C4a merges, so there is no end-to-end run yet.
+`pack` (CBZ/PDF), `serve` (+ `npm run dev` in `webui/`), `queue add|list|run|pause|resume|cancel|retry|clear`. Also working: **`ocr`**, **`export`**, `inpaint --lama`. Stubs (exit 2): `acquire run reference` (`run` is being built). Web views: Slicer, OCR (reads `ocr.json`), Translation, Reader, Filtered.
+Run everything with `uv run ...` from `V:\OmniScan`. Until R1 lands, drive the stages by hand: `ocr` (runs ingest/slice/detect first), `translate`, `judge`, `inpaint --lama`, `typeset`, `export`. The KoreanDemo chapter (`scripts/make_korean_chapter.py --series KoreanDemo`) is in `data/library/`.
 
 ## Evidence gathered (all reproducible; details in `docs/benchmarks/`)
 - **Windows native works** (`windows-native.md`): AMD's `win_amd64` ROCm wheels run on the RX 9070 XT; GPU selection via `omniscan.gpu.device.resolve_device` (the iGPU is `cuda:0` and crashes, the 9070 XT is `cuda:1`; call `torch.cuda.set_device` before MIOpen work).
