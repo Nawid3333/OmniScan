@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import itertools
 
+import pytest
 import torch
 
 from omniscan.core.config import SlicerConfig
+from omniscan.core.schemas import SourceFile
+from omniscan.slicer import slice_by_pages
 from omniscan.slicer.bands import find_uniform_bands, row_stats
 from omniscan.slicer.cuts import plan_cuts
-from tests.fixtures.strips import art, gradient, solid, stack
+from omniscan.slicer.slice import slice_strip
+from tests.fixtures.strips import art, gradient, solid, stack, noisy_solid
 
 W = 720
 
@@ -223,3 +227,73 @@ def test_max_height_penalty_magnitude_is_decisive() -> None:
     cuts = plan_cuts(strip.shape[1], bands, stats.detail, cfg)
     assert [c.y for c in cuts] == [999]
     assert not cuts[0].forced
+
+
+# ---------------------------------------------------------------- slice_strip artifact pins
+
+def test_artifact_records_params_and_bands() -> None:
+    """slice_strip copies the effective config into params and the detected bands into the artifact."""
+    cfg = SlicerConfig()
+    strip = stack(art(2000, W, 1), solid(4000, W, (0, 0, 0)), art(2000, W, 2))
+    arti = slice_strip(strip, cfg)
+    stats = row_stats(strip, cfg.uniform_tol)
+    bands = find_uniform_bands(stats, cfg.band_min_px, cfg.uniform_tol, cfg.max_drift)
+    assert arti.params == cfg.model_dump()
+    assert arti.bands == bands
+    assert len(arti.bands) == 1
+
+
+def test_slice_strip_uses_configured_tol() -> None:
+    """Noisy rows beyond uniform_tol are not uniform: an amp-20 block is neither a band nor blank."""
+    noisy = noisy_solid(3000, W, (50, 50, 50), amp=20, seed=31)
+    arti = slice_strip(noisy, SlicerConfig())
+    assert len(arti.slices) == 1
+    assert arti.slices[0].blank is False
+    assert arti.bands == []
+
+
+def test_band_of_exactly_min_band_px_drives_cut() -> None:
+    """A band of exactly band_min_px rows yields its centre cut (band_min_px + 1 would drop it)."""
+    cfg = SlicerConfig(band_min_px=50, target_height=1250, min_height=250, max_height=2000, hard_max_height=2500)
+    strip = stack(art(1000, W, 33), solid(50, W, (60, 60, 60)), art(1450, W, 34))  # band [1000, 1050), H=2500
+    arti = slice_strip(strip, cfg)
+    assert len(arti.bands) == 1
+    assert [s.y0 for s in arti.slices] == [0, 1025]
+    assert len(arti.slices) == 2
+    assert not arti.slices[0].forced_cut
+
+
+def test_cut_on_file_boundary_excludes_next_file() -> None:
+    """A slice ending exactly at a file's y0 does not list that file (strict overlap test)."""
+    cfg = SlicerConfig(band_min_px=50, target_height=1000, min_height=500, max_height=2000, hard_max_height=2000)
+    strip = stack(art(950, W, 35), solid(100, W, (70, 70, 70)), art(950, W, 36))  # centre 1000
+    files = [_page(0, 0, 1000), _page(1, 1000, 2000)]
+    arti = slice_strip(strip, cfg, source_files=files)
+    assert [c.y for c in _cuts_for(strip, cfg)] == [1000]
+    assert [s.source_files for s in arti.slices] == [[0], [1]]
+
+
+def _cuts_for(strip: torch.Tensor, cfg: SlicerConfig) -> list:
+    stats = row_stats(strip, cfg.uniform_tol)
+    bands = find_uniform_bands(stats, cfg.band_min_px, cfg.uniform_tol, cfg.max_drift)
+    return plan_cuts(strip.shape[1], bands, stats.detail, cfg)
+
+
+def _page(index: int, y0: int, y1: int) -> SourceFile:
+    return SourceFile(
+        index=index, name=f"p{index:02d}.jpg", sha256="0" * 64, width=W, height=y1 - y0, y0=y0, y1=y1
+    )
+
+
+def test_first_page_negative_y0_raises() -> None:
+    """A page starting above the strip top (y0 < 0) is rejected, not just y0 > 0."""
+    files = [_page(0, -10, 1000), _page(1, 1000, 3000)]
+    with pytest.raises(ValueError, match="expected 0"):
+        slice_by_pages(files, W, 3000)
+
+
+def test_last_page_overshooting_strip_raises() -> None:
+    """A page ending past the strip bottom (y1 > strip_height) is rejected."""
+    files = [_page(0, 0, 1000), _page(1, 1000, 3100)]
+    with pytest.raises(ValueError, match="strip_height=3000"):
+        slice_by_pages(files, W, 3000)
