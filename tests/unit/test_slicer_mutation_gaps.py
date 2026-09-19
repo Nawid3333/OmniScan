@@ -104,3 +104,122 @@ def test_forced_cut_lands_on_least_detail_row() -> None:
     assert all(c.forced for c in cuts)
     heights = [b - a for a, b in itertools.pairwise([0, *(c.y for c in cuts), 16000])]
     assert heights == [5102, 5588, 5310]
+
+
+# ---------------------------------------------------------------- cost penalties (SMALL config)
+
+SMALL_CFG = dict(
+    band_min_px=50, target_height=500, min_height=250, max_height=1000, hard_max_height=2500,
+    uniform_tol=10, max_drift=2.0,
+)
+
+
+def _small_cuts(strip: torch.Tensor) -> list:
+    cfg = SlicerConfig(**SMALL_CFG)
+    stats = row_stats(strip, cfg.uniform_tol)
+    bands = find_uniform_bands(stats, cfg.band_min_px, cfg.uniform_tol, cfg.max_drift)
+    return plan_cuts(strip.shape[1], bands, stats.detail, cfg)
+
+
+def test_cost_penalises_only_below_min_height() -> None:
+    """A segment of exactly min_height carries no penalty, so DP prefers the 250-cut over one 1250 slice."""
+    strip = stack(art(200, W, 10), solid(100, W, (5, 5, 5)), art(950, W, 11))  # centre 250
+    assert [c.y for c in _small_cuts(strip)] == [250]
+    assert all(not c.forced for c in _small_cuts(strip))
+
+
+def test_cost_penalises_only_above_max_height() -> None:
+    """A segment of exactly max_height carries no penalty, so DP prefers cuts [500] over one 1500 slice."""
+    strip = stack(art(400, W, 12), solid(200, W, (6, 6, 6)), art(900, W, 13))  # centre 500
+    assert [c.y for c in _small_cuts(strip)] == [500]
+
+
+def test_dp_breaks_position_ties_by_earlier_cut() -> None:
+    """Equal-cost paths tie-break on fewest cuts, then earliest positions: [250] beats [750]."""
+    strip = stack(art(200, W, 14), solid(100, W, (7, 7, 7)), art(400, W, 15), solid(100, W, (8, 8, 8)), art(200, W, 16))
+    assert [c.y for c in _small_cuts(strip)] == [250]
+
+
+def test_band_at_edge_threshold_becomes_edges() -> None:
+    """A band of exactly min_height + band_min rows contributes edges (y0+25, y1-25), not a centre."""
+    strip = stack(art(300, W, 17), solid(300, W, (9, 9, 9)), art(300, W, 18))  # band [300, 600)
+    assert [c.y for c in _small_cuts(strip)] == [325, 575]
+    assert all(not c.forced for c in _small_cuts(strip))
+
+
+def test_no_cuts_when_gap_equals_hard_max() -> None:
+    """A candidate-free gap of exactly hard_max_height needs no forced cut (strict > in the guard)."""
+    cfg = SlicerConfig()
+    strip = art(15000, W, seed=19)
+    stats = row_stats(strip, cfg.uniform_tol)
+    bands = find_uniform_bands(stats, cfg.band_min_px, cfg.uniform_tol, cfg.max_drift)
+    assert bands == []
+    assert plan_cuts(strip.shape[1], bands, stats.detail, cfg) == []
+
+
+def test_min_height_penalty_is_small_enough_to_lose() -> None:
+    """With a wide max_height the 4-point sub-minimum penalty loses to one huge slice: cuts == [100]."""
+    cfg = SlicerConfig(band_min_px=50, target_height=500, min_height=250, max_height=10000, hard_max_height=25000)
+    strip = stack(art(50, W, 20), solid(100, W, (11, 11, 11)), art(19850, W, 21))  # centre 100, H=20000
+    stats = row_stats(strip, cfg.uniform_tol)
+    bands = find_uniform_bands(stats, cfg.band_min_px, cfg.uniform_tol, cfg.max_drift)
+    cuts = plan_cuts(strip.shape[1], bands, stats.detail, cfg)
+    assert [c.y for c in cuts] == [100]
+    assert not cuts[0].forced
+
+
+def test_max_height_penalty_at_exact_boundary() -> None:
+    """A segment of exactly max_height is penalty-free, so DP keeps one 1000px slice (cuts == [])."""
+    cfg = SlicerConfig(**{**SMALL_CFG, "hard_max_height": 1000})
+    strip = stack(art(50, W, 22), solid(100, W, (12, 12, 12)), art(850, W, 23))  # centre 100, H=1000
+    stats = row_stats(strip, cfg.uniform_tol)
+    bands = find_uniform_bands(stats, cfg.band_min_px, cfg.uniform_tol, cfg.max_drift)
+    assert plan_cuts(strip.shape[1], bands, stats.detail, cfg) == []
+
+
+def test_forced_cut_window_bounds() -> None:
+    """The least-detail window is [t-256, t+256] and t is round(i*gap/(k+1)): a flat row at t+256 wins."""
+    cfg = SlicerConfig()
+    strip = art(16000, W, seed=44)
+    strip[:, 10200:10300, :] = 200  # mid-detail rows (detail 50) below the t2 window
+    strip[:, 10200:10300, 5] = 150
+    strip[:, 10923, :] = 200  # detail-0 row exactly at hi = t2 + 256
+    stats = row_stats(strip, cfg.uniform_tol)
+    bands = find_uniform_bands(stats, cfg.band_min_px, cfg.uniform_tol, cfg.max_drift)
+    assert bands == []
+    cuts = plan_cuts(strip.shape[1], bands, stats.detail, cfg)
+    assert len(cuts) == 2
+    assert cuts[1].y == 10923
+
+
+def test_centre_for_odd_length_band() -> None:
+    """An odd-length short band's centre is (y0+y1)//2: 101 rows at [300, 401) -> centre 350."""
+    strip = stack(art(300, W, 24), solid(101, W, (13, 13, 13)), art(349, W, 25))  # H=750
+    assert [c.y for c in _small_cuts(strip)] == [350]
+
+
+def test_forced_cut_window_lower_bound() -> None:
+    """Widening the window below t-256 must not move the cut: rows below lo lose to window rows."""
+    cfg = SlicerConfig()
+    strip = art(16000, W, seed=45)
+    strip[:, 10300:10350, :] = 200  # detail 25, just below the t2 window (lo = 10411)
+    strip[:, 10300:10350, 5] = 175
+    strip[:, 10500:10600, :] = 200  # detail 50, inside the window
+    strip[:, 10500:10600, 5] = 150
+    stats = row_stats(strip, cfg.uniform_tol)
+    bands = find_uniform_bands(stats, cfg.band_min_px, cfg.uniform_tol, cfg.max_drift)
+    assert bands == []
+    cuts = plan_cuts(strip.shape[1], bands, stats.detail, cfg)
+    assert len(cuts) == 2
+    assert cuts[1].y == 10599
+
+
+def test_max_height_penalty_magnitude_is_decisive() -> None:
+    """Two over-max paths differ by 99 in cost: penalty 100 vs 400 flips which one DP picks."""
+    cfg = SlicerConfig(band_min_px=50, target_height=100, min_height=50, max_height=200, hard_max_height=2000)
+    strip = stack(art(950, W, 26), solid(99, W, (14, 14, 14)), art(951, W, 27))  # centre 999, H=2000
+    stats = row_stats(strip, cfg.uniform_tol)
+    bands = find_uniform_bands(stats, cfg.band_min_px, cfg.uniform_tol, cfg.max_drift)
+    cuts = plan_cuts(strip.shape[1], bands, stats.detail, cfg)
+    assert [c.y for c in cuts] == [999]
+    assert not cuts[0].forced
