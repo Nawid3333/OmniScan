@@ -16,7 +16,7 @@ packaged into CBZ/PDF.
 | promo filter | module only — `omniscan filter run` / `filter restore` |
 | watermark regions | module only — `omniscan watermark add` / `list` / `remove` |
 | glossary | module only — `omniscan glossary list` / `export` / `import` |
-| detect | not implemented |
+| detect | working — `omniscan detect` (regions.json; no text yet) |
 | ocr | not implemented |
 | translate | working — `omniscan translate` (candidate runs only; needs ocr.json, which no stage produces yet) |
 | judge | not implemented |
@@ -34,7 +34,7 @@ pipeline stage consumes it yet.
 
 | Command | Behaviour |
 |---|---|
-| `acquire`, `detect`, `ocr`, `judge`, `inpaint`, `typeset`, `export`, `run`, `reference` | registered stubs; they print `not implemented yet` and exit 2 |
+| `acquire`, `ocr`, `judge`, `inpaint`, `typeset`, `export`, `run`, `reference` | registered stubs; they print `not implemented yet` and exit 2 |
 
 ## Requirements
 

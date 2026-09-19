@@ -12,12 +12,16 @@ import torchvision.ops as ops
 from PIL import Image, ImageDraw
 from transformers import AutoImageProcessor, RTDetrV2ForObjectDetection
 
+from omniscan.gpu.device import resolve_device
+
 REPO = "ogkalu/comic-text-and-bubble-detector"
 OUT = Path(sys.argv[2]) if len(sys.argv) > 2 else Path()
 page = Path(sys.argv[1])
 mode = sys.argv[3] if len(sys.argv) > 3 else "single"
 work_w = int(sys.argv[4]) if len(sys.argv) > 4 else 1000
-dev = torch.device("cuda:0")
+dev = resolve_device()
+if dev.type == "cuda":
+    torch.cuda.set_device(dev)
 
 t = time.time()
 proc = AutoImageProcessor.from_pretrained(REPO)

@@ -16,7 +16,6 @@ STUB_COMMANDS = (
     "ingest",
     "slice",
     "filter",
-    "detect",
     "ocr",
     "glossary",
     "judge",

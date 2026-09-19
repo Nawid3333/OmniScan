@@ -17,6 +17,7 @@ OmniScan keeps three roots (see `[paths]` in [Configuration](#configuration)):
 | `work_root/<Series>/watermarks.json` | `omniscan watermark add` / `remove` | fixed-position watermark regions |
 | `work_root/<Series>/<Chapter N>/ingest.json` | `omniscan ingest` | strip layout: files, widths, y-ranges |
 | `work_root/<Series>/<Chapter N>/slices.json` | `omniscan slice` | bands and slices in strip space |
+| `work_root/<Series>/<Chapter N>/regions.json` | `omniscan detect` | bubble and text regions with ids and reading order |
 | `work_root/<Series>/<Chapter N>/filter.json` | `omniscan filter run` / `restore` | promo-filter decisions |
 | `work_root/<Series>/<Chapter N>/manifest.json` | the stage runner | per-stage status, inputs and config hashes |
 | `work_root/<Series>/<Chapter N>/converted/` | `omniscan ingest` | JPEG cache for raws that were not JPEG |
@@ -49,7 +50,7 @@ Every key in `config/default.toml`:
 | `paths.promo_examples` | where promo-filter example images live | yes (`filter run`) |
 | `paths.models_dir` | local cache for model weights | no consumer yet |
 | `gpu.device` | torch device: `auto` (default: strongest discrete GPU, else Apple MPS, else CPU), `cpu`, `mps`, `cuda:N` | yes (a named GPU that is unreachable falls back to CPU) |
-| `gpu.vram_budget_gib` | VRAM budget in GiB | no consumer yet (used once the first model-loading stage lands) |
+| `gpu.vram_budget_gib` | VRAM budget in GiB | yes (the comic detector loads inside this budget) |
 | `gpu.codec` | `auto` / `rocjpeg` / `hybrid` / `turbo` | only `auto`/`turbo` work — both run the CPU `turbo` codec; `rocjpeg`/`hybrid` are not implemented yet |
 | `slicer.band_min_px` | smallest strip band kept, in px | yes |
 | `slicer.target_height` | preferred slice height, in px | yes |
@@ -57,6 +58,16 @@ Every key in `config/default.toml`:
 | `slicer.hard_max_height` | hard ceiling, in px (forces a cut) | yes |
 | `slicer.uniform_tol` | tolerance for treating neighbouring rows as uniform gutter, in px | yes |
 | `slicer.max_drift` | allowed panel-edge drift across a cut | yes |
+| `detect.repo` | Hugging Face repo of the comic detector | yes (`omniscan detect`) |
+| `detect.threshold` | minimum detector score kept before merging | yes |
+| `detect.tile_px` | tile side in strip pixels (capped at the strip width) | yes |
+| `detect.overlap` | tile overlap as a fraction of the tile side | yes |
+| `detect.batch_size` | tiles per forward pass | yes |
+| `detect.nms_iou` | same-class IoU above which the lower-scored box is dropped | yes |
+| `detect.contain_thr` | a tile-edge box mostly inside a same-class box is dropped at/above this containment | yes |
+| `detect.edge_penalty` | score penalty for boxes cut by an internal tile edge | yes |
+| `detect.merge_bubble_text` | several text boxes inside one bubble become one region | yes |
+| `detect.reading_direction` | order of regions within a row: `ltr`, or `rtl` for manga | yes |
 | `ollama.local_url` | local Ollama base URL | yes (`doctor`) |
 | `ollama.cloud_url` | Ollama cloud base URL | yes (`doctor`) |
 | `ollama.request_timeout_s` | per-request timeout | used by the LLM client module (no pipeline stage yet) |
@@ -73,7 +84,7 @@ OMNISCAN_RELAY_CLIENT_TOKEN=...
 
 ## Commands
 
-Stubs (`acquire`, `detect`, `ocr`, `judge`, `inpaint`, `typeset`, `export`, `run`,
+Stubs (`acquire`, `ocr`, `judge`, `inpaint`, `typeset`, `export`, `run`,
 `reference`) are registered but not usable; each prints `not implemented yet` and exits 2. Every other
 command below is fully working. The examples assume you generated the demo chapter with
 `uv run python scripts/make_demo_chapter.py`.
@@ -151,6 +162,28 @@ dir. Exit codes as for `ingest`.
 
 ```bash
 uv run omniscan slice DemoSeries
+```
+
+### `omniscan detect`
+
+Detect speech bubbles and text in chapter strips (`regions.json`). Runs `ingest` and `slice` first if
+needed. The RT-DETR-v2 comic detector (`detect.repo`, downloaded from Hugging Face on first use) runs
+on the configured GPU in fp32 over overlapping square tiles of the strip; tiles of blank and filtered
+slices are skipped, detections are merged across tiles, and every kept text box becomes a region —
+`bubble_text` when the detector also saw its bubble, `free_text` for text outside bubbles — with
+chapter-stable ids and a reading order that follows `detect.reading_direction`.
+
+| Argument/option | Meaning |
+|---|---|
+| `series` | series name (required) |
+| `--chapter`, `-c <str>` | chapter folder name; repeatable. Default: all |
+| `--force` | re-run even if up to date |
+
+Reads `ingest.json`, `slices.json` and the raw images; writes `regions.json` + `manifest.json` in the
+chapter work dir. Exit codes as for `ingest`.
+
+```bash
+uv run omniscan detect DemoSeries
 ```
 
 ### `omniscan filter run`
@@ -453,11 +486,12 @@ requests plus that one POST, which appends to `filter.json` and never writes any
 
 ## Resuming and re-running
 
-`ingest` and `slice` are stage runs recorded in the chapter's `manifest.json`: stage version, content
-hash of the inputs, hash of the relevant config subset, status and outputs. A second run with
-unchanged inputs and config is a no-op — it prints `skipped (0.00s)` per stage and exits 0. Use
-`--force` to re-run even when up to date. `slice` always runs `ingest` first when the ingest is
-missing or stale, so `slice` alone is enough for a fresh chapter.
+`ingest`, `slice` and `detect` are stage runs recorded in the chapter's `manifest.json`: stage
+version, content hash of the inputs, hash of the relevant config subset, status and outputs. A second
+run with unchanged inputs and config is a no-op — it prints `skipped (0.00s)` per stage and exits 0.
+Use `--force` to re-run even when up to date. `slice` always runs `ingest` first when the ingest is
+missing or stale, so `slice` alone is enough for a fresh chapter (`detect` pulls in both the same
+way).
 
 ## Troubleshooting
 

@@ -250,6 +250,22 @@ def test_slice_stage_without_ingest_fails(cfg: Config) -> None:
 # ---------------------------------------------------------------- CLI
 
 
+def test_slice_stage_reruns_when_raw_pixels_change_with_same_dimensions(cfg: Config) -> None:
+    """The slice stage hashes the raw images: same dimensions but different pixels must re-run it."""
+    raw = raw_dir(cfg)
+    images.plain_jpeg(raw / "001.jpg", size=(400, 300))
+    stages = [IngestStage(), SliceStage()]
+    assert [o.status for o in run_chapter(stages, make_context(cfg, SERIES, CHAPTER))] == ["done", "done"]
+    assert [o.status for o in run_chapter(stages, make_context(cfg, SERIES, CHAPTER))] == [
+        "skipped",
+        "skipped",
+    ]
+
+    images.plain_jpeg(raw / "001.jpg", size=(400, 300), color=(10, 20, 30))  # different pixels, same size
+    rerun = run_chapter([SliceStage()], make_context(cfg, SERIES, CHAPTER))
+    assert [o.status for o in rerun] == ["done"]  # the slice stage is done, not skipped
+
+
 def test_cli_ingest_and_slice(cfg: Config, monkeypatch: pytest.MonkeyPatch) -> None:
     for chapter in ("Chapter 1", "Chapter 2"):
         write_jpegs(raw_dir(cfg, SERIES, chapter), [(400, 300)] * 3, COLORS)

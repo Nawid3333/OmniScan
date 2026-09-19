@@ -35,7 +35,6 @@ STATUS_STYLES = {"OK": "green", "WARN": "yellow", "FAIL": "red"}
 
 _STUB_COMMANDS = (
     "acquire",
-    "detect",
     "ocr",
     "judge",
     "inpaint",
@@ -202,7 +201,16 @@ def _run_stages(
     if chapters is None and not SeriesPaths.from_config(cfg, series).chapters():
         typer.echo(f"{name}: no chapters found for series {series!r}", err=True)
         raise typer.Exit(2)
-    results = run_series(stages, cfg, series, chapters, force=force)
+    gpu = None
+    if any(stage.gpu_group is not None for stage in stages):
+        from omniscan.gpu.groups import build_vram_manager
+
+        gpu = build_vram_manager(cfg)
+    try:
+        results = run_series(stages, cfg, series, chapters, force=force, gpu=gpu)
+    finally:
+        if gpu is not None:
+            gpu.release()  # the models leave VRAM when the command ends
     failed = False
     for chapter, outcomes in results.items():
         for outcome in outcomes:
@@ -247,9 +255,23 @@ app.command("ingest")(cmd_ingest)
 app.command("slice")(cmd_slice)
 
 
-def cmd_detect(series: Annotated[str | None, typer.Argument()] = None) -> None:
-    """Not implemented yet."""
-    _stub("detect", series)
+def cmd_detect(
+    series: Annotated[str, typer.Argument()],
+    chapter: Annotated[
+        list[str] | None,
+        typer.Option("--chapter", "-c", help="Chapter folder name; repeatable. Default: all."),
+    ] = None,
+    force: Annotated[bool, typer.Option("--force", help="Re-run even if up to date.")] = False,
+) -> None:
+    """Detect bubbles and text regions in chapter strips (regions.json). Runs ingest and slice first if needed."""
+    from omniscan.detect.stage import DetectStage
+    from omniscan.ingest.stage import IngestStage
+    from omniscan.slicer.stage import SliceStage
+
+    _run_stages("detect", [IngestStage(), SliceStage(), DetectStage()], series, chapter, force)
+
+
+app.command("detect")(cmd_detect)
 
 
 def cmd_ocr(series: Annotated[str | None, typer.Argument()] = None) -> None:
