@@ -46,3 +46,10 @@ uv run pyright            # 0 errors, 0 warnings (whole project)
 1. ruff 0.16's markdown code-block formatting vs `docs/tasks/*.md`: should `pyproject.toml` `[tool.ruff]`
    `extend-exclude = ["docs"]` (or per-file ignores) keep hand-written task cards stable, or does the
    director want docs reformatted once repo-wide and then kept ruff-clean?
+## Review addendum (director)
+Answer to Question 1: task cards are `ruff format`-ed by the director before they are committed (the loop already said so; C3/C5a/X1 had
+been missed and are now formatted on `main`), so `ruff format --check .` is clean and no exclude is needed.
+Mutation check (10 mutants: `>=`→`>`, `min`→`max`, dropped `sorted`, dropped `casefold` in both modules, `not in`→`in`,
+missing-text not skipped, proposed entries also checked, last-occurrence-wins): 8 killed; `first[...] =` instead of `setdefault` is an
+equivalent mutant (a dict keeps its first insertion position); the dropped Unicode-category `S` survived — added `"a+b=c"` and `"$5 <3 ©"`
+to the `normalize_line` goldens, which now kill it.

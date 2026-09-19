@@ -20,6 +20,8 @@ from omniscan.translate.agree import agreement, candidates_agree, normalize_line
         ("Ａｂｃ ＆ ｄ", "abc d"),
         ("It's   fine — really?", "it s fine really"),
         ("…", ""),
+        ("a+b=c", "a b c"),  # symbols (Unicode category S) are spaced out like punctuation
+        ("$5 <3 ©", "5 3"),
         ("성진이가 왔다", "성진이가 왔다"),
     ],
 )
