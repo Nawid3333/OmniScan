@@ -22,10 +22,11 @@ OmniScan keeps three roots (see `[paths]` in [Configuration](#configuration)):
 | `work_root/<Series>/<Chapter N>/patches.npz` | `omniscan inpaint` | cleaned crops and text masks per region (export applies them) |
 | `work_root/<Series>/<Chapter N>/layout.json` | `omniscan typeset` | per-region font, size, wrapped lines, box and colour |
 | `work_root/<Series>/<Chapter N>/ocr.json` | `omniscan ocr` | the regions with their text lines, text and confidence |
+| `work_root/<Series>/<Chapter N>/export.json` | `omniscan export` | the written slices: quality, subsampling, file list |
 | `work_root/<Series>/<Chapter N>/filter.json` | `omniscan filter run` / `restore` | promo-filter decisions |
 | `work_root/<Series>/<Chapter N>/manifest.json` | the stage runner | per-stage status, inputs and config hashes |
 | `work_root/<Series>/<Chapter N>/converted/` | `omniscan ingest` | JPEG cache for raws that were not JPEG |
-| `output_root/<Series>/<Chapter N>/` | `omniscan export` (not implemented yet) | final English slices |
+| `output_root/<Series>/<Chapter N>/` | `omniscan export` | final English slices (`0001.jpg` …) |
 | `output_root/<Series>/_filtered/<Chapter N>/` | `omniscan filter run` | byte-copies of promo-filtered raw files (never deleted) |
 | `output_root/<Series>/_packaged/` | `omniscan pack` | finished `.cbz` / `.pdf` files |
 
@@ -101,6 +102,8 @@ Every key in `config/default.toml`:
 | `ocr.low_conf` | regions whose confidence is below this are counted as low-confidence in the metrics | yes |
 | `ocr.drop_conf` | regions with an OCR confidence below this (or with no readable text) are dropped from `ocr.json`; they are detector false positives whose pixels stay untouched | yes |
 | `ocr.lang` | language code recorded on every OCR'd region | yes |
+| `export.jpeg_quality` | JPEG quality of the exported slices | yes (`omniscan export`) |
+| `export.subsampling` | chroma subsampling of the exported slices: `444`, `422` or `420` | yes (`omniscan export`) |
 | `ollama.local_url` | local Ollama base URL | yes (`doctor`) |
 | `ollama.cloud_url` | Ollama cloud base URL | yes (`doctor`) |
 | `ollama.request_timeout_s` | per-request timeout | used by the LLM client module (no pipeline stage yet) |
@@ -117,7 +120,7 @@ OMNISCAN_RELAY_CLIENT_TOKEN=...
 
 ## Commands
 
-Stubs (`acquire`, `export`, `run`,
+Stubs (`acquire`, `run`,
 `reference`) are registered but not usable; each prints `not implemented yet` and exits 2. Every other
 command below is fully working. The examples assume you generated the demo chapter with
 `uv run python scripts/make_demo_chapter.py`.
@@ -265,6 +268,32 @@ Reads `ingest.json`, `slices.json`, `ocr.json` and the raw images; writes `inpai
 
 ```bash
 uv run omniscan inpaint DemoSeries
+```
+
+### `omniscan export`
+
+Write the finished English slices of a chapter to `output_root/<series>/<chapter>/` and record them in
+`export.json`. The chapter strip is re-decoded from the raws, every cleaned crop from `patches.npz` is
+pasted back through its text mask (crops from `patches_lama.npz` last, when the LaMa pass exists — they
+override the flat fill), every region in `layout.json` is rendered with its font and blended over the
+strip, and the slices that survived the promo filter are re-encoded as `0001.jpg`, `0002.jpg`, …
+Unmasked pixels are never modified, and a re-export deletes only stale `NNNN.jpg` files from the output
+folder — anything else you keep there stays.
+
+| Argument/option | Meaning |
+|---|---|
+| `series` | series name (required) |
+| `--chapter`, `-c <str>` | chapter folder name; repeatable. Default: all |
+| `--force` | re-run even if up to date |
+
+Reads `ingest.json`, `slices.json`, `inpaint.json`, `patches.npz`, `layout.json` and the raw images
+(plus `inpaint_lama.json` + `patches_lama.npz` when they exist); writes `export.json` in the chapter
+work dir and the slice JPEGs into `output_root/<series>/<chapter>/`, encoded with the `[export]`
+quality and subsampling. It does not run the earlier stages for you — a missing input fails the chapter
+with the stage to run named. Exit codes as for `ingest`.
+
+```bash
+uv run omniscan export DemoSeries
 ```
 
 ### `omniscan filter run`
@@ -474,8 +503,7 @@ Package finished chapters (`output_root/<series>/<chapter>/*.jpg`) into CBZ and/
 | `--out <path>` | output folder. Default: `<output_root>/<series>/_packaged` |
 
 Reads the chapter's output images; writes one archive per chapter and format. Exit 2 when there is
-nothing to pack. Today the output root only fills up once the export stage exists, so packing needs
-finished images placed (or copied) there by hand.
+nothing to pack. `omniscan export` is what fills the output folder it packs.
 
 ```bash
 uv run omniscan pack DemoSeries
@@ -606,8 +634,8 @@ The **Reader view** (switch with the `Reader` button) shows a chapter's finished
 (`output_root/<series>/<chapter>/`) as one continuous vertical strip, the way a reader would see the
 released chapter. `final only` shows the output images alone; `raw | final` puts them side by side with
 the chapter's raw pages (kept files only) with linked scrolling for comparison. A width slider sets the
-reading column width, fitted to the viewport. The export stage does not exist yet, so the view shows
-`no output yet` until finished images are placed in the chapter's output folder by hand.
+reading column width, fitted to the viewport. The view shows `no output yet` until `omniscan export`
+has written the chapter's slices.
 
 The **Filtered view** (switch with the `Filtered` button, shown as soon as a series is picked) lists
 everything the promo filter ever marked `filtered`, per chapter: one row per filtered file or slice

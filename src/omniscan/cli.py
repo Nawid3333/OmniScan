@@ -35,7 +35,6 @@ STATUS_STYLES = {"OK": "green", "WARN": "yellow", "FAIL": "red"}
 
 _STUB_COMMANDS = (
     "acquire",
-    "export",
     "run",
     "reference",
 )
@@ -470,9 +469,21 @@ def cmd_inpaint(
 app.command("inpaint")(cmd_inpaint)
 
 
-def cmd_export(series: Annotated[str | None, typer.Argument()] = None) -> None:
-    """Not implemented yet."""
-    _stub("export", series)
+def cmd_export(
+    series: Annotated[str, typer.Argument()],
+    chapter: Annotated[
+        list[str] | None,
+        typer.Option("--chapter", "-c", help="Chapter folder name; repeatable. Default: all."),
+    ] = None,
+    force: Annotated[bool, typer.Option("--force", help="Re-run even if up to date.")] = False,
+) -> None:
+    """Write the finished English slices to output_root/<series>/<chapter> (export.json)."""
+    from omniscan.export.stage import ExportStage
+
+    _run_stages("export", [ExportStage()], series, chapter, force)
+
+
+app.command("export")(cmd_export)
 
 
 def cmd_run(series: Annotated[str | None, typer.Argument()] = None) -> None:
