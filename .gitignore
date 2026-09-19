@@ -46,3 +46,4 @@ Thumbs.db
 # Local data root on Windows setups (library / work / output live here)
 /data/
 .mutate_backup/
+.builder/*.log
