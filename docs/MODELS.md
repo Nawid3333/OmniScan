@@ -25,7 +25,9 @@ local daemon — nothing to download, but it needs an Ollama account).
 Sizes are approximate download sizes (`size_mb` in the catalog); the catalog's `bytes` fields carry
 the exact mirror-asset sizes. The zip assets contain only files under a top-level `<id>/` folder and
 are extracted into `paths.models_dir`, so a model lives at `<models_dir>/<id>/`; the LaMa file goes
-to `<models_dir>/lama/big-lama.pt`. Every download is sha256-verified against the catalog.
+to `<models_dir>/lama/big-lama.pt`. Every download is sha256-verified against the catalog. The
+pipeline loads each Hugging Face model from that installed folder when present (falling back to the
+Hugging Face hub/cache otherwise), and `omniscan doctor` reports the required models that are missing.
 
 Licences: the Apache-2.0 weights keep their upstream licences (the RT-DETR-v2 detector from the
 `ogkalu` Hugging Face account, PP-OCRv5 by PaddlePaddle, big-lama from Sanster's `models` repo).

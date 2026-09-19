@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -13,6 +15,8 @@ import pytest
 from omniscan import doctor
 from omniscan.core.config import Config, PathsConfig, Secrets
 from omniscan.doctor import CheckResult, run_all_checks
+from omniscan.models.catalog import ModelEntry
+from omniscan.models.store import MARKER_NAME
 
 REQUIRED_NAMES = (
     "python",
@@ -24,8 +28,40 @@ REQUIRED_NAMES = (
     "ollama_cloud",
     "secrets",
     "paths",
+    "models",
     "codec",
 )
+
+_CATALOG_SHA = "b" * 64
+
+
+def _zip_entry(model_id: str, size_mb: int = 100, *, required: bool = True) -> ModelEntry:
+    return ModelEntry(
+        id=model_id,
+        name="M",
+        kind="vision",
+        required=required,
+        format="zip",
+        size_mb=size_mb,
+        license="Apache-2.0",
+        description="d",
+        mirror_url=f"https://mirror/{model_id}.zip",
+        sha256=_CATALOG_SHA,
+        bytes=10,
+        upstream_repo=f"up/{model_id}",
+        upstream_revision="rev1",
+    )
+
+
+def _install(models_dir: Path, model_id: str, sha: str) -> None:
+    folder = models_dir / model_id
+    folder.mkdir(parents=True)
+    (folder / "weights.bin").write_text("hello", encoding="utf-8")
+    (folder / MARKER_NAME).write_text(json.dumps({"id": model_id, "sha256": sha}), encoding="utf-8")
+
+
+def _models_cfg(tmp_path: Path) -> Config:
+    return Config(paths=PathsConfig(models_dir=tmp_path / "models"))
 
 
 def make_secrets(**kwargs: str | None) -> Secrets:
@@ -154,6 +190,54 @@ def test_paths_missing_warns(tmp_path: Any) -> None:
     assert (tmp_path / "library").exists() is False
     assert (tmp_path / "work").exists() is False
     assert (tmp_path / "output").exists() is False
+
+
+# ---------------------------------------------------------------- models (card U2b)
+
+
+def test_models_all_installed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    entries = [_zip_entry("a"), _zip_entry("b"), _zip_entry("c")]
+    cfg = _models_cfg(tmp_path)
+    for entry in entries:
+        _install(cfg.paths.models_dir, entry.id, _CATALOG_SHA)
+    monkeypatch.setattr(doctor, "load_catalog", lambda: entries)
+    result = doctor.check_models(cfg)
+    assert result.status == "OK"
+    assert result.detail == "3 required models installed"
+
+
+def test_models_missing_warns_with_ids_size_and_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entries = [_zip_entry("a"), _zip_entry("b", 159), _zip_entry("c", 23), _zip_entry("opt", required=False)]
+    cfg = _models_cfg(tmp_path)
+    _install(cfg.paths.models_dir, "a", _CATALOG_SHA)
+    monkeypatch.setattr(doctor, "load_catalog", lambda: entries)
+    result = doctor.check_models(cfg)
+    assert result.status == "WARN"
+    assert "2 required model(s) not installed (182 MB): b, c" in result.detail
+    assert 'run "omniscan models download --required"' in result.detail
+    assert "opt" not in result.detail  # optional models are never required
+
+
+def test_models_corrupt_counts_as_not_installed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    entries = [_zip_entry("a")]
+    cfg = _models_cfg(tmp_path)
+    _install(cfg.paths.models_dir, "a", "c" * 64)  # wrong marker hash: corrupt
+    monkeypatch.setattr(doctor, "load_catalog", lambda: entries)
+    result = doctor.check_models(cfg)
+    assert result.status == "WARN"
+    assert "1 required model(s) not installed (100 MB): a" in result.detail
+
+
+def test_models_broken_catalog_warns(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def broken() -> list[ModelEntry]:
+        raise ValueError("bad catalog")
+
+    monkeypatch.setattr(doctor, "load_catalog", broken)
+    result = doctor.check_models(_models_cfg(tmp_path))
+    assert result.status == "WARN"
+    assert "bad catalog" in result.detail
 
 
 def test_run_all_checks_never_raises(monkeypatch: pytest.MonkeyPatch) -> None:

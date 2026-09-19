@@ -15,9 +15,10 @@ from omniscan.models.store import install_path, model_status
 
 
 def local_model_source(
-    repo: str, models_dir: Path, catalog: Sequence[ModelEntry] | None = None
+    repo: str, models_dir: Path | str, catalog: Sequence[ModelEntry] | None = None
 ) -> str | None:
     """`<models_dir>/<id>` as a str when `repo` has an installed zip entry in the catalog, else None."""
+    models_dir = Path(models_dir)  # tolerate str (same as download_model/remove_model)
     try:
         entries = load_catalog() if catalog is None else catalog
     except OSError, ValueError:  # unreadable/corrupt catalog: use the hub, never raise (PEP 758)

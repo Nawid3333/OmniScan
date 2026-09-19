@@ -1,4 +1,4 @@
-"""`omniscan doctor` — machine checks: Python, GPU/torch, ROCm, rocJPEG, Ollama, secrets, paths."""
+"""`omniscan doctor` — machine checks: Python, GPU/torch, ROCm, rocJPEG, Ollama, secrets, paths, models."""
 
 from __future__ import annotations
 
@@ -14,6 +14,8 @@ from typing import Literal
 import httpx
 
 from omniscan.core.config import Config, Secrets
+from omniscan.models.catalog import load_catalog
+from omniscan.models.store import model_status
 
 Status = Literal["OK", "WARN", "FAIL"]
 
@@ -211,6 +213,29 @@ def check_paths(cfg: Config) -> CheckResult:
     )
 
 
+def check_models(cfg: Config) -> CheckResult:
+    """Check every required catalog model is installed in models_dir (the pipeline prefers those)."""
+    try:
+        entries = [entry for entry in load_catalog() if entry.required]
+        missing = [
+            entry
+            for entry in entries
+            if model_status(entry, cfg.paths.models_dir, ollama_names=None) != "installed"
+        ]
+    except (OSError, ValueError) as exc:
+        return CheckResult("models", "WARN", f"{type(exc).__name__}: {exc}")
+    if not missing:
+        return CheckResult("models", "OK", f"{len(entries)} required models installed")
+    total_mb = sum(entry.size_mb for entry in missing)
+    ids = ", ".join(entry.id for entry in missing)
+    return CheckResult(
+        "models",
+        "WARN",
+        f"{len(missing)} required model(s) not installed ({total_mb} MB): {ids}; "
+        'run "omniscan models download --required" (until then they are loaded from the Hugging Face hub/cache)',
+    )
+
+
 def check_codec(cfg: Config) -> CheckResult:
     """Report the configured codec (real probe comes in card C2)."""
     return CheckResult("codec", "OK", f"configured: {cfg.gpu.codec}")
@@ -226,6 +251,7 @@ _CHECKS = (
     ("ollama_cloud", lambda cfg, secrets, http: check_ollama_cloud(cfg, secrets, http)),
     ("secrets", lambda cfg, secrets, http: check_secrets(secrets)),
     ("paths", lambda cfg, secrets, http: check_paths(cfg)),
+    ("models", lambda cfg, secrets, http: check_models(cfg)),
     ("codec", lambda cfg, secrets, http: check_codec(cfg)),
 )
 

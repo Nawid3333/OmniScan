@@ -82,6 +82,14 @@ def test_installed_repo_resolves_to_the_folder(tmp_path: Path) -> None:
     assert local_model_source("org/det", models_dir, catalog) == str(models_dir / "det")
 
 
+def test_string_models_dir_is_tolerated(tmp_path: Path) -> None:
+    models_dir = tmp_path / "models"
+    install_fake_zip(models_dir, "det")
+    assert local_model_source("org/det", str(models_dir), [zip_entry("det", "org/det")]) == str(
+        models_dir / "det"
+    )
+
+
 def test_missing_folder_returns_none(tmp_path: Path) -> None:
     assert local_model_source("org/det", tmp_path / "models", [zip_entry("det", "org/det")]) is None
 

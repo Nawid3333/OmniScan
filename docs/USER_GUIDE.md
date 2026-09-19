@@ -143,8 +143,10 @@ Check this machine is ready for OmniScan.
 
 Checks Python 3.14, the ROCm torch build and GPU, `rocminfo`/gfx1201, the rocJPEG decoder, the local
 Ollama server, the required Ollama models, the Ollama cloud key (only when one is set), the secrets
-file, the pipeline roots and the configured codec. Any `FAIL` row makes the command exit 1; `WARN`
-rows do not. Writes nothing.
+file, the pipeline roots, the required model-catalog downloads and the configured codec. Any `FAIL`
+row makes the command exit 1; `WARN` rows do not. The `models` row warns with the total size to
+download while required models are missing (until then the pipeline loads them from the Hugging Face
+hub/cache). Writes nothing.
 
 ```bash
 uv run omniscan doctor
@@ -635,6 +637,13 @@ every download is sha256-verified. See [docs/MODELS.md](MODELS.md) for the per-m
 
 Statuses: `installed` (present and verified), `missing`, `corrupt` (size or sha256 mismatch — delete
 and re-download), `cloud` (Ollama Cloud model, nothing on disk), `unknown` (Ollama unreachable).
+
+How the pipeline finds models: the `detect` and `ocr` stages load each model from
+`<models_dir>/<id>/` when its catalog entry is installed (`from_pretrained` with
+`local_files_only=True`, so an installed app also works offline); otherwise they fall back to the
+Hugging Face hub/cache with the config's pinned revision and log a warning that `omniscan models
+download --required` would install it. LaMa always loads `<models_dir>/lama/big-lama.pt`, the path
+its download already uses.
 
 ```bash
 uv run omniscan models list
