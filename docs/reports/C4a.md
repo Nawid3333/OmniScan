@@ -103,3 +103,11 @@ doing its job.
 ## Questions
 
 None.
+## Review addendum (director)
+- Rebase conflicts (README status/stub tables, USER_GUIDE tables and sections, the stub tuple and the `cmd_typeset`/`cmd_ocr` hunk in `cli.py`) resolved; `detect`, `ocr`, `judge`, `inpaint` and `typeset` are real commands now.
+  The builder used `judge` as the "still a stub" example in `test_cli.py` / `test_docs.py` (deviation); `judge` is real on `main`, so both use `acquire` (the long-lived stub). One unused import (`LineBox` in `test_ocr_model.py`) removed.
+- Mutation check, 21 mutants over `ocr/lines.py`, `assemble.py`, `pipeline.py` (polygon box, NMS boundary/order, strictly-larger rule and containment boundary, output sort, `min_ioa` boundary, tie-breaks, padding sign, empty entries, reading order, no strip, confidence max, text join,
+  floor/ceil rounding, tile restriction, shift, crop padding, `low_conf` boundary, orphan metric): **all killed** (one pattern did not match the source and was skipped).
+- **Live run** (`scripts/make_korean_chapter.py --series KoreanDemo --pages 3 --seed 11`, then `omniscan ocr KoreanDemo --force`, real GPU, fp32): ingest 0.00 s, slice 0.81 s, detect 14.0 s (model load + first kernels), ocr 4.6 s. 19 regions for 17 truth regions. Clean bubble text is read exactly
+  (`게이트가 닫히기 전에 나가야 해.`, `지금 무슨 일이 / 일어난 거지?`, confidence 0.92–0.97); the comic detector (out of domain on synthetic pages) adds a few duplicate `free_text` boxes next to bubbles and some junk regions with low confidence
+  (`ㅅ / 루스 / 그 / 일어난 / 거지?` 0.11, `모` 0.31, `일모` 0.50). Follow-up card (not for this one): drop or flag regions below an OCR confidence threshold and de-duplicate `free_text` boxes that overlap a `bubble_text` region, before translation.

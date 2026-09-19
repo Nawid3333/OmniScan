@@ -8,7 +8,6 @@ import pytest
 import torch
 
 from omniscan.core.config import OcrConfig
-from omniscan.ocr.lines import LineBox
 from omniscan.ocr.model import LineDetector, LineRecognizer
 
 

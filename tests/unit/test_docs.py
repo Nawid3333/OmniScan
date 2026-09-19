@@ -132,5 +132,5 @@ def test_extraction_helper_detects_unknown_command() -> None:
 
 
 def test_extraction_helper_flags_stub_as_documented() -> None:
-    errors = doc_command_errors("```bash\nomniscan judge DemoSeries\n```")
+    errors = doc_command_errors("```bash\nomniscan acquire DemoSeries\n```")
     assert any("stub" in e for e in errors)
