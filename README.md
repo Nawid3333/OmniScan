@@ -17,15 +17,15 @@ packaged into CBZ/PDF.
 | watermark regions | module only — `omniscan watermark add` / `list` / `remove` |
 | glossary | module only — `omniscan glossary list` / `export` / `import` |
 | detect | working — `omniscan detect` (regions.json; no text yet) |
-| ocr | not implemented |
-| translate | working — `omniscan translate` (candidate runs only; needs ocr.json, which no stage produces yet) |
+| ocr | working — `omniscan ocr` (ocr.json) |
+| translate | working — `omniscan translate` (candidate runs only; needs ocr.json from `omniscan ocr`) |
 | judge | working — `omniscan judge` (final.json) |
 | inpaint | working — `omniscan inpaint` (flat fill only; needs ocr.json) |
 | typeset | working — `omniscan typeset` (layout.json; needs ocr.json, final.json, inpaint.json) |
 | export | not implemented |
 | pack | working — `omniscan pack` (CBZ/PDF of finished output) |
 | job queue | working — `omniscan queue add` / `list` / `run` / `pause` / `resume` / `cancel` / `retry` / `clear` |
-| web viewer | working — `omniscan serve` + `npm run dev` (Slicer, OCR, Translation, Reader and Filtered views — read-only except the Filtered view's Restore button; the OCR/Translation views need an `ocr.json`, which no stage produces yet) |
+| web viewer | working — `omniscan serve` + `npm run dev` (Slicer, OCR, Translation, Reader and Filtered views — read-only except the Filtered view's Restore button; the OCR/Translation views need an `ocr.json`) |
 
 "working" = usable from the CLI today. "module only" = the code and its own sub-commands exist, but no
 pipeline stage consumes it yet.
@@ -34,7 +34,7 @@ pipeline stage consumes it yet.
 
 | Command | Behaviour |
 |---|---|
-| `acquire`, `ocr`, `export`, `run`, `reference` | registered stubs; they print `not implemented yet` and exit 2 |
+| `acquire`, `export`, `run`, `reference` | registered stubs; they print `not implemented yet` and exit 2 |
 
 ## Requirements
 

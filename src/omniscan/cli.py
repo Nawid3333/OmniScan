@@ -35,7 +35,6 @@ STATUS_STYLES = {"OK": "green", "WARN": "yellow", "FAIL": "red"}
 
 _STUB_COMMANDS = (
     "acquire",
-    "ocr",
     "export",
     "run",
     "reference",
@@ -288,9 +287,24 @@ def cmd_typeset(
 app.command("typeset")(cmd_typeset)
 
 
-def cmd_ocr(series: Annotated[str | None, typer.Argument()] = None) -> None:
-    """Not implemented yet."""
-    _stub("ocr", series)
+def cmd_ocr(
+    series: Annotated[str, typer.Argument()],
+    chapter: Annotated[
+        list[str] | None,
+        typer.Option("--chapter", "-c", help="Chapter folder name; repeatable. Default: all."),
+    ] = None,
+    force: Annotated[bool, typer.Option("--force", help="Re-run even if up to date.")] = False,
+) -> None:
+    """Read the text of detected regions with PP-OCRv5 (ocr.json). Runs ingest, slice and detect first if needed."""
+    from omniscan.detect.stage import DetectStage
+    from omniscan.ingest.stage import IngestStage
+    from omniscan.ocr.stage import OcrStage
+    from omniscan.slicer.stage import SliceStage
+
+    _run_stages("ocr", [IngestStage(), SliceStage(), DetectStage(), OcrStage()], series, chapter, force)
+
+
+app.command("ocr")(cmd_ocr)
 
 
 def cmd_translate(

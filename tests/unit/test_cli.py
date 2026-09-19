@@ -29,7 +29,6 @@ STUB_COMMANDS = (
     "ingest",
     "slice",
     "filter",
-    "ocr",
     "glossary",
     "export",
     "run",
@@ -50,9 +49,9 @@ def test_help_lists_all_commands() -> None:
 
 
 def test_stub_exits_2() -> None:
-    result = runner.invoke(app, ["ocr"])
+    result = runner.invoke(app, ["judge"])
     assert result.exit_code == 2
-    assert "ocr: not implemented yet" in result.output
+    assert "judge: not implemented yet" in result.output
 
 
 def test_doctor_json_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:

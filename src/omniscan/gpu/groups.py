@@ -1,7 +1,8 @@
 """VRAM model groups for the pipeline stages: one manager per command, model groups registered here.
 
-Card C3 registers the vision group (detector); C4 will add the OCR models to the same group. Loaders import
-their model lazily so importing this module — and `omniscan --help` — stays free of heavy model libraries.
+The vision group holds the comic detector and the two OCR models (line detector + recognizer); they are
+always resident together. Loaders import their models lazily so importing this module — and
+`omniscan --help` — stays free of heavy model libraries.
 """
 
 from __future__ import annotations
@@ -23,9 +24,14 @@ def build_vram_manager(cfg: Config) -> VramManager:
         from omniscan.detect.model import (
             Detector,
         )  # deferred: importing this module must not pull transformers
+        from omniscan.ocr.model import LineDetector, LineRecognizer  # deferred
 
-        return {"detector": Detector.load(cfg.detect, device)}
+        return {
+            "detector": Detector.load(cfg.detect, device),
+            "line_detector": LineDetector.load(cfg.ocr, device),
+            "recognizer": LineRecognizer.load(cfg.ocr, device),
+        }
 
     manager = VramManager(cfg.gpu.device, cfg.gpu.vram_budget_gib, ollama_url=cfg.ollama.local_url)
-    manager.register(VISION_GROUP, load_vision, est_gib=2.0)
+    manager.register(VISION_GROUP, load_vision, est_gib=3.0)
     return manager

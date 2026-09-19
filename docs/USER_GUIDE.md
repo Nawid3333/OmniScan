@@ -21,6 +21,7 @@ OmniScan keeps three roots (see `[paths]` in [Configuration](#configuration)):
 | `work_root/<Series>/<Chapter N>/inpaint.json` | `omniscan inpaint` | per-region clean record: method, fill colour, needs-lama flag |
 | `work_root/<Series>/<Chapter N>/patches.npz` | `omniscan inpaint` | cleaned crops and text masks per region (export applies them) |
 | `work_root/<Series>/<Chapter N>/layout.json` | `omniscan typeset` | per-region font, size, wrapped lines, box and colour |
+| `work_root/<Series>/<Chapter N>/ocr.json` | `omniscan ocr` | the regions with their text lines, text and confidence |
 | `work_root/<Series>/<Chapter N>/filter.json` | `omniscan filter run` / `restore` | promo-filter decisions |
 | `work_root/<Series>/<Chapter N>/manifest.json` | the stage runner | per-stage status, inputs and config hashes |
 | `work_root/<Series>/<Chapter N>/converted/` | `omniscan ingest` | JPEG cache for raws that were not JPEG |
@@ -82,6 +83,23 @@ Every key in `config/default.toml`:
 | `typeset.free_grow` | free text / SFX boxes are grown by this fraction on every side | yes (`omniscan typeset`) |
 | `typeset.stroke_free_px` | outline width of free-standing text, in px | yes (`omniscan typeset`) |
 | `typeset.stroke_sfx_px` | outline width of sound effects, in px | yes (`omniscan typeset`) |
+| `ocr.det_repo` | Hugging Face repo of the PP-OCRv5 text-line detector | yes (`omniscan ocr`) |
+| `ocr.det_revision` | pin the detector to a specific Hugging Face revision | yes (empty = latest) |
+| `ocr.rec_repo` | Hugging Face repo of the recognition model; also recorded per line as its engine | yes (`omniscan ocr`) |
+| `ocr.rec_revision` | pin the recognizer to a specific Hugging Face revision | yes (empty = latest) |
+| `ocr.tile_px` | tile side in strip pixels (capped at the strip width) | yes |
+| `ocr.overlap` | tile overlap as a fraction of the tile side | yes |
+| `ocr.det_threshold` | minimum detector score kept before post-processing | yes |
+| `ocr.box_threshold` | minimum box score kept by the detector post-processor | yes |
+| `ocr.unclip_ratio` | how far detected line boxes are unclipped outward | yes |
+| `ocr.min_size` | smallest line box kept, in px | yes |
+| `ocr.rec_batch_size` | line crops per recognition forward pass | yes |
+| `ocr.line_pad_px` | padding around a line before it is cropped for reading | yes |
+| `ocr.assign_min_ioa` | a line joins the region containing at least this fraction of it | yes |
+| `ocr.region_pad_px` | region box padding used when assigning lines to regions | yes |
+| `ocr.nms_iou` | same-line IoU above which the lower-scored duplicate is dropped | yes |
+| `ocr.low_conf` | regions whose confidence is below this are counted as low-confidence in the metrics | yes |
+| `ocr.lang` | language code recorded on every OCR'd region | yes |
 | `ollama.local_url` | local Ollama base URL | yes (`doctor`) |
 | `ollama.cloud_url` | Ollama cloud base URL | yes (`doctor`) |
 | `ollama.request_timeout_s` | per-request timeout | used by the LLM client module (no pipeline stage yet) |
@@ -98,7 +116,7 @@ OMNISCAN_RELAY_CLIENT_TOKEN=...
 
 ## Commands
 
-Stubs (`acquire`, `ocr`, `export`, `run`,
+Stubs (`acquire`, `export`, `run`,
 `reference`) are registered but not usable; each prints `not implemented yet` and exits 2. Every other
 command below is fully working. The examples assume you generated the demo chapter with
 `uv run python scripts/make_demo_chapter.py`.
@@ -198,6 +216,31 @@ chapter work dir. Exit codes as for `ingest`.
 
 ```bash
 uv run omniscan detect DemoSeries
+```
+
+### `omniscan ocr`
+
+Read the text of the detected regions (`ocr.json`). Runs `ingest`, `slice` and `detect` first if
+needed. Two PP-OCRv5 models (`ocr.det_repo`, `ocr.rec_repo`, downloaded from Hugging Face on first
+use) run on the configured GPU in fp32: the text-line detector runs over overlapping square tiles of
+the strip — only tiles that touch a region — the line boxes are merged across tiles (lower-scored
+duplicates above `ocr.nms_iou` are dropped) and assigned to the region containing most of each line,
+then every assigned line is cropped from the strip (padded by `ocr.line_pad_px`) and read by the
+recognition model in batches of `ocr.rec_batch_size`. Each region ends up with its lines (reading
+order, per-line text/score/engine), its text joined with newlines, a confidence (the minimum line
+score) and `ocr.lang` as its language.
+
+| Argument/option | Meaning |
+|---|---|
+| `series` | series name (required) |
+| `--chapter`, `-c <str>` | chapter folder name; repeatable. Default: all |
+| `--force` | re-run even if up to date |
+
+Reads `ingest.json`, `slices.json`, `regions.json` and the raw images; writes `ocr.json` +
+`manifest.json` in the chapter work dir. Exit codes as for `ingest`.
+
+```bash
+uv run omniscan ocr DemoSeries
 ```
 
 ### `omniscan inpaint`
@@ -307,8 +350,8 @@ uv run omniscan glossary import DemoSeries --mode merge
 ### `omniscan translate`
 
 Run translation profiles over a chapter's OCR text and write one candidate run per profile to
-`work_root/<series>/<chapter>/translations/<profile>.json`. Needs `ocr.json`, which no stage produces
-yet, so there is nothing to translate until the OCR stage lands.
+`work_root/<series>/<chapter>/translations/<profile>.json`. Needs `ocr.json` from `omniscan ocr`, so
+run that first.
 
 | Argument/option | Meaning |
 |---|---|
@@ -545,7 +588,7 @@ orange, SFX purple, watermark gray); the label is `reading order · confidence`.
 low-confidence region (confidence below 0.5) and a **yellow** outer box plus a `≠` marks a region where the
 second-opinion reading (`ocr_alt`) differs from the main text. Checkboxes hide/show kinds, and clicking a
 region opens a side panel with its full detail (id, language, orientation, per-line engine/score/text).
-No OCR stage exists yet, so this view only has data once a chapter has an `ocr.json`; until then it shows
+This view only has data once a chapter has an `ocr.json` from `omniscan ocr`; until then it shows
 `no ocr.json yet`.
 
 The **Translation view** (switch with the `Translation` button) is one review table row per OCR region in
@@ -579,12 +622,12 @@ requests plus that one POST, which appends to `filter.json` and never writes any
 
 ## Resuming and re-running
 
-`ingest`, `slice` and `detect` are stage runs recorded in the chapter's `manifest.json`: stage
+`ingest`, `slice`, `detect` and `ocr` are stage runs recorded in the chapter's `manifest.json`: stage
 version, content hash of the inputs, hash of the relevant config subset, status and outputs. A second
 run with unchanged inputs and config is a no-op — it prints `skipped (0.00s)` per stage and exits 0.
 Use `--force` to re-run even when up to date. `slice` always runs `ingest` first when the ingest is
 missing or stale, so `slice` alone is enough for a fresh chapter (`detect` pulls in both the same
-way).
+way, and `ocr` pulls in all three).
 
 ## Troubleshooting
 
