@@ -25,7 +25,7 @@ Every builder has a hard limit of **150 tool calls**: a card must fit (count the
 
 | # | ID | What | Tier | State |
 |---|---|---|---|---|
-| 1 | **A1** | Owner gives 1–2 real Korean raw chapters → tune detect thresholds, OCR, typeset sizes; find real failure modes | T3 (director) | **blocked on the owner** |
+| 1 | **A1/T1** | **Tune on real Korean pages.** Legal data is in place: Pepper&Carrot Korean/English/text-free for 5 episodes (`data/library/PepperCarrotKR`, `data/reference/…`; more episodes are one download loop away, see CHECKPOINT). Build an eval script (OCR CER and detection recall against the English original text is not available per box — use the Korean page text via the `en`↔`kr` pairing by reading order, or hand-label one episode), then tune `detect.threshold`, `ocr.drop_conf`, typeset sizes; fix the misses listed in CHECKPOINT. Commercial-style long strips (owner's own legally obtained chapters via `omniscan import`) remain the real target | T3 (director) | started: first real run done |
 | 2 | **J1** | Live judge check on the real Ollama with more data than KoreanDemo (needs free request slots: run with `OMNI_SLOTS=2`); check `docs/OPEN_QUESTIONS.md` D5 in practice (judge only on disagreement) | director | not started |
 | 3 | **C5c** | Story memory (per-chapter summaries in `series.db`, fed to translate/judge prompts) + glossary proposals (recurring proper nouns found in OCR text → `proposed` entries) | T2 | card to write (patterns: `translate/judge*.py`, `glossary/store.py`) |
 | 4 | **B11'** | Web views for the render stages: raw \| mask \| clean slider (`inpaint.json`/`patches.npz`) and a layout overlay (`layout.json`); Svelte/TS + API endpoints | T2 | card to write (patterns: existing 5 views in `webui/`, `web/` API) |
