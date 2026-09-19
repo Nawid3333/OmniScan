@@ -71,3 +71,39 @@ def test_rerun_after_source_change_writes_new_bytes(tmp_path: Path) -> None:
     second = convert_to_jpeg(src, cache, 0)
     assert second.jpeg_path == first.jpeg_path
     assert second.sha256 != first.sha256
+
+
+def test_jpeg_suffix_variants_pass_through(tmp_path: Path) -> None:
+    """`.jpeg` and uppercase `.JPG` count as JPEG suffixes (suffix is lowercased before the check)."""
+    assert needs_conversion(images.plain_jpeg(tmp_path / "p.jpeg")) is False
+    assert needs_conversion(images.plain_jpeg(tmp_path / "P.JPG")) is False
+
+
+def test_p_mode_with_transparency_flattens_to_white(tmp_path: Path) -> None:
+    """A palette PNG whose whole image is one transparent index flattens over white, not its palette colour."""
+    src = tmp_path / "p_trans.png"
+    img = Image.new("P", (10, 10), 0)
+    img.putpalette([255, 0, 0, 0, 0, 0] + [0] * (256 * 3 - 6))  # index 0 = red, everything else black
+    img.save(src, format="PNG", transparency=0)
+    out = convert_to_jpeg(src, tmp_path / "cache", 0)
+    assert out.converted is True
+    with Image.open(out.jpeg_path) as flat:
+        assert flat.mode == "RGB"
+        assert flat.getpixel((0, 0)) == (255, 255, 255)
+
+
+def test_converted_output_name_and_sha(tmp_path: Path) -> None:
+    """The cache file is `<index:04d>_<stem>.jpg` and the recorded sha256 is the hash of those exact bytes."""
+    src = images.webp_image(tmp_path / "page.webp")
+    out = convert_to_jpeg(src, tmp_path / "cache", 2)
+    assert out.jpeg_path.name == "0002_page.jpg"
+    assert out.sha256 == hash_file(out.jpeg_path)
+    assert (out.width, out.height) == (250, 180)
+
+
+def test_default_quality_is_95(tmp_path: Path) -> None:
+    """The default quality equals the explicit 95 the encoder is documented to use."""
+    src = images.cmyk_jpeg(tmp_path / "cmyk.jpg")
+    default = convert_to_jpeg(src, tmp_path / "cache_a", 0)
+    explicit = convert_to_jpeg(src, tmp_path / "cache_b", 0, quality=95)
+    assert default.sha256 == explicit.sha256

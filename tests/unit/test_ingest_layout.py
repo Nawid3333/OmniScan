@@ -16,7 +16,7 @@ def test_dominant_width_tie_breaks_to_larger() -> None:
 
 
 def test_dominant_width_empty_raises() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="widths is empty"):
         dominant_width([])
 
 
@@ -38,3 +38,8 @@ def test_stack_layout_y_ranges_are_contiguous() -> None:
     layout = stack_layout(sizes, strip_width=800)
     assert [y0 for _, y0, _ in layout][1:] == [y1 for _, _, y1 in layout][:-1]
     assert layout[-1][2] == 600 + 600 + 600  # each scaled to strip_width=800
+
+
+def test_stack_layout_rounds_to_nearest() -> None:
+    """A fractional scaled height (99 * 0.625 = 61.875) rounds to 62, not floor-truncated to 61."""
+    assert stack_layout([(480, 99)], strip_width=300) == [(0.625, 0, 62)]
