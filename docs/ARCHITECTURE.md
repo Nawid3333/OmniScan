@@ -31,6 +31,7 @@ to the common strip width. Integers, half-open ranges `[x0, x1)`, `[y0, y1)`. A 
 | `final.json` | `FinalArtifact` | judge |
 | `inpaint.json` + `patches.npz` | `InpaintArtifact` + npz (cleaned crops and masks per region) | inpaint |
 | `layout.json` | `LayoutArtifact` | typeset |
+| `export.json` | `ExportArtifact` (files written to `output_root/<Series>/<Chapter>/`) | export |
 | `manifest.json` | `Manifest` of `StageRecord`s | stage runner |
 Save/load only through `Artifact.save()` (atomic tmp+rename) and `Model.load(path)`.
 
@@ -76,3 +77,6 @@ Stage outputs stay JSON / `.npz`; the pixels of the final chapter are produced o
 - **export** (`gpu_group` none, uses the codec's device): inputs all of the above + `slices.json`, raw images; decodes the strip on the GPU (`load_strip`), replaces the **masked**
   pixels of every patch, rasterises every `LayoutItem` into a small RGBA patch (glyphs are drawn with FreeType/PIL on the CPU — the one unavoidable CPU step, question F9 — and
   composited on the GPU), cuts the strip into the non-filtered slices and encodes them to `output_root/<Series>/<Chapter>/0001.jpg …`. Unmasked pixels of the raw pages are never touched.
+- **inpaint_lama** (later card, `gpu_group` "inpaint"): handles the `needs_lama` items; writes `inpaint_lama.json` (`InpaintArtifact`, method `"lama"`) and `patches_lama.npz` (same layout as `patches.npz`);
+  export applies `patches.npz` first and `patches_lama.npz` after it, so a LaMa patch overrides the flat-fill placeholder of the same region.
+- Config sections: `[inpaint]`, `[typeset]`, `[export]` (see `config/default.toml`). `export.json` lists the written slices (name, size, bytes) and is the stage's manifest output.

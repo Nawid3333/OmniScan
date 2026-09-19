@@ -282,6 +282,25 @@ class LayoutArtifact(Artifact):
     items: list[LayoutItem]
 
 
+# ---------------------------------------------------------------- export
+
+
+class ExportFile(Model):
+    name: str  # file name inside output_root/<Series>/<Chapter>/ ("0001.jpg", ...)
+    slice_index: int
+    width: int
+    height: int
+    bytes: int
+
+
+class ExportArtifact(Artifact):
+    """Written by `export` as export.json in the chapter work dir: what was written to the output folder."""
+
+    quality: int
+    subsampling: Literal["444", "422", "420"]
+    files: list[ExportFile]
+
+
 # ---------------------------------------------------------------- manifest
 
 

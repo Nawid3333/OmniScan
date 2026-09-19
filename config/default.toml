@@ -47,3 +47,16 @@ pad_px = 8
 mask_dilate_px = 3
 flat_tol = 8.0
 min_ring_px = 48
+
+[typeset]
+min_px = 14
+max_px = 48
+line_spacing = 1.15
+margin_px = 6
+free_grow = 0.10
+stroke_free_px = 3
+stroke_sfx_px = 5
+
+[export]
+jpeg_quality = 95
+subsampling = "444"

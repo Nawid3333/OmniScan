@@ -87,6 +87,21 @@ class InpaintConfig(BaseModel):
     min_ring_px: int = 48  # fewer ring pixels than this -> no flat fill
 
 
+class TypesetConfig(BaseModel):
+    min_px: int = 14  # smallest font size tried
+    max_px: int = 48  # largest font size tried
+    line_spacing: float = 1.15  # line pitch = size * this
+    margin_px: int = 6  # inset of the bubble's inscribed rectangle
+    free_grow: float = 0.10  # free text / SFX boxes are grown by this fraction on every side
+    stroke_free_px: int = 3  # outline of free-standing text
+    stroke_sfx_px: int = 5  # outline of sound effects
+
+
+class ExportConfig(BaseModel):
+    jpeg_quality: int = 95
+    subsampling: Literal["444", "422", "420"] = "444"  # chroma subsampling of the exported slices
+
+
 class Secrets(BaseSettings):
     """Secrets only come from the environment or ~/.config/omniscan/secrets.env — never from TOML."""
 
@@ -107,6 +122,8 @@ class Config(BaseSettings):
     relay: RelayConfig = RelayConfig()
     ocr: OcrConfig = OcrConfig()
     inpaint: InpaintConfig = InpaintConfig()
+    typeset: TypesetConfig = TypesetConfig()
+    export: ExportConfig = ExportConfig()
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
