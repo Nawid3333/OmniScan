@@ -55,3 +55,7 @@ the three inputs) + missing-input failure messages + metrics, and the CLI wiring
 None — the card was unambiguous. (For a later card, note the queue's `STAGE_TABLE` in
 `src/omniscan/queue/executor.py` still lacks `typeset`, so a queued `typeset` job fails permanently
 with "not implemented yet"; adding it there looked like scope beyond this card's file list.)
+## Review addendum (director)
+Rebase conflicts (README status/stub tables, USER_GUIDE tables and command sections, stub tuple in `cli.py`/`test_cli.py`) resolved: `detect`, `judge`, `inpaint` and `typeset` are real commands now.
+Mutation check, 16 mutants over `plan.py` (luminance weights, ellipse point count and sin/cos, `>`→`>=`, inverted comparison, margin ignored, x0/y0 clamp, wrong axis for the grow, colour threshold boundary, no-fill default, `text_color`/`stroke_color`
+overrides ignored, sfx stroke, whitespace-only text, free-text role): **all 16 killed**. The queue's `STAGE_TABLE` gets every stage with the `omniscan run` card (R1) — nothing to do here.
