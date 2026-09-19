@@ -56,6 +56,37 @@ class RelayConfig(BaseModel):
     url: str = ""  # e.g. https://omniscan-relay.<account>.workers.dev
 
 
+class OcrConfig(BaseModel):
+    det_repo: str = "PaddlePaddle/PP-OCRv5_server_det_safetensors"  # text-line detector (fp32 only, see docs/DECISIONS.md)
+    det_revision: str | None = None  # pin a HF commit hash once validated
+    rec_repo: str = (
+        "PaddlePaddle/korean_PP-OCRv5_mobile_rec_safetensors"  # recognition model of the source language
+    )
+    rec_revision: str | None = None
+    tile_px: int = 1280  # tile side in strip pixels (capped at the strip width); the detector's processor downsizes to <= 960
+    overlap: float = (
+        0.25  # fraction of a tile shared with its neighbour (a line no taller than tile*overlap fits whole)
+    )
+    det_threshold: float = 0.3  # probability-map binarisation threshold
+    box_threshold: float = 0.6  # minimum mean probability inside a detected line
+    unclip_ratio: float = 1.5  # DB box expansion (the map is a shrunk text kernel)
+    min_size: int = 3  # smallest accepted line side, in tile pixels
+    rec_batch_size: int = 64  # line crops per recognition forward pass
+    line_pad_px: int = 3  # padding around a line box before recognition
+    assign_min_ioa: float = 0.5  # share of a line that must lie inside a region's (padded) text box
+    region_pad_px: int = 8  # padding of a region's text box when assigning lines
+    nms_iou: float = 0.5  # same-line IoU above which the lower-scored box is dropped (overlapping tiles)
+    low_conf: float = 0.85  # a region whose confidence is below this counts as low-confidence
+    lang: Literal["ko", "zh", "ja", "en"] = "ko"  # language written into regions
+
+
+class InpaintConfig(BaseModel):
+    pad_px: int = 8  # patch = union of a region's line boxes grown by this
+    mask_dilate_px: int = 3  # line boxes are grown by this to form the text mask
+    flat_tol: float = 8.0  # 90th-percentile colour deviation of the ring under which a flat fill is accepted
+    min_ring_px: int = 48  # fewer ring pixels than this -> no flat fill
+
+
 class Secrets(BaseSettings):
     """Secrets only come from the environment or ~/.config/omniscan/secrets.env — never from TOML."""
 
@@ -74,6 +105,8 @@ class Config(BaseSettings):
     slicer: SlicerConfig = SlicerConfig()
     ollama: OllamaConfig = OllamaConfig()
     relay: RelayConfig = RelayConfig()
+    ocr: OcrConfig = OcrConfig()
+    inpaint: InpaintConfig = InpaintConfig()
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:

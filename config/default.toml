@@ -24,3 +24,26 @@ max_drift = 2.0
 local_url = "http://localhost:11434"
 cloud_url = "https://ollama.com"
 request_timeout_s = 600.0
+
+[ocr]
+det_repo = "PaddlePaddle/PP-OCRv5_server_det_safetensors"
+rec_repo = "PaddlePaddle/korean_PP-OCRv5_mobile_rec_safetensors"
+tile_px = 1280
+overlap = 0.25
+det_threshold = 0.3
+box_threshold = 0.6
+unclip_ratio = 1.5
+min_size = 3
+rec_batch_size = 64
+line_pad_px = 3
+assign_min_ioa = 0.5
+region_pad_px = 8
+nms_iou = 0.5
+low_conf = 0.85
+lang = "ko"
+
+[inpaint]
+pad_px = 8
+mask_dilate_px = 3
+flat_tol = 8.0
+min_ring_px = 48
