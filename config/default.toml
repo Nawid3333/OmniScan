@@ -59,6 +59,12 @@ pad_px = 8
 mask_dilate_px = 3
 flat_tol = 8.0
 min_ring_px = 48
+lama_url = "https://github.com/Sanster/models/releases/download/add_big_lama/big-lama.pt"
+lama_sha256 = "344c77bbcb158f17dd143070d1e789f38a66c04202311ae3a258ef66667a9ea9"
+lama_file = "big-lama.pt"
+lama_window = 512
+lama_dilate_px = 4
+lama_context_px = 32
 
 [typeset]
 min_px = 14

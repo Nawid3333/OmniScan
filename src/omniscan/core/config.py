@@ -101,6 +101,16 @@ class InpaintConfig(BaseModel):
     mask_dilate_px: int = 3  # line boxes are grown by this to form the text mask
     flat_tol: float = 8.0  # 90th-percentile colour deviation of the ring under which a flat fill is accepted
     min_ring_px: int = 48  # fewer ring pixels than this -> no flat fill
+    lama_url: str = "https://github.com/Sanster/models/releases/download/add_big_lama/big-lama.pt"  # TorchScript LaMa (Apache-2.0)
+    lama_sha256: str = "344c77bbcb158f17dd143070d1e789f38a66c04202311ae3a258ef66667a9ea9"  # checked after every download and load
+    lama_file: str = "big-lama.pt"  # file name inside <models_dir>/lama/
+    lama_window: int = (
+        512  # ONE fixed window size (every new input shape costs a 10-25 s warm-up); a multiple of 8
+    )
+    lama_dilate_px: int = 4  # extra growth of the flat-fill mask for LaMa (generous masks inpaint better)
+    lama_context_px: int = (
+        32  # a region needs at least this much context inside the window on every side, else it is skipped
+    )
 
 
 class TypesetConfig(BaseModel):
