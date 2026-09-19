@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import dataclasses
 import json
-from dataclasses import dataclass
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from omniscan.core.schemas import BBox, FinalArtifact, IngestArtifact, Region, RegionsArtifact
@@ -128,10 +128,7 @@ def score_chapter(
             missed.append(BoxResult(page=box.page, bbox=box.bbox, text=box.text, detected=False))
             continue
         detected_boxes += 1
-        read = " ".join(
-            region.text
-            for region in sorted(box_regions, key=lambda r: (r.bbox.y0, r.bbox.x0))
-        )
+        read = " ".join(region.text for region in sorted(box_regions, key=lambda r: (r.bbox.y0, r.bbox.x0)))
         distance = levenshtein(normalize(box.text), normalize(read))
         score = distance / len(normalize(box.text))
         distances += distance

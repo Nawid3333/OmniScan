@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from omniscan.eval.metrics import chrf, cer, levenshtein, normalize
+from omniscan.eval.metrics import cer, chrf, levenshtein, normalize
 
 
 def test_normalize_strips_punctuation_and_spaces() -> None:

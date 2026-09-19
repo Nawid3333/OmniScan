@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from omniscan.core.schemas import BBox, IngestArtifact, SourceFile
 from omniscan.eval.truth import (
     TruthBox,
@@ -13,11 +15,10 @@ from omniscan.eval.truth import (
     load_truth,
     parse_svg,
 )
-import pytest
 
 SVG2 = (
     '<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="3000">'
-    "<g><flowRoot transform=\"matrix(1,0,0,1,100,200)\"><flowRegion>"
+    '<g><flowRoot transform="matrix(1,0,0,1,100,200)"><flowRegion>'
     '<rect x="0" y="0" width="400" height="300"/></flowRegion>'
     "<flowPara>첫째 줄</flowPara><flowPara>둘째 줄</flowPara></flowRoot></g>"
     '<flowRoot transform="translate(1000,1500) scale(0.5)"><flowRegion>'
@@ -27,6 +28,7 @@ SVG2 = (
     '<rect x="0" y="0" width="100" height="50"/></flowRegion>'
     "<flowPara>셋</flowPara></flowRoot></svg>"
 )
+
 
 def test_parses_transforms_and_geometry() -> None:
     boxes, dropped = parse_svg(SVG2, file_width=1000, file_height=1480, file_y0=0, scale=1.0)
@@ -51,9 +53,7 @@ def test_maps_to_strip_space_with_offset_and_scale() -> None:
 
 
 def test_drops_box_completely_outside_the_page() -> None:
-    svg = SVG2.replace(
-        'transform="matrix(1,0,0,1,100,200)"', 'transform="matrix(1,0,0,1,-2000,200)"'
-    )
+    svg = SVG2.replace('transform="matrix(1,0,0,1,100,200)"', 'transform="matrix(1,0,0,1,-2000,200)"')
     boxes, dropped = parse_svg(svg, file_width=1000, file_height=1480, file_y0=0, scale=1.0)
     assert dropped == 1
     assert [box.lines for box in boxes] == [("하나",), ("셋",)]
@@ -208,6 +208,8 @@ def test_load_truth_of_empty_ingest(check_dir: Path) -> None:
     assert stats == TruthStats(pages=0, pages_without_truth=0, dropped=0)
 
 
-@pytest.mark.parametrize("name, expected", [("01.jpg", 1), ("001.jpg", 1), ("10.jpg", 10), ("cover.jpg", None)])
+@pytest.mark.parametrize(
+    "name, expected", [("01.jpg", 1), ("001.jpg", 1), ("10.jpg", 10), ("cover.jpg", None)]
+)
 def test_page_number(name: str, expected: int | None) -> None:
     assert _page_number(name) == expected

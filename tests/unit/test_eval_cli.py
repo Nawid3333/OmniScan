@@ -109,16 +109,12 @@ def write_chapter(cfg: Config, chapter: str, *, with_ocr: bool = True, with_fina
 
 def write_truth(cfg: Config, chapter: str, lang: str = "kr") -> None:
     """Write the ground-truth SVGs of one chapter next to the library root."""
-    lang_dir = (
-        cfg.paths.library_root.parent / "translated-check" / SERIES / chapter / "truth" / lang
-    )
+    lang_dir = cfg.paths.library_root.parent / "translated-check" / SERIES / chapter / "truth" / lang
     lang_dir.mkdir(parents=True, exist_ok=True)
     (lang_dir / "E01P01.svg").write_text(SVG_KR if lang == "kr" else SVG_EN, encoding="utf-8")
 
 
-def test_cli_eval_prints_the_block_and_writes_eval_json(
-    cfg: Config, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_cli_eval_prints_the_block_and_writes_eval_json(cfg: Config, monkeypatch: pytest.MonkeyPatch) -> None:
     write_chapter(cfg, "Chapter 1")
     write_truth(cfg, "Chapter 1", "kr")
     write_truth(cfg, "Chapter 1", "en")
@@ -142,9 +138,7 @@ def test_cli_eval_prints_the_block_and_writes_eval_json(
     assert report["chrf_mean"] == 1.0
 
 
-def test_cli_eval_json_prints_one_object_per_chapter(
-    cfg: Config, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_cli_eval_json_prints_one_object_per_chapter(cfg: Config, monkeypatch: pytest.MonkeyPatch) -> None:
     write_chapter(cfg, "Chapter 1")
     write_truth(cfg, "Chapter 1", "kr")
     write_truth(cfg, "Chapter 1", "en")
@@ -185,7 +179,10 @@ def test_cli_eval_missing_truth_dir_exits_2(cfg: Config, monkeypatch: pytest.Mon
     result = runner.invoke(app, ["eval", SERIES])
     assert result.exit_code == 2
     assert "no ground truth at" in result.output
-    assert str(cfg.paths.library_root.parent / "translated-check" / SERIES / "Chapter 1" / "truth" / "kr") in result.output
+    assert (
+        str(cfg.paths.library_root.parent / "translated-check" / SERIES / "Chapter 1" / "truth" / "kr")
+        in result.output
+    )
 
 
 def test_cli_eval_selects_a_chapter(cfg: Config, monkeypatch: pytest.MonkeyPatch) -> None:

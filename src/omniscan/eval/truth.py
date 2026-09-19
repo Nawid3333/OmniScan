@@ -149,9 +149,7 @@ def parse_svg(
                 None,
             )
             lines = tuple(
-                text
-                for para in _children(el, "flowPara")
-                if (text := "".join(para.itertext()).strip())
+                text for para in _children(el, "flowPara") if (text := "".join(para.itertext()).strip())
             )
             if region is None or not lines:
                 return  # no box or no text: skipped, not dropped

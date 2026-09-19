@@ -13,7 +13,7 @@ from omniscan.core.schemas import (
     RegionsArtifact,
     SourceFile,
 )
-from omniscan.eval.score import BoxResult, score_chapter
+from omniscan.eval.score import BoxResult, EvalReport, score_chapter
 from omniscan.eval.truth import TruthBox, TruthStats
 
 STATS = TruthStats(pages=1, pages_without_truth=0, dropped=0)
@@ -33,9 +33,7 @@ def s1_ingest() -> IngestArtifact:
         chapter="C",
         strip_width=1000,
         strip_height=3000,
-        files=[
-            SourceFile(index=0, name="01.jpg", sha256="x", width=1000, height=3000, y0=0, y1=3000)
-        ],
+        files=[SourceFile(index=0, name="01.jpg", sha256="x", width=1000, height=3000, y0=0, y1=3000)],
     )
 
 
@@ -57,17 +55,14 @@ def s1_regions() -> RegionsArtifact:
     )
 
 
-def score(truth: list[TruthBox], regions: RegionsArtifact, **kwargs: object) -> EvalReport:
-    return score_chapter(
-        "S",
-        "C",
-        kwargs.pop("ingest", s1_ingest()),
-        regions,
-        kwargs.pop("final", None),
-        truth,
-        kwargs.pop("english_pages", {}),
-        kwargs.pop("stats", STATS),
-    )
+def score(
+    truth: list[TruthBox],
+    regions: RegionsArtifact,
+    *,
+    final: FinalArtifact | None = None,
+) -> EvalReport:
+    """score_chapter for the S1 fixture."""
+    return score_chapter("S", "C", s1_ingest(), regions, final, truth, {}, STATS)
 
 
 def test_scenario_s1_detection_and_ocr() -> None:
@@ -174,9 +169,7 @@ def test_translation_skips_pages_with_empty_reference() -> None:
     )
     assert report.chrf_mean is None
     assert report.chrf_pages == 0
-    report = score_chapter(
-        "S", "C", s1_ingest(), s1_regions(), None, s1_truth(), {1: ""}, STATS
-    )
+    report = score_chapter("S", "C", s1_ingest(), s1_regions(), None, s1_truth(), {1: ""}, STATS)
     assert report.chrf_mean is None
     assert report.chrf_pages == 0
 

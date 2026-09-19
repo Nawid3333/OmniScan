@@ -506,6 +506,36 @@ inpaint fill's luminance); free text and SFX are white with an outline
 uv run omniscan typeset DemoSeries
 ```
 
+### `omniscan eval`
+
+Score finished chapters against ground truth instead of by eye: how many text boxes detection+OCR
+found, how accurately they were read (CER), and — when `final.json` exists — how close the English
+is to the official translation (chrF). The ground truth comes from the `translated-check` folder
+(next to the library root): `<translated-check>/<series>/<chapter>/truth/<lang>/EnnPpp.svg`, the
+Inkscape text layers of the Pepper&Carrot CC BY 4.0 test data (written by
+`scripts/fetch_pepper_carrot.py`). Each `flowRoot` becomes one truth box in strip space, matched to
+the OCR regions of `ocr.json` (watermarks excluded) by which box contains the region's centre, the
+smallest such box winning.
+
+| Argument/option | Meaning |
+|---|---|
+| `series` | series name (required) |
+| `--chapter`, `-c <str>` | chapter folder name; repeatable. Default: all |
+| `--lang <str>` | truth language folder under `truth/`. Default: `kr` |
+| `--json` | print one JSON object per chapter instead of the text block |
+
+Needs `ingest.json` and `ocr.json` in the chapter work dir (missing → exit 1 after the other
+chapters; `final.json` is optional). A chapter without `truth/<lang>` fails with exit 2. Writes
+`eval.json` into the chapter work dir and prints, per chapter: detection recall and precision, CER
+macro/micro over the detected boxes, chrF over the scored pages, plus up to five missed boxes and
+the five worst-read boxes. Boxes whose text is punctuation only are ignored; truth boxes outside
+their page are dropped and counted.
+
+```bash
+uv run omniscan eval PepperCarrotKR -c "Episode 06"
+uv run omniscan eval PepperCarrotKR --json
+```
+
 ### `omniscan watermark add`
 
 Record a fixed-position watermark region for a series (fractions of every raw page).

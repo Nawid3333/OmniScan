@@ -305,6 +305,16 @@ def cmd_ocr(
 app.command("ocr")(cmd_ocr)
 
 
+def _echo_text(text: str) -> None:
+    """Echo text that may hold Korean/Japanese; Windows pipes (cp1252) must not crash on it."""
+    import sys
+
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if reconfigure is not None and (sys.stdout.encoding or "").lower().replace("-", "") != "utf8":
+        reconfigure(encoding="utf-8", errors="replace")
+    typer.echo(text)
+
+
 def _ratio(value: float | None, numerator: int, denominator: int, suffix: str = "") -> str:
     """'0.874 (76/87)' for a score, 'n/a (0/0)' when the denominator was zero."""
     text = f"{value:.3f}" if value is not None else "n/a"
@@ -338,9 +348,7 @@ def _eval_block(report: Any, with_translation: bool) -> str:
         f"  ({report.cer_boxes} boxes)",
     ]
     if with_translation:
-        lines.append(
-            f"  {'translation':<13}chrF {_num(report.chrf_mean)} ({report.chrf_pages} pages)"
-        )
+        lines.append(f"  {'translation':<13}chrF {_num(report.chrf_mean)} ({report.chrf_pages} pages)")
     if report.missed:
         lines.append("  missed: " + " … ".join(_box_entry(r) for r in report.missed[:5]))
     if report.worst_cer:
@@ -357,9 +365,7 @@ def cmd_eval(
         list[str] | None,
         typer.Option("--chapter", "-c", help="Chapter folder name; repeatable. Default: all."),
     ] = None,
-    lang: Annotated[
-        str, typer.Option("--lang", help="Ground-truth language code (kr, cn, ja...).")
-    ] = "kr",
+    lang: Annotated[str, typer.Option("--lang", help="Ground-truth language code (kr, cn, ja...).")] = "kr",
     as_json: Annotated[
         bool, typer.Option("--json", help="One JSON object per chapter instead of the text block.")
     ] = False,
@@ -401,9 +407,9 @@ def cmd_eval(
         report = score_chapter(series, chap, ingest, regions, final, truth, english, stats)
         (work / "eval.json").write_text(report.to_json(), encoding="utf-8")
         if as_json:
-            typer.echo(to_json_lines([report]))
+            _echo_text(to_json_lines([report]))
         else:
-            typer.echo(_eval_block(report, with_translation=final is not None))
+            _echo_text(_eval_block(report, with_translation=final is not None))
     if missing:
         raise typer.Exit(1)
 
