@@ -344,14 +344,24 @@ def _box_entry(result: Any) -> str:
 
 def _eval_block(report: Any, with_translation: bool) -> str:
     """The human-readable score block of one chapter."""
+    approx = f", {report.approx_boxes} approximate" if report.approx_boxes else ""
     lines = [
         f"{report.series}/{report.chapter}: {report.pages} pages, {report.truth_boxes} truth boxes "
-        f"({report.ignored_boxes} ignored, {report.dropped_boxes} dropped)",
-        f"  {'detection':<13}recall {_ratio(report.recall, report.detected_boxes, report.truth_boxes)}"
-        f"  precision {_ratio(report.precision, report.assigned_regions, report.regions, ' regions')}",
-        f"  {'OCR':<13}CER macro {_num(report.cer_macro)}  micro {_num(report.cer_micro)}"
-        f"  ({report.cer_boxes} boxes)",
+        f"({report.ignored_boxes} ignored, {report.dropped_boxes} dropped{approx})"
     ]
+    if report.truth_boxes == 0:  # no usable truth boxes: nothing to score detection/OCR against
+        lines.append(f"  {'detection':<13}n/a (no usable truth boxes)")
+    else:
+        lines.append(
+            f"  {'detection':<13}recall {_ratio(report.recall, report.detected_boxes, report.truth_boxes)}"
+            f"  chars {_num(report.recall_chars)}"
+            f"  precision {_ratio(report.precision, report.assigned_regions, report.regions, ' regions')}"
+        )
+        lines.append(
+            f"  {'OCR':<13}CER macro {_num(report.cer_macro)}  micro {_num(report.cer_micro)}"
+            f"  ({report.cer_boxes} boxes)  page chrF {_num(report.ocr_chrf_mean)}"
+            f" ({report.ocr_chrf_pages} pages)"
+        )
     if with_translation:
         lines.append(f"  {'translation':<13}chrF {_num(report.chrf_mean)} ({report.chrf_pages} pages)")
     if report.missed:

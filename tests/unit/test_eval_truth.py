@@ -29,6 +29,22 @@ SVG2 = (
     "<flowPara>셋</flowPara></flowRoot></svg>"
 )
 
+SVG_NS = 'xmlns="http://www.w3.org/2000/svg"'
+SODI_NS = 'xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"'
+
+
+def _svg(*body: str, width: int = 2000, height: int = 3000) -> str:
+    return f'<svg {SVG_NS} {SODI_NS} width="{width}" height="{height}">{"".join(body)}</svg>'
+
+
+def _text_golden() -> str:
+    """Card golden 1: middle anchor, two role-line tspans, element transform."""
+    return _svg(
+        '<text style="font-size:20px;text-anchor:middle" x="1000" y="500" transform="translate(100,50)">'
+        '<tspan sodipodi:role="line" x="1000" y="500" style="font-size:40px">안녕하세요</tspan>'
+        '<tspan sodipodi:role="line" x="1000" y="540" style="font-size:40px">ab</tspan></text>'
+    )
+
 
 def test_parses_transforms_and_geometry() -> None:
     boxes, dropped = parse_svg(SVG2, file_width=1000, file_height=1480, file_y0=0, scale=1.0)
@@ -213,3 +229,154 @@ def test_load_truth_of_empty_ingest(check_dir: Path) -> None:
 )
 def test_page_number(name: str, expected: int | None) -> None:
     assert _page_number(name) == expected
+
+
+# ---------------------------------------------------------------- <text> elements (approximate boxes)
+
+
+def test_text_element_golden_middle_anchor() -> None:
+    boxes, dropped = parse_svg(_text_golden(), file_width=1000, file_height=1480, file_y0=0, scale=1.0)
+    assert dropped == 0
+    assert len(boxes) == 1
+    assert boxes[0].bbox == BBox(x0=500, y0=235, x1=600, y1=280)
+    assert boxes[0].lines == ("안녕하세요", "ab")
+    assert boxes[0].approx is True
+
+
+def test_text_element_start_anchor() -> None:
+    svg = _svg(
+        '<text x="100" y="200" style="font-size:30px">'
+        '<tspan sodipodi:role="line" x="100" y="200">가나</tspan></text>'
+    )
+    boxes, _ = parse_svg(svg, file_width=1000, file_height=1480, file_y0=0, scale=1.0)
+    assert [(box.bbox, box.lines, box.approx) for box in boxes] == [
+        (BBox(x0=50, y0=65, x1=80, y1=84), ("가나",), True)
+    ]
+
+
+def test_text_element_end_anchor() -> None:
+    svg = _svg(
+        '<text style="text-anchor:end" x="300" y="100">'
+        '<tspan sodipodi:role="line" x="300" y="100" style="font-size:10px">abcd</tspan></text>'
+    )
+    boxes, _ = parse_svg(svg, file_width=1000, file_height=1480, file_y0=0, scale=1.0)
+    assert boxes[0].bbox == BBox(x0=140, y0=25, x1=150, y1=32)
+
+
+def test_text_anchor_on_the_tspan_only() -> None:
+    svg = _svg(
+        '<text x="1000" y="500" style="font-size:20px">'
+        '<tspan sodipodi:role="line" x="1000" y="500" style="font-size:40px;text-anchor:end">abcd</tspan></text>'
+    )
+    boxes, _ = parse_svg(svg, file_width=1000, file_height=1480, file_y0=0, scale=1.0)
+    assert boxes[0].bbox == BBox(x0=460, y0=210, x1=500, y1=235)  # width 80: 4 half-width glyphs at 40 px
+
+
+def test_tspan_without_xy_falls_back_to_the_element() -> None:
+    svg = _svg(
+        '<text x="100" y="300" style="font-size:20px">'
+        '<tspan sodipodi:role="line">가나</tspan></text>'
+    )
+    boxes, dropped = parse_svg(svg, file_width=1000, file_height=1480, file_y0=0, scale=1.0)
+    assert dropped == 0
+    assert boxes[0].bbox == BBox(x0=50, y0=120, x1=70, y1=133)
+
+
+def test_font_size_without_px() -> None:
+    svg = _svg(
+        '<text x="200" y="300" style="font-size:24">'
+        '<tspan sodipodi:role="line" x="200" y="300">ab</tspan></text>'
+    )
+    boxes, _ = parse_svg(svg, file_width=1000, file_height=1480, file_y0=0, scale=1.0)
+    assert boxes[0].bbox == BBox(x0=100, y0=118, x1=112, y1=133)  # width 24: 2 half-width glyphs at 24 px
+
+
+def test_list_valued_x_uses_the_first_number() -> None:
+    svg = _svg(
+        '<text x="10 20 30" y="300" style="font-size:20px">'
+        '<tspan sodipodi:role="line" x="10 20 30" y="300">가</tspan></text>'
+    )
+    boxes, _ = parse_svg(svg, file_width=1000, file_height=1480, file_y0=0, scale=1.0)
+    assert boxes[0].bbox == BBox(x0=5, y0=120, x1=15, y1=133)
+
+
+def test_group_transform_shifts_a_text_box() -> None:
+    svg = _svg(
+        '<g transform="translate(100,0)">'
+        '<text x="1000" y="500" style="font-size:20px">'
+        '<tspan sodipodi:role="line" x="1000" y="500" style="font-size:40px">가</tspan></text></g>'
+    )
+    boxes, dropped = parse_svg(svg, file_width=1000, file_height=1480, file_y0=0, scale=1.0)
+    assert dropped == 0
+    assert boxes[0].bbox == BBox(x0=550, y0=210, x1=570, y1=235)
+
+
+def test_text_without_tspans_yields_one_box() -> None:
+    svg = _svg('<text x="10" y="50" style="font-size:20px">가</text>', width=1000, height=1000)
+    boxes, dropped = parse_svg(svg, file_width=1000, file_height=1480, file_y0=0, scale=1.0)
+    assert dropped == 0
+    assert [(box.bbox, box.lines, box.approx) for box in boxes] == [
+        (BBox(x0=10, y0=30, x1=30, y1=55), ("가",), True)
+    ]
+
+
+def test_text_with_only_empty_lines_is_skipped() -> None:
+    svg = _svg('<text x="10" y="50" style="font-size:20px"> </text>', width=1000, height=1000)
+    boxes, dropped = parse_svg(svg, file_width=1000, file_height=1480, file_y0=0, scale=1.0)
+    assert boxes == []
+    assert dropped == 0
+
+
+def test_unpositioned_text_lines_are_skipped() -> None:
+    svg = _svg('<text style="font-size:20px"><tspan sodipodi:role="line">가</tspan></text>')
+    boxes, dropped = parse_svg(svg, file_width=1000, file_height=1480, file_y0=0, scale=1.0)
+    assert boxes == []
+    assert dropped == 0
+
+
+def test_text_inside_a_flow_root_is_not_a_second_box() -> None:
+    svg = _svg(
+        '<flowRoot><flowRegion><rect x="0" y="0" width="100" height="50"/></flowRegion>'
+        "<flowPara>바깥<text x=\"10\" y=\"20\">안</text></flowPara></flowRoot>",
+        width=1000,
+        height=1000,
+    )
+    boxes, dropped = parse_svg(svg, file_width=1000, file_height=1480, file_y0=0, scale=1.0)
+    assert dropped == 0
+    assert [(box.bbox, box.lines, box.approx) for box in boxes] == [
+        (BBox(x0=0, y0=0, x1=100, y1=50), ("바깥안",), False)
+    ]
+
+
+def test_mixed_svg_keeps_file_order() -> None:
+    svg = _svg(
+        '<flowRoot><flowRegion><rect x="0" y="0" width="100" height="50"/></flowRegion>'
+        "<flowPara>첫</flowPara></flowRoot>"
+        '<text x="1000" y="500" style="font-size:20px">'
+        '<tspan sodipodi:role="line" x="1000" y="500" style="font-size:40px">둘</tspan></text>'
+    )
+    boxes, dropped = parse_svg(svg, file_width=1000, file_height=1480, file_y0=0, scale=1.0)
+    assert dropped == 0
+    assert [(box.lines, box.approx) for box in boxes] == [(("첫",), False), (("둘",), True)]
+    assert boxes[1].bbox == BBox(x0=500, y0=210, x1=520, y1=235)
+
+
+def test_load_english_pages_includes_text_element_lines(tmp_path: Path) -> None:
+    en = tmp_path / "truth" / "en"
+    en.mkdir(parents=True)
+    (en / "E01P01.svg").write_text(
+        f'<svg {SVG_NS} {SODI_NS} width="1000" height="1480">'
+        '<flowRoot><flowRegion><rect x="0" y="0" width="100" height="50"/></flowRegion>'
+        "<flowPara>Hello</flowPara></flowRoot>"
+        '<text x="500" y="300" style="font-size:20px">'
+        '<tspan sodipodi:role="line" x="500" y="300">world</tspan></text></svg>',
+        encoding="utf-8",
+    )
+    ingest = IngestArtifact(
+        series="S",
+        chapter="C",
+        strip_width=1000,
+        strip_height=1480,
+        files=[_source(0, "01.jpg", y0=0)],
+    )
+    assert load_english_pages(tmp_path / "truth", ingest) == {1: "Hello world"}

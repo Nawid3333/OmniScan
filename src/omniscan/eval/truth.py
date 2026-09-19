@@ -1,16 +1,19 @@
 """Ground truth for `omniscan eval`: Inkscape text-layer SVGs (Pepper&Carrot) as TruthBox lists.
 
 The translated-check folder holds, per chapter, `truth/<lang>/EnnPpp.svg` text layers with one
-`flowRoot` per text box (box = `flowRegion/rect`, lines = `flowPara` texts). `parse_svg` maps those
-boxes into the strip space of the ingest artifact: SVG pixels are scaled by `file_width / svg_width`,
-cropped at the top (the lettered low-res pages lose the SVG's top margin), then clamped to the page
-and finally mapped by the source file's strip scale/offset.
+`flowRoot` per text box (box = `flowRegion/rect`, lines = `flowPara` texts). Newer episodes use
+plain `<text>` elements with line `tspan`s and no box geometry instead; `parse_svg` turns each of
+them into one approximate box estimated from the line positions, font sizes and text anchors.
+`parse_svg` maps those boxes into the strip space of the ingest artifact: SVG pixels are scaled by
+`file_width / svg_width`, cropped at the top (the lettered low-res pages lose the SVG's top margin),
+then clamped to the page and finally mapped by the source file's strip scale/offset.
 """
 
 from __future__ import annotations
 
 import math
 import re
+import unicodedata
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -25,6 +28,8 @@ _IDENTITY: _Matrix = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
 _TRANSFORM_RE = re.compile(r"([a-zA-Z]+)\s*\(([^)]*)\)")
 _NUMBER_RE = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
 
+_SODIPODI_ROLE = "{http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd}role"
+
 
 @dataclass(frozen=True, slots=True)
 class TruthBox:
@@ -32,7 +37,8 @@ class TruthBox:
 
     page: int  # page number from the SVG file name (E06P01 -> 1)
     bbox: BBox
-    lines: tuple[str, ...]  # the flowPara texts, stripped, non-empty, document order
+    lines: tuple[str, ...]  # the flowPara/tspan texts, stripped, non-empty, document order
+    approx: bool = False  # <text> element: box estimated from font metrics, not read off a rect
 
     @property
     def text(self) -> str:
@@ -123,6 +129,74 @@ def _svg_bounds(rect: tuple[float, float, float, float], t: _Matrix) -> tuple[fl
     return min(xs), min(ys), max(xs), max(ys)
 
 
+def _style_prop(style: str | None, prop: str) -> str | None:
+    """One CSS property of an SVG `style` attribute ('font-size:20px;...' -> '20px')."""
+    if not style:
+        return None
+    for decl in style.split(";"):
+        key, sep, value = decl.partition(":")
+        if sep and key.strip().lower() == prop and value.strip():
+            return value.strip()
+    return None
+
+
+def _first_number(value: str | None) -> float | None:
+    """The first number of an SVG list attribute ('10 20 30' -> 10.0); None when absent."""
+    if not value:
+        return None
+    match = _NUMBER_RE.search(value)
+    return float(match.group()) if match else None
+
+
+def _line_width(text: str, font_size: float) -> float:
+    """Estimated rendered width of one line: wide (CJK) glyphs one em, everything else half."""
+    return font_size * sum(
+        1.0 if unicodedata.east_asian_width(ch) in ("W", "F") else 0.5 for ch in text
+    )
+
+
+def _line_box(x: float, y: float, font_size: float, anchor: str, text: str) -> tuple[float, float, float, float]:
+    """(x0, y0, x1, y1) of one line in the text element's coordinates, from anchor and font size."""
+    width = _line_width(text, font_size)
+    left = x - {"middle": width / 2.0, "end": width}.get(anchor, 0.0)
+    return left, y - font_size, left + width, y + 0.25 * font_size
+
+
+def _text_element_lines(el: ET.Element) -> list[tuple[str, float, float, float, str]]:
+    """(text, x, y, font-size, text-anchor) of one <text> element's lines; unpositioned lines drop.
+
+    Lines are the child tspans with `sodipodi:role="line"`, or the element's own text when there
+    is none. Each line falls back from its tspan's x/y/style to the text element's.
+    """
+    el_style = el.get("style")
+    el_x, el_y = _first_number(el.get("x")), _first_number(el.get("y"))
+    tspans = [tspan for tspan in _children(el, "tspan") if tspan.get(_SODIPODI_ROLE) == "line"]
+    if not tspans:
+        tspans = [el]  # a text without role-line tspans is one line: its own text
+    lines: list[tuple[str, float, float, float, str]] = []
+    for node in tspans:
+        text = "".join(node.itertext()).strip()
+        if not text:
+            continue
+        x = _first_number(node.get("x"))
+        y = _first_number(node.get("y"))
+        if x is None:
+            x = el_x
+        if y is None:
+            y = el_y
+        if x is None or y is None:
+            continue
+        style = node.get("style")
+        font_size = _length(_style_prop(style, "font-size"))
+        if font_size is None:
+            font_size = _length(_style_prop(el_style, "font-size")) or 16.0
+        anchor = _style_prop(style, "text-anchor") or _style_prop(el_style, "text-anchor") or "start"
+        if anchor not in ("middle", "end"):
+            anchor = "start"
+        lines.append((text, x, y, font_size, anchor))
+    return lines
+
+
 def parse_svg(
     svg: str, *, file_width: int, file_height: int, file_y0: int, scale: float
 ) -> tuple[list[TruthBox], int]:
@@ -136,10 +210,35 @@ def parse_svg(
     boxes: list[TruthBox] = []
     dropped = 0
 
-    def walk(el: ET.Element, t: _Matrix) -> None:
+    def emit(bx0: float, by0: float, bx1: float, by1: float, t: _Matrix, lines: tuple[str, ...], approx: bool) -> None:
+        """Map one SVG-space box through page and strip space; drop it when it leaves the page."""
         nonlocal dropped
+        sx0, sy0, sx1, sy1 = _svg_bounds((bx0, by0, bx1 - bx0, by1 - by0), t)
+        px0 = min(max(sx0 * sx, 0.0), float(file_width))
+        px1 = min(max(sx1 * sx, 0.0), float(file_width))
+        py0 = min(max(sy0 * sx - crop_top, 0.0), float(file_height))
+        py1 = min(max(sy1 * sx - crop_top, 0.0), float(file_height))
+        if px1 <= px0 or py1 <= py0:
+            dropped += 1
+            return
+        boxes.append(
+            TruthBox(
+                page=0,
+                bbox=BBox(
+                    x0=math.floor(px0 * scale + 1e-6),
+                    y0=math.floor(py0 * scale + file_y0 + 1e-6),
+                    x1=math.ceil(px1 * scale - 1e-6),
+                    y1=math.ceil(py1 * scale + file_y0 - 1e-6),
+                ),
+                lines=lines,
+                approx=approx,
+            )
+        )
+
+    def walk(el: ET.Element, t: _Matrix) -> None:
         t = _mul(t, _parse_transform(el.get("transform")))
-        if _local(el.tag) == "flowRoot":
+        kind = _local(el.tag)
+        if kind == "flowRoot":
             region = next(
                 (
                     rect
@@ -155,27 +254,21 @@ def parse_svg(
                 return  # no box or no text: skipped, not dropped
             x, y = _length(region.get("x")) or 0.0, _length(region.get("y")) or 0.0
             w, h = _length(region.get("width")) or 0.0, _length(region.get("height")) or 0.0
-            bx0, by0, bx1, by1 = _svg_bounds((x, y, w, h), t)
-            px0 = min(max(bx0 * sx, 0.0), float(file_width))
-            px1 = min(max(bx1 * sx, 0.0), float(file_width))
-            py0 = min(max(by0 * sx - crop_top, 0.0), float(file_height))
-            py1 = min(max(by1 * sx - crop_top, 0.0), float(file_height))
-            if px1 <= px0 or py1 <= py0:
-                dropped += 1
-                return
-            boxes.append(
-                TruthBox(
-                    page=0,
-                    bbox=BBox(
-                        x0=math.floor(px0 * scale + 1e-6),
-                        y0=math.floor(py0 * scale + file_y0 + 1e-6),
-                        x1=math.ceil(px1 * scale - 1e-6),
-                        y1=math.ceil(py1 * scale + file_y0 - 1e-6),
-                    ),
-                    lines=lines,
+            emit(x, y, x + w, y + h, t, lines, approx=False)
+            return  # flowRoot content is its own box; nested text elements belong to it
+        if kind == "text":
+            line_data = _text_element_lines(el)
+            if line_data:
+                line_boxes = [_line_box(x, y, font_size, anchor, text) for text, x, y, font_size, anchor in line_data]
+                emit(
+                    min(b[0] for b in line_boxes),
+                    min(b[1] for b in line_boxes),
+                    max(b[2] for b in line_boxes),
+                    max(b[3] for b in line_boxes),
+                    t,
+                    tuple(line[0] for line in line_data),
+                    approx=True,
                 )
-            )
-            return
         for child in el:
             walk(child, t)
 
