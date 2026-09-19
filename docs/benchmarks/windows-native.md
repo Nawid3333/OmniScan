@@ -51,3 +51,14 @@ uv run python scripts/paddle_models_check.py
 uv run omniscan doctor
 ```
 (The throwaway environments used for this check, `C:\Users\limex\omniscan-wintest`, have been deleted.)
+
+## Addendum (2026-09-19, later): fp16 is unreliable on this stack
+The steady-state numbers above were measured at batch 8 only. Re-testing RT-DETR-v2 (`ogkalu/comic-text-and-bubble-detector`, 640² tiles) on the RX 9070 XT:
+
+| dtype | batch 1 | batch 2 | batch 3 | batch 8 |
+|---|---|---|---|---|
+| fp32 | 31.5 tiles/s | 43.2 | 50.7 | 64.6 |
+| fp16 | **fails** | **fails** | **fails** | 142.7 |
+
+The failures are `MIOpen … invalid device function` / `miopenStatusUnknownError` (an FP16 group-convolution solver without a valid kernel for those shapes); the PP-OCR text detector fails in fp16 and bf16 at every shape
+(`docs/benchmarks/ocr-probe.md`). Decision: run every torch vision model in fp32 (`docs/DECISIONS.md`); the "fp16 ≈ 2.4× fp32" line in the table is only true at batch 8.
