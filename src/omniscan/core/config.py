@@ -93,6 +93,9 @@ class OcrConfig(BaseModel):
     region_pad_px: int = 8  # padding of a region's text box when assigning lines
     nms_iou: float = 0.5  # same-line IoU above which the lower-scored box is dropped (overlapping tiles)
     low_conf: float = 0.85  # a region whose confidence is below this counts as low-confidence
+    drop_conf: float = (
+        0.5  # regions with an OCR confidence below this (or without any text) are dropped from ocr.json
+    )
     lang: Literal["ko", "zh", "ja", "en"] = "ko"  # language written into regions
 
 

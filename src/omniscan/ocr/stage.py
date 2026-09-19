@@ -65,5 +65,8 @@ class OcrStage:
             direction=cfg.detect.reading_direction,
             engine=cfg.ocr.rec_repo.split("/")[-1],
         )
-        RegionsArtifact(regions=ocr_regions).save(ctx.paths.artifact("ocr.json"))
+        # false-positive detections read as junk with a low score (or nothing at all): leave those pixels alone
+        kept = [r for r in ocr_regions if r.lines and r.confidence >= ctx.cfg.ocr.drop_conf]
+        metrics["regions_dropped"] = float(len(ocr_regions) - len(kept))
+        RegionsArtifact(regions=kept).save(ctx.paths.artifact("ocr.json"))
         return metrics

@@ -180,3 +180,39 @@ def test_ocr_stage_missing_upstream_artifacts_fail_and_are_recorded(cfg: Config)
     outcome = run_stage(OcrStage(), make_context(cfg, SERIES, CHAPTER, scheduler))
     assert outcome.status == "failed"
     assert outcome.error is not None and "ingest.json missing — run the slice stage first" in outcome.error
+
+
+def _scheduler_with(lines: dict[int, list[tuple[tuple[float, float, float, float], float]]]) -> FakeScheduler:
+    return FakeScheduler({"line_detector": FakeLineDetector(lines), "recognizer": FakeRecognizer()})
+
+
+def test_regions_below_drop_conf_are_dropped_and_counted(cfg: Config) -> None:
+    strict = cfg.model_copy(update={"ocr": OcrConfig(tile_px=400, drop_conf=0.99)})
+    ctx = prepared(strict)
+    ctx.gpu = _scheduler_with({0: [((20, 60, 200, 90), 0.95)]})
+
+    outcome = run_stage(OcrStage(), ctx)
+
+    assert outcome.status == "done"
+    assert outcome.metrics["regions"] == 1.0 and outcome.metrics["regions_dropped"] == 1.0
+    assert RegionsArtifact.load(ctx.paths.artifact("ocr.json")).regions == []
+
+
+def test_regions_without_any_text_are_dropped(cfg: Config) -> None:
+    ctx = prepared(cfg)
+    ctx.gpu = _scheduler_with({})  # the line detector finds nothing
+
+    outcome = run_stage(OcrStage(), ctx)
+
+    assert outcome.metrics["regions_empty"] == 1.0 and outcome.metrics["regions_dropped"] == 1.0
+    assert RegionsArtifact.load(ctx.paths.artifact("ocr.json")).regions == []
+
+
+def test_confident_regions_are_kept(cfg: Config) -> None:
+    ctx = prepared(cfg)
+    ctx.gpu = _scheduler_with({0: [((20, 60, 200, 90), 0.95)]})
+
+    outcome = run_stage(OcrStage(), ctx)
+
+    assert outcome.metrics["regions_dropped"] == 0.0
+    assert len(RegionsArtifact.load(ctx.paths.artifact("ocr.json")).regions) == 1

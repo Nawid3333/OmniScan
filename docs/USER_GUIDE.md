@@ -99,6 +99,7 @@ Every key in `config/default.toml`:
 | `ocr.region_pad_px` | region box padding used when assigning lines to regions | yes |
 | `ocr.nms_iou` | same-line IoU above which the lower-scored duplicate is dropped | yes |
 | `ocr.low_conf` | regions whose confidence is below this are counted as low-confidence in the metrics | yes |
+| `ocr.drop_conf` | regions with an OCR confidence below this (or with no readable text) are dropped from `ocr.json`; they are detector false positives whose pixels stay untouched | yes |
 | `ocr.lang` | language code recorded on every OCR'd region | yes |
 | `ollama.local_url` | local Ollama base URL | yes (`doctor`) |
 | `ollama.cloud_url` | Ollama cloud base URL | yes (`doctor`) |

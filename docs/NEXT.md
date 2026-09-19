@@ -48,7 +48,7 @@ the logic + the report's Questions; **T3** = also a live GPU/real-page check by 
 | 1 | **X1** | Synthetic Korean pages with ground truth (`tests/fixtures/korean_pages.py`) | fonts | T2 | ✔ merged |
 | 1 | **C7a** | Typeset layout engine (`typeset/fit.py`) | — | T1 | ✔ merged (25/25 mutants killed) |
 | 1b | **C5b** | Judge + `omniscan judge` | C5a | T2 | ✔ merged (23/23 mutants killed); **live check on real Ollama still to do** |
-| 2 | **C4a** | OCR stage: PP-OCRv5 line detection + Korean recognition → `ocr.json` | C3, X1 | T3 | **running** (`docs/tasks/C4a.md`) |
+| 2 | **C4a** | OCR stage: PP-OCRv5 line detection + Korean recognition → `ocr.json` | C3, X1 | T3 | ✔ merged (21/21 mutants killed; live chain on synthetic Korean: CER 0.03, `ocr.drop_conf` drops junk regions: 19 → 17 = truth) |
 | 2 | **C6a** | Inpaint v1: masks + flat fill → `inpaint.json` + `patches.npz` | X1, contracts | T2 | ✔ merged (visual check: bubbles identical to the text-free page) |
 | 2 | **C7b** | Typeset stage → `layout.json` | C7a, contracts | T2 | ✔ merged (16/16 mutants killed) |
 | 3 | **C7c** | Glyph renderer (`typeset/render.py`) + GPU compositing + `export` stage → `output/<Series>/<Chapter>/0001.jpg…` + `export.json` | C6a, C7b | T3 | **running** (`docs/tasks/C7c.md`) |

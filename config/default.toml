@@ -52,6 +52,7 @@ assign_min_ioa = 0.5
 region_pad_px = 8
 nms_iou = 0.5
 low_conf = 0.85
+drop_conf = 0.5
 lang = "ko"
 
 [inpaint]
