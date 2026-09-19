@@ -6,35 +6,13 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, ClassVar
 
-import torch
-
 from omniscan.core.config import Config
 from omniscan.core.paths import list_images
 from omniscan.core.schemas import IngestArtifact, RegionsArtifact
 from omniscan.core.stage import ChapterContext
-from omniscan.gpu.codec.select import get_codec
-from omniscan.ingest.strip import build_strip, jpeg_paths
+from omniscan.ingest.strip import load_strip
 from omniscan.inpaint.patches import save_patches
 from omniscan.inpaint.pipeline import inpaint_regions
-
-
-def load_strip(ctx: ChapterContext, ingest: IngestArtifact) -> torch.Tensor:
-    """Decode the chapter strip once per pass (memoised under 'strip', shared with the other stages)."""
-
-    def build() -> torch.Tensor:
-        codec = get_codec(ctx.cfg)
-        try:
-            return build_strip(
-                ingest,
-                jpeg_paths(ingest, ctx.paths.raw_dir, ctx.paths.work_dir / "converted"),
-                codec,
-            )
-        finally:
-            close = getattr(codec, "close", None)
-            if close is not None:
-                close()
-
-    return ctx.lazy("strip", build)
 
 
 class InpaintStage:

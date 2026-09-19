@@ -90,3 +90,9 @@ Notes on deterministic points the card calls out, verified by the tests:
   card specifies ("The patch entry is `(result.pixels, mask)`") — worth remembering when sizing the
   npz for dense chapters, since a `needs_lama` region's pixels are just the raw crop until LaMa or
   export overwrites them.
+## Review addendum (director)
+- The builder's worktree was cut before C3 merged, so it wrote its own `load_strip` in `inpaint/stage.py` (Deviations). After the rebase it duplicated `omniscan.ingest.strip.load_strip`; the stage now imports the shared one.
+- Rebase conflicts (README status/stub table, USER_GUIDE tables and command sections, the stub tuple in `cli.py`/`test_cli.py`) resolved: `detect`, `judge` and `inpaint` are all real commands now.
+- Visual check on `make_korean_page(seed=1, n_bubbles=4, n_free=1, n_sfx=1, background="gradient")`: all four bubbles (white ellipse, white rounded boxes, dark box) come out identical to the text-free page (`page.clean`), outlines untouched;
+  the free text on the gradient and the SFX are left as they were with `needs_lama=True` (metrics: 6 regions, 4 flat, 2 needs_lama). Exactly the v1 design.
+- Answer to the note about the npz size: a `needs_lama` region stores its raw crop until LaMa/export overwrite it; fine for now (`np.savez_compressed`).
