@@ -36,7 +36,6 @@ STATUS_STYLES = {"OK": "green", "WARN": "yellow", "FAIL": "red"}
 _STUB_COMMANDS = (
     "acquire",
     "ocr",
-    "typeset",
     "export",
     "run",
     "reference",
@@ -272,6 +271,23 @@ def cmd_detect(
 app.command("detect")(cmd_detect)
 
 
+def cmd_typeset(
+    series: Annotated[str, typer.Argument()],
+    chapter: Annotated[
+        list[str] | None,
+        typer.Option("--chapter", "-c", help="Chapter folder name; repeatable. Default: all."),
+    ] = None,
+    force: Annotated[bool, typer.Option("--force", help="Re-run even if up to date.")] = False,
+) -> None:
+    """Fit final English lines into their regions' target boxes (layout.json). Needs ocr/final/inpaint."""
+    from omniscan.typeset.stage import TypesetStage
+
+    _run_stages("typeset", [TypesetStage()], series, chapter, force)
+
+
+app.command("typeset")(cmd_typeset)
+
+
 def cmd_ocr(series: Annotated[str | None, typer.Argument()] = None) -> None:
     """Not implemented yet."""
     _stub("ocr", series)
@@ -438,11 +454,6 @@ def cmd_inpaint(
 
 
 app.command("inpaint")(cmd_inpaint)
-
-
-def cmd_typeset(series: Annotated[str | None, typer.Argument()] = None) -> None:
-    """Not implemented yet."""
-    _stub("typeset", series)
 
 
 def cmd_export(series: Annotated[str | None, typer.Argument()] = None) -> None:

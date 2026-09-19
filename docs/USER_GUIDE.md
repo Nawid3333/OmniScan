@@ -20,6 +20,7 @@ OmniScan keeps three roots (see `[paths]` in [Configuration](#configuration)):
 | `work_root/<Series>/<Chapter N>/regions.json` | `omniscan detect` | bubble and text regions with ids and reading order |
 | `work_root/<Series>/<Chapter N>/inpaint.json` | `omniscan inpaint` | per-region clean record: method, fill colour, needs-lama flag |
 | `work_root/<Series>/<Chapter N>/patches.npz` | `omniscan inpaint` | cleaned crops and text masks per region (export applies them) |
+| `work_root/<Series>/<Chapter N>/layout.json` | `omniscan typeset` | per-region font, size, wrapped lines, box and colour |
 | `work_root/<Series>/<Chapter N>/filter.json` | `omniscan filter run` / `restore` | promo-filter decisions |
 | `work_root/<Series>/<Chapter N>/manifest.json` | the stage runner | per-stage status, inputs and config hashes |
 | `work_root/<Series>/<Chapter N>/converted/` | `omniscan ingest` | JPEG cache for raws that were not JPEG |
@@ -74,6 +75,13 @@ Every key in `config/default.toml`:
 | `inpaint.mask_dilate_px` | line boxes are grown by this to form the text mask, in px | yes |
 | `inpaint.flat_tol` | 90th-percentile colour deviation of the ring under which a flat fill is accepted | yes |
 | `inpaint.min_ring_px` | fewer ring pixels than this → no flat fill | yes |
+| `typeset.min_px` | smallest font size tried, in px | yes (`omniscan typeset`) |
+| `typeset.max_px` | largest font size tried, in px | yes (`omniscan typeset`) |
+| `typeset.line_spacing` | line pitch as a multiple of the font size | yes (`omniscan typeset`) |
+| `typeset.margin_px` | inset of the bubble's inscribed rectangle, in px | yes (`omniscan typeset`) |
+| `typeset.free_grow` | free text / SFX boxes are grown by this fraction on every side | yes (`omniscan typeset`) |
+| `typeset.stroke_free_px` | outline width of free-standing text, in px | yes (`omniscan typeset`) |
+| `typeset.stroke_sfx_px` | outline width of sound effects, in px | yes (`omniscan typeset`) |
 | `ollama.local_url` | local Ollama base URL | yes (`doctor`) |
 | `ollama.cloud_url` | Ollama cloud base URL | yes (`doctor`) |
 | `ollama.request_timeout_s` | per-request timeout | used by the LLM client module (no pipeline stage yet) |
@@ -90,7 +98,7 @@ OMNISCAN_RELAY_CLIENT_TOKEN=...
 
 ## Commands
 
-Stubs (`acquire`, `ocr`, `typeset`, `export`, `run`,
+Stubs (`acquire`, `ocr`, `export`, `run`,
 `reference`) are registered but not usable; each prints `not implemented yet` and exits 2. Every other
 command below is fully working. The examples assume you generated the demo chapter with
 `uv run python scripts/make_demo_chapter.py`.
@@ -351,6 +359,32 @@ invalid judge config; an Ollama rate limit stops everything immediately with exi
 ```bash
 uv run omniscan judge DemoSeries
 uv run omniscan judge DemoSeries --chapter "Chapter 1" --run gemma4-31b-cloud --force
+```
+
+### `omniscan typeset`
+
+Fit every final English line into its region's target box and record font role, size, wrapped lines
+and colour (`layout.json`). Pure planning — nothing is drawn here; a later stage renders and
+composites.
+
+| Argument/option | Meaning |
+|---|---|
+| `series` | series name (required) |
+| `--chapter`, `-c <str>` | chapter folder name; repeatable. Default: all |
+| `--force` | re-run even if up to date |
+
+Needs `ocr.json`, `final.json` and `inpaint.json` in the chapter work dir; a chapter missing one of
+them fails (exit 1). Per region, in reading order: bubble text is fitted into the bubble's inscribed
+ellipse box (the original text box wins when it is strictly larger), free text and SFX into their text
+box grown by `typeset.free_grow`. The font role follows the region kind (bubble text → dialogue,
+free text → free, SFX → sfx) and with it the default font. The colour is the region's `text_color`
+when it carries one, else black on light bubble fills and white on dark ones (decided from the
+inpaint fill's luminance); free text and SFX are white with an outline
+(`typeset.stroke_free_px` / `typeset.stroke_sfx_px`). Watermark regions are never laid out. Writes
+`layout.json` + `manifest.json` in the chapter work dir. Exit codes as for `ingest`.
+
+```bash
+uv run omniscan typeset DemoSeries
 ```
 
 ### `omniscan watermark add`
