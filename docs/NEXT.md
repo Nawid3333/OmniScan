@@ -51,7 +51,7 @@ the logic + the report's Questions; **T3** = also a live GPU/real-page check by 
 | 2 | **C4a** | OCR stage: PP-OCRv5 line detection + Korean recognition → `ocr.json` | C3, X1 | T3 | **running** (`docs/tasks/C4a.md`) |
 | 2 | **C6a** | Inpaint v1: masks + flat fill → `inpaint.json` + `patches.npz` | X1, contracts | T2 | ✔ merged (visual check: bubbles identical to the text-free page) |
 | 2 | **C7b** | Typeset stage → `layout.json` | C7a, contracts | T2 | **running** (`docs/tasks/C7b.md`) |
-| 3 | **C7c** | Glyph renderer (`typeset/render.py`) + GPU compositing + `export` stage → `output/<Series>/<Chapter>/0001.jpg…` + `export.json` | C6a, C7b | T3 | write card |
+| 3 | **C7c** | Glyph renderer (`typeset/render.py`) + GPU compositing + `export` stage → `output/<Series>/<Chapter>/0001.jpg…` + `export.json` | C6a, C7b | T3 | **running** (`docs/tasks/C7c.md`) |
 | 3 | **C6b** | LaMa stage (`inpaint_lama`): fixed 512² windows, fp32, weights fetched with sha256 check → `patches_lama.npz` | C6a, `docs/benchmarks/lama-probe.md` | T3 | **running** (`docs/tasks/C6b.md`) |
 | 3 | **R1** | `omniscan run`: stage order, VRAM group sequencing (vision → local Ollama → torch), resumable, queue `STAGE_TABLE` gets every stage | C4a, C6a, C7b, C7c | T2 (director reviews the sequencing) | — |
 | 3 | **E2E** | Golden test: synthetic Korean chapter → full pipeline with a fake LLM client → output images exist, text removed, English inside boxes | R1 | T1 | — |
