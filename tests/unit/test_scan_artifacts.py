@@ -10,7 +10,7 @@ from typing import Any
 
 import numpy as np
 import pytest
-from PIL import Image
+from PIL import Image, ImageFilter
 
 from tests.fixtures.korean_pages import make_korean_page
 from tests.fixtures.scan_artifacts import degrade
@@ -219,3 +219,30 @@ def test_generator_scan_artifacts(tmp_path: Path) -> None:
         tmp_path / "harder", "--scan-artifacts", "--halftone", "--rotate", "1.0", "--jpeg-quality", "30"
     )
     assert harder != degraded  # the extra degradation options reach the pages
+
+
+# ---------------------------------------------------------------- gaps found by the director's mutation run
+
+
+def test_halftone_screen_is_periodic_shallow_and_darkest_at_the_dots() -> None:
+    out = np.asarray(scan(Image.new("RGB", (60, 60), (200, 200, 200)), halftone=True), dtype=np.float64)
+    assert out.min() >= 182 and out.max() <= 202  # multiplier 1 - 0.08 * d with d in [0, 1]
+    assert np.abs(out[:, 6:54] - out[:, 12:60]).mean() < 1.5  # a 6 px dot screen repeats every 6 columns
+    assert np.abs(out[6:54, :] - out[12:60, :]).mean() < 1.5
+    assert np.abs(out[:, :50] - out[:, 5:55]).mean() > 2.5  # ... and not every 5
+    assert out[1, 1, 0] < out[4, 1, 0] - 5  # d(1, 1) = 0.875 is a dark dot, d(1, 4) = 0.125 a light gap
+
+
+def test_default_blur_radius_is_the_gaussian_radius() -> None:
+    edge = Image.new("RGB", (80, 80), (255, 255, 255))
+    edge.paste((0, 0, 0), (0, 0, 40, 80))
+    reference = scan(edge.filter(ImageFilter.GaussianBlur(radius=0.6)))
+    assert mean_abs_difference(scan(edge, blur_px=0.6), reference) < 0.5
+    assert mean_abs_difference(scan(edge, blur_px=0.6), scan(edge)) > 0.5  # sub-pixel blur still blurs
+
+
+def test_noise_is_rounded_not_truncated_and_never_wraps() -> None:
+    flat = np.asarray(scan(Image.new("RGB", (200, 200), (128, 128, 128)), noise_sigma=6.0), dtype=np.float64)
+    assert abs(flat.mean() - 128.0) < 0.25  # truncation would shift the mean by half a level
+    dark = np.asarray(scan(Image.new("RGB", (100, 100), (0, 0, 0)), noise_sigma=8.0))
+    assert dark.max() < 60  # negative noise is clipped at 0, it must not wrap around to 255
