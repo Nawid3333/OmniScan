@@ -33,7 +33,7 @@ Every builder has a hard limit of **150 tool calls**: a card must fit (count the
 | 6 | **Q3…** | More mutation reviews (card type Q, use `scripts/mutate.py`): queue store/worker, CBZ/PDF packaging, web API, translate profiles/prompts, watermark regions, typeset render/fit/plan (director mutation-checked C7*, a builder pass finds more) | T1 | cards are copy-edits of `docs/tasks/Q1.md`/`Q2.md` |
 | 7 | **B32** | `doctor` checks: every model named in `translation_profiles.toml` exists in Ollama; Hugging Face models pinned to a `revision` with files verified | T1 | filler, card to write |
 | 8 | **B31** | Duplicate / near-duplicate chapter detection (reuse the promo filter's dHash) | T1 | filler, card to write |
-| 9 | **B33** | `acquire` plumbing except the extract.pics request/response shapes: `sources.toml`, resumable downloader, non-chapter image filter, DRM-domain warning (question A4 open; the extract.pics docs are a JS app the fetch tool cannot read) | T2 | filler, card to write |
+| 9 | **B33a/b** | `acquire`: **B33a** plumbing (image-list downloader, filters, DRM refusal, `sources.toml`) — running; **B33b** the `omniscan acquire` command + extract.pics client (needs the API docs as text, question A4) | T2 | B33a running, B33b card after it |
 | 10 | **C4b/c** | Second-opinion OCR (PaddleOCR-VL); zh/ja model packs (config + tests) | T3 | after real data |
 | 11 | **C7d** | Polygon fitting to the bubble outline, font roles (dialogue/shout/thought/narration), colour matching | T3 | after real data |
 | 12 | **P1/P2** | Portability: torch backend selectable in `pyproject.toml` (ROCm / CUDA / CPU / MPS via `uv` extras + `conflicts`), then a GitHub Actions matrix (Windows + Linux + macOS, CPU tests). Today nothing except this PC can `uv sync`. Needs care: use `--model glm` or do it as director | T3 | decide the shape soon, it changes `pyproject.toml`/`uv.lock` |
@@ -49,6 +49,17 @@ Q1 (129 slicer/ingest mutants, 23 test gaps closed), Q2 (115 filter/glossary/imp
 - GPU code: pin the exact preprocessing and add an equivalence test; flash gets GPU details wrong (C3 needed a rescue after the fp16 detour).
 - After the builder: `git rebase main` (README / USER_GUIDE / stub-list conflicts are routine: keep both sides), ruff/pyright/pytest with `PYTHONPATH=<worktree>\src`, then `scripts/mutate.py` with a director-written list, look at real output, write the review addendum, `merge --ff-only`, push, remove worktree + branch.
 - Builders that hit the turn limit have usually finished the work but not committed: check `git status` in the worktree before deciding anything.
+
+## Self-contained desktop app (M13) — owner wish of 2026-09-19: "people just run the exe, everything is inside"
+Design (details in `docs/PLAN.md` M13; open questions B4/B11/B12): PySide6 shell around the existing pipeline and the web views (`QWebEngineView`), packaged with PyInstaller or Nuitka. What "everything inside" costs, measured or estimated:
+- **Torch runtime**: CPU wheel ~0.2 GB, CUDA ~3–4 GB, ROCm ~4–5 GB (per vendor, so per-vendor builds or a runtime picked at install time).
+- **Vision models**: detector ~0.2 GB, PP-OCRv5 (det + Korean rec) ~0.3 GB, LaMa ~0.2 GB — easily bundled.
+- **The translator is the hard part**: today it needs Ollama (a separate install) and 3 models (translategemma-12b ~8 GB, gemma4-12b ~8 GB, a cloud model). A truly self-contained app must embed a local LLM runtime (llama.cpp / `llama-cpp-python` with GGUF weights, one 4–8 GB model) or use a cloud API with the user's key. That replaces `llm/ollama.py` behind the `ChatClient` protocol (the pipeline already only sees that protocol).
+- Recommendation: one installer per platform that contains the app + the matching torch runtime + the small vision models, and downloads the LLM weights once on first run (progress dialog, checksum) — or an "offline bundle" that includes them (~10–14 GB). Needs the owner's decision (B4/B11/B12) before the cards are written.
+- Cards to write once the pipeline is tuned (not now): **U1** embedded LLM runtime behind `ChatClient` (+ model manager), **U2** device/runtime selection + first-run model downloader, **U3** PySide6 shell (project list, run/queue view with progress, embedded review views, settings), **U4** PyInstaller/Nuitka packaging + CI matrix (Windows/macOS/Linux), **U5** installer + auto-update. U1 and U2 can start earlier and are useful even for the CLI.
+
+## Acquisition (downloader) — scope decided 2026-09-19
+`acquire` is being built as **source-agnostic plumbing**: B33a (running) = ordered, resumable image-list downloader + non-chapter filter + DRM-platform refusal + `sources.toml`; B33b (next) = the `omniscan acquire` command and the extract.pics client (needs the API docs as text, question A4). There is no site-specific code and no HTML crawler in the project, the tool prints a "you are responsible for the rights to this content" notice, and Claude does not run it against unlicensed aggregator sites (see `docs/DECISIONS.md`).
 
 ## Risks to watch
 - **No real Korean data yet** — synthetic fonts render cleaner than scans; every tuning number (detect threshold, `ocr.drop_conf`, typeset sizes, the golden-test thresholds) is provisional until A1 is answered.

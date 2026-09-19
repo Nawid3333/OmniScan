@@ -96,3 +96,4 @@ Each has the **default I will use until you answer**, so nothing is blocked unle
 | 2026-09-19 | GitHub | `gh` is logged in on Windows as Nawid3333; PR-based review is possible (default stays: merge locally, push to `main`) |
 | 2026-09-19 | GPU choice | `gpu.device = "auto"` picks the strongest discrete GPU (skips integrated GPUs); no hard-coded `cuda:0` |
 | 2026-09-19 | Process | Open questions are kept in this file and asked at natural pauses; a checkpoint lives in `docs/CHECKPOINT.md` |
+| 2026-09-19 | Product | Owner wants the exe fully self-contained ("people just run the exe, everything the program needs is inside"). Open: does that include the local LLM weights (installer ~10–14 GB) or a first-run download (B4/B11/B12)? The translator currently needs Ollama |
