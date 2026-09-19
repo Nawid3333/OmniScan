@@ -173,13 +173,15 @@ def test_build_vram_manager_registers_inpaint(monkeypatch: pytest.MonkeyPatch, t
 
     monkeypatch.setattr(LamaInpainter, "load", fake_load)
     monkeypatch.setattr(Detector, "load", lambda cfg_, device: fake_detector)
+    monkeypatch.setattr(LineDetector, "load", lambda cfg_, device: object())
+    monkeypatch.setattr(LineRecognizer, "load", lambda cfg_, device: object())
 
     cfg = cli_cfg(tmp_path)
     manager = build_vram_manager(cfg)
     assert manager.acquire(INPAINT_GROUP) == {"lama": fake_lama}
     assert seen["call"] == (cfg.inpaint, cfg.paths.models_dir, manager.device)
     manager.release()
-    assert manager.acquire(VISION_GROUP) == {"detector": fake_detector}  # the vision group stays
+    assert manager.acquire(VISION_GROUP)["detector"] is fake_detector  # the vision group stays
     manager.release()
 
 

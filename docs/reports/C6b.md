@@ -82,3 +82,9 @@ Measured GPU numbers (RX 9070 XT, ROCm 10, fp32):
 - None blocking. For a later card: `torch.jit.load` prints a DeprecationWarning on Python 3.14
   ("switch to torch.export"); when big-lama ships an `torch.export` artefact we should migrate
   (out of scope here — the config pins this exact file/sha256).
+## Review addendum (director)
+- Rebase conflicts (README status table, USER_GUIDE tables, `est_gib` of the vision group vs the new inpaint group in `gpu/groups.py`, imports and tests in `test_gpu_groups.py`) resolved.
+  `test_build_vram_manager_registers_inpaint` predated C4a's change to the vision group (it loaded the real OCR models when acquired): it now fakes all three vision loaders and only checks `["detector"]`.
+- The flaky `test_decode_into_gpu_strip` failure the builder saw is the CUDA staging-buffer race in `TurboCodec.decode_into` (fixed on `main` in `8c3a32f`; a large-page GPU regression test guards it).
+- Mutation check, 21 mutants over `lama_pipeline.py` and `lama_weights.py` (dilation kernel/padding, window origin centring and both clamps, width limit, context limit and its `or`, `needs_lama` inverted, replicate padding, offset into the window, method name, `mask_px`,
+  patch mask dropped, skipped metric, no extra dilation, hash check inverted, checksum mismatch ignored, HTTP status ignored, `.part` left behind): **all killed**.
