@@ -47,3 +47,5 @@ Thumbs.db
 /data/
 .mutate_backup/
 .builder/*.log
+.builder/*.jsonl
+.builder/*.err
