@@ -100,3 +100,10 @@ Deterministic points the card calls out, verified by the tests:
   card rather than a spec error. If pure white/black at alpha 255 is actually wanted, the
   composition order (stroke over fill, or one stroked draw call) would need to change — please
   confirm the recipe stands.
+## Review addendum (director)
+- Answer to the Question: the recipe stands. An anti-aliased fill edge over an opaque stroke legitimately produces greys at alpha 255 (PIL's own single-call stroked text agrees pixel for pixel); the card's "either white or black" wording was a slip.
+- Rebase conflicts (README status/stub tables, USER_GUIDE tables and stub sentence, the stub tuple and a stale `cmd_typeset` stub in `cli.py`) resolved: `detect`, `ocr`, `judge`, `inpaint`, `typeset`, `export` are real commands now.
+- Mutation check, 25 mutants over `typeset/render.py`, `export/composite.py`, `export/stage.py` (margin, pitch/vertical centring, alignment, stroke order, colour bleed, patch origin, mask ignored, clipping offsets, alpha scale, floor vs round, dst attenuation, negative origin, bottom clip, patch count,
+  filtered slices, numbering, stale-file deletion scope, LaMa override, hard-coded quality, overflow metric): **all 25 killed**.
+- **Live run** on the KoreanDemo chapter with placeholder English lines (`final.json` hand-built): `inpaint` 1.3 s, `typeset` 0.14 s, `export` 0.73 s. Bubble interiors are cleaned and English is fitted and drawn inside them; free text on the gradient keeps its Korean (flagged `needs_lama`, LaMa card C6b) with the English drawn over it, as expected at this stage.
+- **The live run exposed an unrelated pre-existing bug** (fixed separately on `main`): `TurboCodec.decode_into` reuses ONE pinned staging buffer with `non_blocking=True` copies on CUDA, so pages overwrite each other — the exported strip showed page 3 three times. CPU tests cannot see it.
