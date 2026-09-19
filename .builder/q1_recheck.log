@@ -1,0 +1,11 @@
+== bands
+[0] SURVIVED src/omniscan/slicer/bands.py:29  chunk bound min->max  (41.6s)
+summary: 28 killed, 1 survived, 0 invalid
+== cuts
+summary: 31 killed, 0 survived, 0 invalid
+== ingest
+summary: 31 killed, 0 survived, 0 invalid
+== slice_page
+[27] SURVIVED src/omniscan/slicer/page_mode.py:19  empty case height  (14.9s)
+summary: 27 killed, 1 survived, 0 invalid
+DONE
