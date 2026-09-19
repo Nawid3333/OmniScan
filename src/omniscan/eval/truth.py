@@ -150,12 +150,12 @@ def _first_number(value: str | None) -> float | None:
 
 def _line_width(text: str, font_size: float) -> float:
     """Estimated rendered width of one line: wide (CJK) glyphs one em, everything else half."""
-    return font_size * sum(
-        1.0 if unicodedata.east_asian_width(ch) in ("W", "F") else 0.5 for ch in text
-    )
+    return font_size * sum(1.0 if unicodedata.east_asian_width(ch) in ("W", "F") else 0.5 for ch in text)
 
 
-def _line_box(x: float, y: float, font_size: float, anchor: str, text: str) -> tuple[float, float, float, float]:
+def _line_box(
+    x: float, y: float, font_size: float, anchor: str, text: str
+) -> tuple[float, float, float, float]:
     """(x0, y0, x1, y1) of one line in the text element's coordinates, from anchor and font size."""
     width = _line_width(text, font_size)
     left = x - {"middle": width / 2.0, "end": width}.get(anchor, 0.0)
@@ -210,7 +210,9 @@ def parse_svg(
     boxes: list[TruthBox] = []
     dropped = 0
 
-    def emit(bx0: float, by0: float, bx1: float, by1: float, t: _Matrix, lines: tuple[str, ...], approx: bool) -> None:
+    def emit(
+        bx0: float, by0: float, bx1: float, by1: float, t: _Matrix, lines: tuple[str, ...], approx: bool
+    ) -> None:
         """Map one SVG-space box through page and strip space; drop it when it leaves the page."""
         nonlocal dropped
         sx0, sy0, sx1, sy1 = _svg_bounds((bx0, by0, bx1 - bx0, by1 - by0), t)
@@ -259,7 +261,9 @@ def parse_svg(
         if kind == "text":
             line_data = _text_element_lines(el)
             if line_data:
-                line_boxes = [_line_box(x, y, font_size, anchor, text) for text, x, y, font_size, anchor in line_data]
+                line_boxes = [
+                    _line_box(x, y, font_size, anchor, text) for text, x, y, font_size, anchor in line_data
+                ]
                 emit(
                     min(b[0] for b in line_boxes),
                     min(b[1] for b in line_boxes),

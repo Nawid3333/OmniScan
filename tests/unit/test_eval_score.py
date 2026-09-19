@@ -13,7 +13,7 @@ from omniscan.core.schemas import (
     RegionsArtifact,
     SourceFile,
 )
-from omniscan.eval.score import BoxResult, EvalReport, score_chapter
+from omniscan.eval.score import BoxResult, EvalReport, _ocr_hypothesis, score_chapter
 from omniscan.eval.truth import TruthBox, TruthStats
 
 STATS = TruthStats(pages=1, pages_without_truth=0, dropped=0)
@@ -211,22 +211,160 @@ def test_to_json_shape() -> None:
     data = json.loads(report.to_json())
     assert data["series"] == "S"
     assert data["recall"] == 2 / 3
+    assert data["recall_chars"] == 7 / 11
+    assert data["approx_boxes"] == 0
+    assert data["ocr_chrf_pages"] == 1
+    assert 0.0 <= data["ocr_chrf_mean"] <= 1.0
     assert data["missed"][0]["bbox"] == [100, 1000, 500, 1200]
     assert data["worst_cer"][0]["cer"] == 0.2
     empty = json.loads(score([], s1_regions()).to_json())
     assert empty["truth_boxes"] == 0
     assert empty["recall"] is None
+    assert empty["recall_chars"] is None
+    assert empty["precision"] is None
+    assert empty["ocr_chrf_mean"] is None
+    assert empty["ocr_chrf_pages"] == 0
+    assert empty["approx_boxes"] == 0
     assert empty["cer_macro"] is None
     assert empty["missed"] == []
 
 
-def test_missed_is_limited_and_sorted_by_area() -> None:
+def test_missed_is_limited_and_sorted_by_chars_then_area() -> None:
     truth = [truth_box(1, 0, i * 300, 10 * (15 - i), i * 300 + 50, f"box{i}") for i in range(1, 15)]
     report = score(truth, s1_regions())
     assert len(report.missed) == 10
-    areas = [(r.bbox.x1 - r.bbox.x0) * (r.bbox.y1 - r.bbox.y0) for r in report.missed]
-    assert areas == sorted(areas, reverse=True)
+    # box10..14 have 5 usable characters each (largest areas first), then the 4-character boxes
+    assert [box.text for box in report.missed] == [
+        "box10",
+        "box11",
+        "box12",
+        "box13",
+        "box14",
+        "box1",
+        "box2",
+        "box3",
+        "box4",
+        "box5",
+    ]
     assert all(isinstance(r, BoxResult) and not r.detected for r in report.missed)
+
+
+def test_missed_ties_break_by_area_then_page_then_position() -> None:
+    truth = [
+        truth_box(2, 500, 100, 600, 200, "같은글자열"),
+        truth_box(1, 500, 100, 600, 200, "같은글자열"),
+        truth_box(1, 0, 100, 100, 200, "같은글자열"),
+        truth_box(1, 0, 400, 300, 600, "같은글자열"),
+    ]
+    report = score(truth, RegionsArtifact(regions=[]))
+    assert [(box.page, box.bbox.x0, box.bbox.y0) for box in report.missed] == [
+        (1, 0, 400),  # same text, largest area first
+        (1, 0, 100),  # then lowest (page, y0, x0)
+        (1, 500, 100),
+        (2, 500, 100),
+    ]
+
+
+# ---------------------------------------------------------------- character-weighted recall
+
+
+def test_recall_chars_weights_by_text_length() -> None:
+    truth = [
+        truth_box(1, 0, 0, 500, 200, "가나다라마바사아자차"),  # 10 usable characters
+        truth_box(1, 600, 0, 900, 200, "안녕"),  # 2
+        truth_box(1, 0, 400, 500, 600, "어"),  # 1
+    ]
+    regions = RegionsArtifact(regions=[region("r0001", 100, 50, 400, 150, "가나다라마바사아자차")])
+    report = score(truth, regions)
+    assert report.recall == 1 / 3
+    assert report.recall_chars == 10 / 13
+    assert report.precision == 1.0
+
+
+def test_no_usable_boxes_makes_recall_chars_and_precision_none() -> None:
+    report = score([truth_box(1, 0, 0, 100, 100, "...")], s1_regions())
+    assert report.truth_boxes == 0
+    assert report.ignored_boxes == 1
+    assert report.recall is None
+    assert report.recall_chars is None
+    assert report.precision is None  # regions exist but there is no truth to assign them to
+
+
+def test_approx_boxes_are_counted() -> None:
+    truth = [
+        truth_box(1, 0, 0, 500, 200, "안녕"),
+        TruthBox(page=1, bbox=BBox(x0=600, y0=0, x1=900, y1=200), lines=("미안",), approx=True),
+    ]
+    report = score(truth, RegionsArtifact(regions=[]))
+    assert report.truth_boxes == 2
+    assert report.approx_boxes == 1
+
+
+# ---------------------------------------------------------------- page-level OCR chrF
+
+
+def _three_page_ingest() -> IngestArtifact:
+    return IngestArtifact(
+        series="S",
+        chapter="C",
+        strip_width=1000,
+        strip_height=9000,
+        files=[
+            SourceFile(index=0, name="01.jpg", sha256="x", width=1000, height=3000, y0=0, y1=3000),
+            SourceFile(index=1, name="02.jpg", sha256="x", width=1000, height=3000, y0=3000, y1=6000),
+            SourceFile(index=2, name="03.jpg", sha256="x", width=1000, height=3000, y0=6000, y1=9000),
+        ],
+    )
+
+
+def test_ocr_page_chrf_scores_every_truth_page() -> None:
+    truth = [truth_box(1, 100, 100, 500, 300, "안녕하세요"), truth_box(2, 100, 3100, 500, 3300, "잘 가")]
+    regions = RegionsArtifact(regions=[region("r0001", 150, 150, 450, 250, "안녕하세요")])
+    report = score_chapter(
+        "S",
+        "C",
+        _three_page_ingest(),
+        regions,
+        None,
+        truth,
+        {},
+        TruthStats(pages=3, pages_without_truth=0, dropped=0),
+    )
+    assert report.ocr_chrf_pages == 2  # page 3 has a region but no truth: not counted
+    assert report.ocr_chrf_mean == 0.5  # page 1 exact (1.0), page 2 truth without region (0.0)
+
+
+def test_ocr_page_chrf_ignores_watermark_regions() -> None:
+    truth = [truth_box(1, 100, 100, 500, 300, "안녕하세요")]
+    regions = RegionsArtifact(
+        regions=[
+            region("r0001", 150, 150, 450, 250, "안녕하세요"),
+            region("r0002", 150, 400, 450, 500, "watermark junk", kind="watermark"),
+        ]
+    )
+    report = score_chapter("S", "C", s1_ingest(), regions, None, truth, {}, STATS)
+    assert report.ocr_chrf_pages == 1
+    assert report.ocr_chrf_mean == 1.0
+
+
+def test_ocr_hypothesis_joins_regions_in_reading_order() -> None:
+    regions = [region("r0001", 400, 200, 500, 260, "둘"), region("r0002", 100, 100, 200, 160, "하나")]
+    assert _ocr_hypothesis(regions, 0, 3000) == "하나 둘"
+
+
+def test_ocr_page_chrf_depends_on_the_hypothesis_order() -> None:
+    regions = RegionsArtifact(
+        regions=[region("r0001", 400, 200, 500, 260, "둘"), region("r0002", 100, 100, 200, 160, "하나")]
+    )
+    right = score_chapter(
+        "S", "C", s1_ingest(), regions, None, [truth_box(1, 0, 0, 1000, 1000, "하나 둘")], {}, STATS
+    )
+    swapped = score_chapter(
+        "S", "C", s1_ingest(), regions, None, [truth_box(1, 0, 0, 1000, 1000, "둘 하나")], {}, STATS
+    )
+    assert right.ocr_chrf_mean == 1.0
+    assert swapped.ocr_chrf_mean is not None
+    assert 0.0 < swapped.ocr_chrf_mean < 1.0
 
 
 # ---------------------------------------------------------------- gaps found by the director's mutation run

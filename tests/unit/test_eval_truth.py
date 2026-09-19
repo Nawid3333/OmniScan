@@ -273,10 +273,7 @@ def test_text_anchor_on_the_tspan_only() -> None:
 
 
 def test_tspan_without_xy_falls_back_to_the_element() -> None:
-    svg = _svg(
-        '<text x="100" y="300" style="font-size:20px">'
-        '<tspan sodipodi:role="line">가나</tspan></text>'
-    )
+    svg = _svg('<text x="100" y="300" style="font-size:20px"><tspan sodipodi:role="line">가나</tspan></text>')
     boxes, dropped = parse_svg(svg, file_width=1000, file_height=1480, file_y0=0, scale=1.0)
     assert dropped == 0
     assert boxes[0].bbox == BBox(x0=50, y0=120, x1=70, y1=133)
@@ -337,7 +334,7 @@ def test_unpositioned_text_lines_are_skipped() -> None:
 def test_text_inside_a_flow_root_is_not_a_second_box() -> None:
     svg = _svg(
         '<flowRoot><flowRegion><rect x="0" y="0" width="100" height="50"/></flowRegion>'
-        "<flowPara>바깥<text x=\"10\" y=\"20\">안</text></flowPara></flowRoot>",
+        '<flowPara>바깥<text x="10" y="20">안</text></flowPara></flowRoot>',
         width=1000,
         height=1000,
     )

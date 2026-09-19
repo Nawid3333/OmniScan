@@ -20,10 +20,13 @@ from omniscan.core.schemas import (
     RegionsArtifact,
     SourceFile,
 )
+from omniscan.eval.metrics import chrf
 
 SERIES = "S"
 
 runner = CliRunner()
+
+SODI_NS = 'xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"'
 
 SVG_KR = (
     '<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="3000">'
@@ -33,6 +36,20 @@ SVG_KR = (
     "<flowPara>잘 가</flowPara></flowRoot>"
     '<flowRoot><flowRegion><rect x="100" y="1000" width="400" height="200"/></flowRegion>'
     "<flowPara>미안해요</flowPara></flowRoot></svg>"
+)
+
+SVG_KR_TEXT = (
+    f'<svg xmlns="http://www.w3.org/2000/svg" {SODI_NS} width="1000" height="3000">'
+    '<flowRoot><flowRegion><rect x="100" y="1000" width="400" height="200"/></flowRegion>'
+    "<flowPara>미안해요</flowPara></flowRoot>"
+    '<text x="300" y="200" style="font-size:40px;text-anchor:middle">'
+    '<tspan sodipodi:role="line" x="300" y="200" style="font-size:40px">안녕하세요</tspan></text></svg>'
+)
+
+SVG_KR_PUNCTUATION_ONLY = (
+    '<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="3000">'
+    '<flowRoot><flowRegion><rect x="100" y="100" width="400" height="200"/></flowRegion>'
+    "<flowPara>...?!</flowPara></flowRoot></svg>"
 )
 
 SVG_EN = (
@@ -124,10 +141,13 @@ def test_cli_eval_prints_the_block_and_writes_eval_json(cfg: Config, monkeypatch
     assert result.exit_code == 0
     assert "S/Chapter 1: 1 pages, 3 truth boxes (0 ignored, 0 dropped)" in result.output
     assert "recall 0.667 (2/3)" in result.output
+    assert "chars 0.636" in result.output
     assert "precision 0.667 (2/3 regions)" in result.output
     assert "CER macro 0.100" in result.output
     assert "micro 0.143" in result.output
     assert "(2 boxes)" in result.output
+    ocr_chrf = chrf("잘가 안녕하세여 junk", "안녕하세요 잘 가 미안해요")  # regions/truth in reading order
+    assert f"page chrF {ocr_chrf:.3f} (1 pages)" in result.output
     assert "chrF 1.000 (1 pages)" in result.output
     assert 'missed: p01 [100,1000,500,1200] "미안해요"' in result.output
     assert 'worst CER: p01 0.20 "안녕하세요"' in result.output
@@ -135,6 +155,10 @@ def test_cli_eval_prints_the_block_and_writes_eval_json(cfg: Config, monkeypatch
         (cfg.paths.work_root / SERIES / "Chapter 1" / "eval.json").read_text(encoding="utf-8")
     )
     assert report["recall"] == 2 / 3
+    assert report["recall_chars"] == 7 / 11
+    assert report["approx_boxes"] == 0
+    assert report["ocr_chrf_mean"] == pytest.approx(ocr_chrf)
+    assert report["ocr_chrf_pages"] == 1
     assert report["chrf_mean"] == 1.0
 
 
@@ -151,6 +175,9 @@ def test_cli_eval_json_prints_one_object_per_chapter(cfg: Config, monkeypatch: p
     report = json.loads(lines[0])
     assert report["chapter"] == "Chapter 1"
     assert report["detected_boxes"] == 2
+    assert report["recall_chars"] == 7 / 11
+    assert report["ocr_chrf_pages"] == 1
+    assert report["approx_boxes"] == 0
 
 
 def test_cli_eval_missing_ocr_exits_1(cfg: Config, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -204,3 +231,70 @@ def test_cli_eval_unknown_series_exits_2(cfg: Config, monkeypatch: pytest.Monkey
     result = runner.invoke(app, ["eval", "NoSuchSeries"])
     assert result.exit_code == 2
     assert "no chapters found" in result.output
+
+
+def write_golden_chapter(cfg: Config) -> None:
+    """One flowRoot box (missed) + one <text> box (detected), one OCR region, no final.json."""
+    (cfg.paths.library_root / SERIES / "Golden").mkdir(parents=True)
+    work = cfg.paths.work_root / SERIES / "Golden"
+    work.mkdir(parents=True)
+    IngestArtifact(
+        series=SERIES,
+        chapter="Golden",
+        strip_width=1000,
+        strip_height=3000,
+        files=[SourceFile(index=0, name="01.jpg", sha256="x", width=1000, height=3000, y0=0, y1=3000)],
+    ).save(work / "ingest.json")
+    RegionsArtifact(
+        regions=[
+            Region(
+                id="r0001",
+                slice_index=0,
+                kind="bubble_text",
+                bbox=BBox(x0=150, y0=150, x1=450, y1=250),
+                text="안녕하세여",
+            )
+        ]
+    ).save(work / "ocr.json")
+    lang_dir = cfg.paths.library_root.parent / "translated-check" / SERIES / "Golden" / "truth" / "kr"
+    lang_dir.mkdir(parents=True)
+    (lang_dir / "E01P01.svg").write_text(SVG_KR_TEXT, encoding="utf-8")
+
+
+def test_cli_eval_prints_chars_page_chrf_and_approximate_count(
+    cfg: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_golden_chapter(cfg)
+    monkeypatch.setattr(omniscan.cli, "get_config", lambda: cfg)
+
+    result = runner.invoke(app, ["eval", SERIES, "--chapter", "Golden"])
+    assert result.exit_code == 0
+    assert "S/Golden: 1 pages, 2 truth boxes (0 ignored, 0 dropped, 1 approximate)" in result.output
+    assert "recall 0.500 (1/2)  chars 0.556  precision 1.000 (1/1 regions)" in result.output
+    page_chrf = chrf("안녕하세여", "미안해요 안녕하세요")  # truth boxes in document order
+    assert f"CER macro 0.200  micro 0.200  (1 boxes)  page chrF {page_chrf:.3f} (1 pages)" in result.output
+    assert 'missed: p01 [100,1000,500,1200] "미안해요"' in result.output
+    assert 'worst CER: p01 0.20 "안녕하세요"' in result.output
+    report = json.loads((cfg.paths.work_root / SERIES / "Golden" / "eval.json").read_text(encoding="utf-8"))
+    assert report["recall_chars"] == 5 / 9
+    assert report["approx_boxes"] == 1
+    assert report["ocr_chrf_mean"] == pytest.approx(page_chrf)
+
+
+def test_cli_eval_without_usable_truth_boxes_prints_na(cfg: Config, monkeypatch: pytest.MonkeyPatch) -> None:
+    write_chapter(cfg, "Empty", with_final=False)
+    lang_dir = cfg.paths.library_root.parent / "translated-check" / SERIES / "Empty" / "truth" / "kr"
+    lang_dir.mkdir(parents=True)
+    (lang_dir / "E01P01.svg").write_text(SVG_KR_PUNCTUATION_ONLY, encoding="utf-8")
+    monkeypatch.setattr(omniscan.cli, "get_config", lambda: cfg)
+
+    result = runner.invoke(app, ["eval", SERIES, "--chapter", "Empty"])
+    assert result.exit_code == 0
+    assert "S/Empty: 1 pages, 0 truth boxes (1 ignored, 0 dropped)" in result.output
+    assert "  detection    n/a (no usable truth boxes)" in result.output
+    assert "OCR" not in result.output
+    assert "recall" not in result.output
+    report = json.loads((cfg.paths.work_root / SERIES / "Empty" / "eval.json").read_text(encoding="utf-8"))
+    assert report["truth_boxes"] == 0
+    assert report["precision"] is None
+    assert report["recall_chars"] is None

@@ -511,13 +511,20 @@ uv run omniscan typeset DemoSeries
 ### `omniscan eval`
 
 Score finished chapters against ground truth instead of by eye: how many text boxes detection+OCR
-found, how accurately they were read (CER), and — when `final.json` exists — how close the English
-is to the official translation (chrF). The ground truth comes from the `translated-check` folder
-(next to the library root): `<translated-check>/<series>/<chapter>/truth/<lang>/EnnPpp.svg`, the
-Inkscape text layers of the Pepper&Carrot CC BY 4.0 test data (written by
-`scripts/fetch_pepper_carrot.py`). Each `flowRoot` becomes one truth box in strip space, matched to
-the OCR regions of `ocr.json` (watermarks excluded) by which box contains the region's centre, the
-smallest such box winning.
+found, how many truth characters they cover, how accurately they were read (CER), how faithfully the
+raw OCR matches the source-language text (page chrF), and — when `final.json` exists — how close the
+English is to the official translation (chrF). The ground truth comes from the `translated-check`
+folder (next to the library root): `<translated-check>/<series>/<chapter>/truth/<lang>/EnnPpp.svg`,
+the Inkscape text layers of the Pepper&Carrot CC BY 4.0 test data (written by
+`scripts/fetch_pepper_carrot.py`). Each `flowRoot` becomes one truth box in strip space (exact box
+from its `flowRegion`), and each `<text>` element becomes one too, matched to the OCR regions of
+`ocr.json` (watermarks excluded) by which box contains the region's centre, the smallest such box
+winning.
+
+`<text>` elements carry no box geometry, so their boxes are **approximate**: each line's box is
+estimated from its position, `font-size` and `text-anchor` (a wide CJK glyph counts as one em,
+everything else as half). The header line reports how many truth boxes are approximate when there
+are any; their boxes are good enough for scoring, not for pixel-exact masks.
 
 | Argument/option | Meaning |
 |---|---|
@@ -528,10 +535,14 @@ smallest such box winning.
 
 Needs `ingest.json` and `ocr.json` in the chapter work dir (missing → exit 1 after the other
 chapters; `final.json` is optional). A chapter without `truth/<lang>` fails with exit 2. Writes
-`eval.json` into the chapter work dir and prints, per chapter: detection recall and precision, CER
-macro/micro over the detected boxes, chrF over the scored pages, plus up to five missed boxes and
-the five worst-read boxes. Boxes whose text is punctuation only are ignored; truth boxes outside
-their page are dropped and counted.
+`eval.json` into the chapter work dir and prints, per chapter: detection recall (per box), the
+character-weighted recall `chars` (share of truth characters in detected boxes — fairer than box
+recall when hundreds of tiny SFX boxes dominate), precision, CER macro/micro over the detected
+boxes, the page-level OCR chrF (raw OCR text against the source-language truth, one score per page
+that has truth boxes), and — with `final.json` — the translation chrF over the scored pages, plus
+up to five missed boxes (longest text first) and the five worst-read boxes. A chapter with no
+usable truth boxes prints `n/a` instead of the detection and OCR lines. Boxes whose text is
+punctuation only are ignored; truth boxes outside their page are dropped and counted.
 
 ```bash
 uv run omniscan eval PepperCarrotKR -c "Episode 06"
