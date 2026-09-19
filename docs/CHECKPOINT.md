@@ -5,14 +5,14 @@
 Local data (sample library, work artifacts, outputs) lives in `V:\OmniScan\data\` (gitignored); machine config in `C:\Users\limex\.config\omniscan\config.toml` (paths only; the GPU is chosen by `gpu.device = "auto"`).
 
 ## State in one paragraph
-Every stage of the pipeline exists and is merged except the orchestrator (R1, running). Merged and reviewed: ingest, slice, promo filter, **detect (C3)**, translate candidate runs, **judge (C5a/C5b)**, **inpaint v1 flat fill (C6a)**, **typeset layout engine and stage (C7a/C7b)**, glossary, watermark regions,
+Every stage of the pipeline exists and is merged, and **`omniscan run SERIES` (R1) chains all ten of them in three passes** (vision → text → render; resumable; the job queue runs the same machinery). Merged and reviewed: ingest, slice, promo filter, **detect (C3)**, translate candidate runs, **judge (C5a/C5b)**, **inpaint v1 flat fill (C6a)**, **typeset layout engine and stage (C7a/C7b)**, glossary, watermark regions,
 job queue, import, CBZ/PDF packaging, the web debug tool (5 views), synthetic Korean test pages (X1). About 2 500 tests, ruff and pyright clean, all passing on Windows in ~1 minute. **OCR (C4a)**, **LaMa (C6b)** and **export (C7c)** are merged too; **the first real end-to-end run happened on 2026-09-19 (hand-driven, synthetic Korean chapter `KoreanDemo`)**: detect → ocr → `translate` (translategemma-12b, gemma4-12b, gemma4-31b-cloud; 15/15 regions, 0 missing, 41 s) → `judge` (14 judged, 4.6 s; fixed translategemma's "Jena" for 저너석, kept "hyung", consistent across repeated lines) → `inpaint --lama` → `typeset` → `export` (0.7 s) gives correctly lettered English pages with the Korean removed, including free text on gradients (LaMa). Not handled yet: sound effects (the detector finds no SFX), real Korean raws (A1).
-**Running builder:** **R1** (`omniscan run`, three passes, queue integration); after it: an end-to-end golden test on synthetic Korean pages, then tuning on real Korean raws (question A1 still open — everything real so far is English Pepper&Carrot).
+**Running builders:** **E1** (end-to-end golden GPU test on synthetic Korean pages with a fake LLM), **Q1/Q2** (mutation reviews of slicer/ingest and filter/glossary/importer, using the new `scripts/mutate.py` harness); after them: live judge check, story memory (C5c), then tuning on real Korean raws (question A1 still open — everything real so far is English Pepper&Carrot).
 
 ## What works today (CLI)
 `doctor`, `import`, `ingest`, `slice`, **`detect`**, `filter run|restore`, `glossary list|export|import`, `watermark add|list|remove`, `translate` (candidate runs; needs `ocr.json`), **`judge`** (`final.json`; needs `ocr.json` + runs), **`inpaint`** (flat fill; needs `ocr.json`), **`typeset`** (`layout.json`; needs `ocr.json`, `final.json`, `inpaint.json`),
-`pack` (CBZ/PDF), `serve` (+ `npm run dev` in `webui/`), `queue add|list|run|pause|resume|cancel|retry|clear`. Also working: **`ocr`**, **`export`**, `inpaint --lama`. Stubs (exit 2): `acquire run reference` (`run` is being built). Web views: Slicer, OCR (reads `ocr.json`), Translation, Reader, Filtered.
-Run everything with `uv run ...` from `V:\OmniScan`. Until R1 lands, drive the stages by hand: `ocr` (runs ingest/slice/detect first), `translate`, `judge`, `inpaint --lama`, `typeset`, `export`. The KoreanDemo chapter (`scripts/make_korean_chapter.py --series KoreanDemo`) is in `data/library/`.
+`pack` (CBZ/PDF), `serve` (+ `npm run dev` in `webui/`), `queue add|list|run|pause|resume|cancel|retry|clear`. Also working: **`ocr`**, **`export`**, `inpaint --lama`. Stubs (exit 2): `acquire reference`. **`run`** takes a series from raw chapters to exported English slices: `omniscan run KoreanDemo` (flags `-c`, `-s`, `--no-lama`, `--force`). Web views: Slicer, OCR (reads `ocr.json`), Translation, Reader, Filtered.
+Run everything with `uv run ...` from `V:\OmniScan`. The single commands still work for one stage at a time. The KoreanDemo chapter (`scripts/make_korean_chapter.py --series KoreanDemo`) is in `data/library/`.
 
 ## Evidence gathered (all reproducible; details in `docs/benchmarks/`)
 - **Windows native works** (`windows-native.md`): AMD's `win_amd64` ROCm wheels run on the RX 9070 XT; GPU selection via `omniscan.gpu.device.resolve_device` (the iGPU is `cuda:0` and crashes, the 9070 XT is `cuda:1`; call `torch.cuda.set_device` before MIOpen work).
@@ -25,7 +25,7 @@ Run everything with `uv run ...` from `V:\OmniScan`. Until R1 lands, drive the s
 - **Builders on Windows:** `scripts/omni_builder.py` (default 3 concurrent slots since 2026-09-19, `PYTHONPATH` pinned to the worktree) runs `claude` against the local Ollama with `glm-5.3-flash:cloud`.
 
 ## Next, in priority order
-The ordered queue, card states and review tiers are in **`docs/NEXT.md`**. In short: review/merge **R1** (running) → E2E golden test → live judge check on the real Ollama (needs free request slots) → C5c (story memory + glossary proposals) → web views for the new stages →
+The ordered queue, card states and review tiers are in **`docs/NEXT.md`**. In short: E2E golden test (E1, running) → live judge check on the real Ollama (needs free request slots) → C5c (story memory + glossary proposals) → web views for the new stages →
 real Korean raws (A1) for tuning detection thresholds, OCR and typeset sizes → hybrid codec / portability (P1/P2) / desktop shell (M13) later.
 
 ## Waiting on you (the user)
