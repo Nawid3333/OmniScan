@@ -232,6 +232,33 @@ class GlossaryEntry(Model):
     count: int = 0
 
 
+# ---------------------------------------------------------------- inpainting
+
+InpaintMethod = Literal["flat", "lama", "none"]
+
+
+class InpaintItem(Model):
+    """One cleaned patch of the strip: where it sits and how its pixels were produced.
+
+    The pixels themselves live in `patches.npz` next to `inpaint.json`: key `"<region_id>.pixels"` is a uint8 array
+    [h, w, 3] (the region's crop of the strip with the text removed) and `"<region_id>.mask"` a bool array [h, w]
+    (True where text was removed); both have exactly the size of `box`. Export replaces only the masked pixels.
+    """
+
+    region_id: str
+    box: BBox  # patch rectangle in strip space
+    method: InpaintMethod  # "flat" = uniform fill, "lama" = model inpainting, "none" = nothing to clean
+    fill: RGB | None = None  # the flat fill colour (method "flat"), else None
+    needs_lama: bool = False  # flat fill could not clean this region; a LaMa pass should redo it
+    mask_px: int = 0  # number of masked pixels
+
+
+class InpaintArtifact(Artifact):
+    """Written by `inpaint` as inpaint.json (+ patches.npz); read by typeset (fill colour) and export (patches)."""
+
+    items: list[InpaintItem]
+
+
 # ---------------------------------------------------------------- typesetting
 
 FontRole = Literal["dialogue", "thought", "shout", "narration", "free", "sfx"]

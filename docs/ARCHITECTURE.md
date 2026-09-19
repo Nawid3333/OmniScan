@@ -29,6 +29,7 @@ to the common strip width. Integers, half-open ranges `[x0, x1)`, `[y0, y1)`. A 
 | `ocr.json` | `RegionsArtifact` (text filled) | ocr |
 | `translations/<run_id>.json` | `CandidateRun` | each translation run |
 | `final.json` | `FinalArtifact` | judge |
+| `inpaint.json` + `patches.npz` | `InpaintArtifact` + npz (cleaned crops and masks per region) | inpaint |
 | `layout.json` | `LayoutArtifact` | typeset |
 | `manifest.json` | `Manifest` of `StageRecord`s | stage runner |
 Save/load only through `Artifact.save()` (atomic tmp+rename) and `Model.load(path)`.
@@ -63,3 +64,15 @@ host buffers + `non_blocking=True` for transfers (measured: pinned H2D 49 GB/s v
 `get_config()` merges defaults → `config/default.toml` → `~/.config/omniscan/config.toml` → env
 `OMNISCAN_<SECTION>__<KEY>`. Secrets (`OLLAMA_API_KEY`, `EXTRACTPICS_API_KEY`, `OMNISCAN_RELAY_CLIENT_TOKEN`) come only
 from env or `~/.config/omniscan/secrets.env` via `get_secrets()`; never log them.
+
+## Render pass (inpaint → typeset → export)
+Stage outputs stay JSON / `.npz`; the pixels of the final chapter are produced only by `export`, which decodes the strip once and edits it in place.
+- **inpaint** (`gpu_group` for LaMa later; v1 is flat fill): inputs `ocr.json` (+ `ingest.json`, `slices.json`, raw images); writes `inpaint.json` (`InpaintArtifact`) and
+  `patches.npz` with two arrays per region that had text lines: `"<region_id>.pixels"` (uint8 `[h,w,3]`, the strip crop with the text removed) and `"<region_id>.mask"` (bool `[h,w]`),
+  both exactly the size of `InpaintItem.box`. Regions whose flat fill failed are marked `needs_lama=True` (a later pass overwrites them).
+- **typeset** (no GPU): inputs `ocr.json`, `final.json`, `inpaint.json`; for every region with a final English text it computes the target box (inscribed rectangle of the bubble
+  polygon, or the padded text box for free text), fits the text with `typeset/fit.py` and writes `layout.json` (`LayoutArtifact`). Text colour is black on light fills and white on dark ones
+  (decided from `InpaintItem.fill` luminance unless the region carries `text_color`).
+- **export** (`gpu_group` none, uses the codec's device): inputs all of the above + `slices.json`, raw images; decodes the strip on the GPU (`load_strip`), replaces the **masked**
+  pixels of every patch, rasterises every `LayoutItem` into a small RGBA patch (glyphs are drawn with FreeType/PIL on the CPU — the one unavoidable CPU step, question F9 — and
+  composited on the GPU), cuts the strip into the non-filtered slices and encodes them to `output_root/<Series>/<Chapter>/0001.jpg …`. Unmasked pixels of the raw pages are never touched.

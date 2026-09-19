@@ -8,6 +8,8 @@ from omniscan.core.schemas import (
     BBox,
     FinalArtifact,
     FinalLine,
+    InpaintArtifact,
+    InpaintItem,
     OcrLine,
     Region,
     RegionsArtifact,
@@ -64,3 +66,23 @@ def test_regions_and_final_roundtrip(tmp_path: Path) -> None:
     )
     final.save(tmp_path / "final.json")
     assert FinalArtifact.load(tmp_path / "final.json").lines[0].decision == "pick"
+
+
+def test_inpaint_roundtrip_and_strictness(tmp_path: Path) -> None:
+    item = InpaintItem(
+        region_id="r0001",
+        box=BBox(x0=10, y0=20, x1=110, y1=80),
+        method="flat",
+        fill=(255, 255, 255),
+        mask_px=1234,
+    )
+    art = InpaintArtifact(
+        items=[item, InpaintItem(region_id="r0002", box=BBox(x0=0, y0=0, x1=5, y1=5), method="none")]
+    )
+    path = tmp_path / "inpaint.json"
+    art.save(path)
+    loaded = InpaintArtifact.load(path)
+    assert loaded == art
+    assert loaded.items[1].fill is None and loaded.items[1].needs_lama is False
+    with pytest.raises(ValidationError):
+        InpaintItem(region_id="r0003", box=BBox(x0=0, y0=0, x1=1, y1=1), method="magic")  # type: ignore[arg-type]
