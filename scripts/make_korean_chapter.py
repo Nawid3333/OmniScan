@@ -5,6 +5,7 @@
 
 Pages: 800x1400 webtoon pages with Korean speech bubbles, free-standing text and SFX, deterministic
 per seed. `--truth-out` additionally writes one `RegionsArtifact` JSON object per page into a list.
+`--scan-artifacts` degrades every page like a scan (blur, noise, halftone, skew, JPEG).
 """
 
 from __future__ import annotations
@@ -14,18 +15,21 @@ import json
 import sys
 from pathlib import Path
 
+from PIL import Image
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:  # direct script run: make omniscan/ and tests/ importable
     sys.path.insert(0, str(_REPO_ROOT))
 
-from tests.fixtures.korean_pages import KoreanPage, make_korean_page, to_regions_artifact  # noqa: E402
+from tests.fixtures.korean_pages import make_korean_page, to_regions_artifact  # noqa: E402
+from tests.fixtures.scan_artifacts import degrade  # noqa: E402
 
 from omniscan.core.config import get_config  # noqa: E402
 
 
-def write_page(page: KoreanPage, path: Path) -> None:
+def write_page(image: Image.Image, path: Path) -> None:
     """Save one page as quality-92 JPEG."""
-    page.image.save(path, format="JPEG", quality=92)
+    image.save(path, format="JPEG", quality=92)
 
 
 def main() -> None:
@@ -45,6 +49,28 @@ def main() -> None:
         default=None,
         help="write one RegionsArtifact JSON object per page (a list) to this file",
     )
+    parser.add_argument(
+        "--scan-artifacts",
+        action="store_true",
+        help="degrade every page like a scan (blur, noise, halftone, skew, JPEG) before writing it;"
+        " --truth-out is unchanged and still describes the clean page (rotation makes it approximate)",
+    )
+    parser.add_argument(
+        "--jpeg-quality",
+        type=int,
+        default=60,
+        help="JPEG quality of the scan degradation (with --scan-artifacts)",
+    )
+    parser.add_argument(
+        "--noise", type=float, default=4.0, help="Gaussian noise sigma of the scan degradation"
+    )
+    parser.add_argument(
+        "--blur", type=float, default=0.6, help="Gaussian blur radius in px of the scan degradation"
+    )
+    parser.add_argument("--halftone", action="store_true", help="add a halftone dot screen")
+    parser.add_argument(
+        "--rotate", type=float, default=0.0, help="page skew in degrees of the scan degradation"
+    )
     args = parser.parse_args()
 
     library_root = args.library_root or get_config().paths.library_root
@@ -54,7 +80,18 @@ def main() -> None:
     truths = []
     for i in range(1, args.pages + 1):
         page = make_korean_page(args.seed + i, n_bubbles=4, n_free=1, n_sfx=1 if i % 2 == 1 else 0)
-        write_page(page, chapter_dir / f"{i:03d}.jpg")
+        image: Image.Image = page.image
+        if args.scan_artifacts:
+            image = degrade(
+                image,
+                seed=args.seed + i,
+                blur_px=args.blur,
+                noise_sigma=args.noise,
+                halftone=args.halftone,
+                rotate_deg=args.rotate,
+                jpeg_quality=args.jpeg_quality,
+            )
+        write_page(image, chapter_dir / f"{i:03d}.jpg")
         truths.append(to_regions_artifact(page))
         print(f"wrote page {i:03d}.jpg with {len(page.regions)} regions to {chapter_dir}")
 
