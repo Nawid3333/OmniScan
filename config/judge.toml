@@ -1,0 +1,16 @@
+# Judge configuration for `omniscan judge`. Override per machine in ~/.config/omniscan/judge.toml —
+# a key there overrides the same key here. The judge model is asked only about regions where the
+# candidate runs disagree or a locked glossary term is violated; `always_judge = true` asks it about
+# every region that has at least two distinct candidates. `prefer` lists candidate run ids (the
+# translation profiles) in priority order; unlisted runs are tried alphabetically after them.
+
+[judge]
+model = "gemma4:31b-cloud"
+endpoint = "local"
+think = false
+temperature = 0.2
+chunk_regions = 20
+max_repair_rounds = 1
+agree_threshold = 0.9
+always_judge = false
+prefer = ["gemma4-31b-cloud", "gemma4-12b-local", "translategemma-12b-local"]

@@ -2,8 +2,8 @@
 
 Cloud models ignore Ollama's `format` JSON schema: they wrap the JSON in a ```json fence, put prose
 around or before it, or answer with two JSON objects. The extractor tries plain JSON, fenced blocks
-and finally raw-decodes every `{` left to right, and only accepts an object whose "translations" is
-a list.
+and finally raw-decodes every `{` left to right, and only accepts an object whose top-level key is a
+list — `extract_list(content, key)` for any key, `extract_translations` for "translations".
 """
 
 from __future__ import annotations
@@ -26,8 +26,8 @@ class ParseResult:
     missing: list[str]  # expected ids without a usable text, in `expected_ids` order
 
 
-def extract_translations(content: str) -> list[Any] | None:
-    """The first `translations` list found in `content` (plain JSON, fenced blocks, then raw decode)."""
+def extract_list(content: str, key: str) -> list[Any] | None:
+    """The first `key` list found in `content` (plain JSON, fenced blocks, then raw decode)."""
     attempts: list[Any] = []
     with contextlib.suppress(json.JSONDecodeError):
         attempts.append(json.loads(content.strip()))
@@ -45,9 +45,14 @@ def extract_translations(content: str) -> list[Any] | None:
                 attempt = json.loads(attempt)
             except json.JSONDecodeError:
                 continue
-        if isinstance(attempt, dict) and isinstance(attempt.get("translations"), list):
-            return attempt["translations"]
+        if isinstance(attempt, dict) and isinstance(attempt.get(key), list):
+            return attempt[key]
     return None
+
+
+def extract_translations(content: str) -> list[Any] | None:
+    """The first `translations` list found in `content` (plain JSON, fenced blocks, then raw decode)."""
+    return extract_list(content, "translations")
 
 
 def parse_translations(content: str, expected_ids: Sequence[str]) -> ParseResult:

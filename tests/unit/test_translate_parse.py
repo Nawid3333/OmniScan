@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from omniscan.translate.parse import extract_translations, parse_translations
+from omniscan.translate.parse import extract_list, extract_translations, parse_translations
 
 IDS = ["r0001", "r0002", "r0003"]
 
@@ -100,3 +100,40 @@ def test_extract_non_qualifying_json(content: str) -> None:
 
 def test_extract_empty_translations_list_is_still_a_list() -> None:
     assert extract_translations('{"translations": []}') == []
+
+
+def test_extract_list_plain_json() -> None:
+    assert extract_list(PLAIN, "translations") == [
+        {"id": "r0001", "text": " Hello "},
+        {"id": "r0002", "text": "Hi"},
+    ]
+
+
+def test_extract_list_fenced_and_prose() -> None:
+    fenced = f"```json\n{PLAIN}\n```"
+    prose = f"Sure! Here you go:\n\n{PLAIN}\n\nHope that helps."
+    expected = extract_list(PLAIN, "translations")
+    assert extract_list(fenced, "translations") == expected
+    assert extract_list(prose, "translations") == expected
+
+
+def test_extract_list_second_object_with_a_list_value_wins() -> None:
+    content = 'Preamble {"translations": "no"} mid {"translations":[{"id":"r0001","text":"A"}]}'
+    assert extract_list(content, "translations") == [{"id": "r0001", "text": "A"}]
+
+
+def test_extract_list_wrong_key_returns_none() -> None:
+    assert extract_list(PLAIN, "judgements") is None
+
+
+def test_extract_list_non_list_value_returns_none() -> None:
+    assert extract_list('{"translations": {"id": "r0001"}}', "translations") is None
+
+
+def test_extract_list_garbage_returns_none() -> None:
+    assert extract_list("no json at all", "translations") is None
+
+
+def test_extract_translations_equals_extract_list_of_translations() -> None:
+    for content in (PLAIN, f"```json\n{PLAIN}\n```", "total garbage", '{"translations": 1}'):
+        assert extract_translations(content) == extract_list(content, "translations")

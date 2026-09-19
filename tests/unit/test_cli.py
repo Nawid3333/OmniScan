@@ -18,7 +18,6 @@ STUB_COMMANDS = (
     "filter",
     "ocr",
     "glossary",
-    "judge",
     "inpaint",
     "typeset",
     "export",

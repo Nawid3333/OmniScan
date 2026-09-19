@@ -36,7 +36,6 @@ STATUS_STYLES = {"OK": "green", "WARN": "yellow", "FAIL": "red"}
 _STUB_COMMANDS = (
     "acquire",
     "ocr",
-    "judge",
     "inpaint",
     "typeset",
     "export",
@@ -360,9 +359,69 @@ def _glossary_entries(sp: SeriesPaths) -> list[GlossaryEntry]:
 app.command("translate")(cmd_translate)
 
 
-def cmd_judge(series: Annotated[str | None, typer.Argument()] = None) -> None:
-    """Not implemented yet."""
-    _stub("judge", series)
+def cmd_judge(
+    series: Annotated[str, typer.Argument()],
+    chapter: Annotated[
+        list[str] | None,
+        typer.Option("--chapter", "-c", help="Chapter folder name; repeatable. Default: all."),
+    ] = None,
+    run: Annotated[
+        list[str] | None,
+        typer.Option("--run", "-r", help="Candidate run id to judge; repeatable. Default: every run."),
+    ] = None,
+    force: Annotated[bool, typer.Option("--force", help="Re-run even if final.json already exists.")] = False,
+) -> None:
+    """Judge candidate translation runs into final.json (one final line per region)."""
+    from omniscan.translate.judge_chapter import judge_chapter
+    from omniscan.translate.judge_config import default_judge_paths, load_judge_config
+
+    cfg = get_config()
+    sp = SeriesPaths.from_config(cfg, series)
+    chapters = chapter or sp.chapters()
+    if not chapters:
+        typer.echo(f"judge: no chapters found for series {series!r}", err=True)
+        raise typer.Exit(2)
+    try:
+        judge_cfg = load_judge_config(default_judge_paths())
+    except ValueError as exc:
+        typer.echo(f"judge: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    entries = _glossary_entries(sp)
+    failed = 0
+    with OllamaClient(cfg.ollama, get_secrets()) as client:
+        for chap in chapters:
+            paths = sp.chapter(chap)
+            try:
+                status, _artifact, stats = judge_chapter(
+                    client, paths, judge_cfg, entries, run_ids=run, force=force
+                )
+            except FileNotFoundError as exc:
+                typer.echo(f"{series}/{chap}: {exc}", err=True)
+                failed += 1
+                continue
+            except ValueError as exc:
+                typer.echo(f"judge: {exc}", err=True)
+                raise typer.Exit(2) from exc
+            except OllamaRateLimitError:
+                typer.echo("judge: Ollama rate limit reached — re-run later", err=True)
+                raise typer.Exit(3) from None
+            except OllamaError as exc:
+                typer.echo(f"judge: {exc}", err=True)
+                failed += 1
+                continue
+            if status == "done" and stats is not None:
+                typer.echo(
+                    f"{series}/{chap}: done ({stats.regions} regions, {stats.judged} judged, "
+                    f"{stats.auto_picked} auto, {stats.untranslated} untranslated, "
+                    f"{stats.violations_left} violations left, {stats.seconds:.1f}s)"
+                )
+            else:
+                typer.echo(f"{series}/{chap}: skipped")
+    if failed:
+        raise typer.Exit(1)
+
+
+app.command("judge")(cmd_judge)
 
 
 def cmd_inpaint(series: Annotated[str | None, typer.Argument()] = None) -> None:

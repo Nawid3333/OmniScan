@@ -84,7 +84,7 @@ OMNISCAN_RELAY_CLIENT_TOKEN=...
 
 ## Commands
 
-Stubs (`acquire`, `ocr`, `judge`, `inpaint`, `typeset`, `export`, `run`,
+Stubs (`acquire`, `ocr`, `inpaint`, `typeset`, `export`, `run`,
 `reference`) are registered but not usable; each prints `not implemented yet` and exits 2. Every other
 command below is fully working. The examples assume you generated the demo chapter with
 `uv run python scripts/make_demo_chapter.py`.
@@ -292,6 +292,36 @@ invocation resumes; a finished run deletes it. Exit 2 for unknown profiles or ch
 ```bash
 uv run omniscan translate DemoSeries
 uv run omniscan translate DemoSeries --profile gemma4-12b-local --chapter "Chapter 1" --force
+```
+
+### `omniscan judge`
+
+Turn a chapter's candidate translation runs into one final English line per translatable region,
+written to `work_root/<series>/<chapter>/final.json`. Needs `ocr.json` and at least one run under
+`translations/` — until the OCR stage lands there is nothing to judge.
+
+| Argument/option | Meaning |
+|---|---|
+| `series` | required |
+| `--chapter`, `-c <str>` | chapter folder name; repeatable. Default: all |
+| `--run`, `-r <str>` | candidate run id to judge; repeatable. Default: every run |
+| `--force` | re-run even if `final.json` already exists |
+
+Judge settings live in `config/judge.toml`, overridden by `~/.config/omniscan/judge.toml` (a later
+file overrides only the keys it sets): the judge model and endpoint, `prefer` (runs to favour when
+candidates agree, in order), `chunk_regions` (regions per request), `agree_threshold`,
+`always_judge`, `max_repair_rounds` and `temperature`. To save tokens the judge model is asked only
+about regions where the candidates disagree or a locked glossary term is broken; everywhere else the
+best candidate is picked deterministically, preferring the `prefer` runs. An answer that still
+breaks a locked term gets one repair round; whatever the model fails to resolve falls back to the
+first clean candidate and is flagged `judge_failed` (plus `glossary_violation` when a locked term is
+still missing), so `final.json` is always complete. Chapters without `ocr.json` or without runs fail
+that chapter but the rest still run (exit 1). Exit 2 for no chapters, an unknown `--run` or an
+invalid judge config; an Ollama rate limit stops everything immediately with exit 3.
+
+```bash
+uv run omniscan judge DemoSeries
+uv run omniscan judge DemoSeries --chapter "Chapter 1" --run gemma4-31b-cloud --force
 ```
 
 ### `omniscan watermark add`
