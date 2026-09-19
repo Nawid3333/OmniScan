@@ -63,3 +63,9 @@ Notes on a few deterministic points the card calls out, verified by the tests:
   accepted rectangle is always centred on the bubble centre (per the card), which for very lopsided
   bubbles can leave usable area unused; the card explicitly lists per-line width adaptation as out
   of scope, so this is just a flag for the director.
+## Review addendum (director)
+Mutation check, 25 mutants over `fit.py` and `fonts.py` (`<=`→`<` in both wrap comparisons and the height test, dropped `too_wide` in both places,
+dropped `max(1, …)`, skipped `min_px`, validation bounds, dropped overflow flag, no centring on either axis, stroke/align/font-name passthrough,
+inscribed-box margin sign / fallback scale / minimum scale / collinearity tolerance / outline-counts-inside / ray direction / fewer edge samples,
+font size validation, cache disabled): **all 25 killed**. Answer to the question: centring on the bubble centre is intended for v1; C7c (polygon
+fitting) will use per-line widths.
