@@ -75,7 +75,8 @@ def parse_episodes(spec: str) -> list[int]:
 def episode_folders() -> dict[int, str]:
     """Episode number -> source folder name (e.g. 6 -> 'ep06_The-Potion-Contest')."""
     listing = (fetch(f"{BASE}/") or b"").decode("utf-8", "replace")
-    return {int(m.group(1)): m.group(0) for m in re.finditer(r'ep(\d+)_[^/"]+', listing)}
+    # only the hrefs: the visible link text of long folder names is truncated by the directory listing
+    return {int(m.group(2)): m.group(1) for m in re.finditer(r'href="(ep(\d+)_[^/"]+)/"', listing)}
 
 
 def fetch_episode(
