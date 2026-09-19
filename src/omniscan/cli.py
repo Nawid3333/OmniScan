@@ -459,11 +459,22 @@ def cmd_inpaint(
         typer.Option("--chapter", "-c", help="Chapter folder name; repeatable. Default: all."),
     ] = None,
     force: Annotated[bool, typer.Option("--force", help="Re-run even if up to date.")] = False,
+    lama: Annotated[
+        bool,
+        typer.Option(
+            "--lama", help="Also clean regions on textured art with LaMa (downloads 205 MB on first use)."
+        ),
+    ] = False,
 ) -> None:
     """Clean OCR regions' text out of the strip with flat fills (inpaint.json + patches.npz)."""
     from omniscan.inpaint.stage import InpaintStage
 
-    _run_stages("inpaint", [InpaintStage()], series, chapter, force)
+    stages: list[Any] = [InpaintStage()]
+    if lama:
+        from omniscan.inpaint.lama_stage import LamaStage
+
+        stages.append(LamaStage())
+    _run_stages("inpaint", stages, series, chapter, force)
 
 
 app.command("inpaint")(cmd_inpaint)

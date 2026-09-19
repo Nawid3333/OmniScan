@@ -15,6 +15,7 @@ from omniscan.core.config import Config
 from omniscan.gpu.vram import VramManager
 
 VISION_GROUP = "vision"
+INPAINT_GROUP = "inpaint"
 
 
 def build_vram_manager(cfg: Config) -> VramManager:
@@ -32,6 +33,14 @@ def build_vram_manager(cfg: Config) -> VramManager:
             "recognizer": LineRecognizer.load(cfg.ocr, device),
         }
 
+    def load_inpaint(device: torch.device) -> dict[str, Any]:
+        from omniscan.inpaint.lama import (
+            LamaInpainter,
+        )  # deferred: importing this module must not download weights
+
+        return {"lama": LamaInpainter.load(cfg.inpaint, cfg.paths.models_dir, device)}
+
     manager = VramManager(cfg.gpu.device, cfg.gpu.vram_budget_gib, ollama_url=cfg.ollama.local_url)
     manager.register(VISION_GROUP, load_vision, est_gib=3.0)
+    manager.register(INPAINT_GROUP, load_inpaint, est_gib=2.0)
     return manager

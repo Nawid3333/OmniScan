@@ -23,6 +23,8 @@ OmniScan keeps three roots (see `[paths]` in [Configuration](#configuration)):
 | `work_root/<Series>/<Chapter N>/layout.json` | `omniscan typeset` | per-region font, size, wrapped lines, box and colour |
 | `work_root/<Series>/<Chapter N>/ocr.json` | `omniscan ocr` | the regions with their text lines, text and confidence |
 | `work_root/<Series>/<Chapter N>/export.json` | `omniscan export` | the written slices: quality, subsampling, file list |
+| `work_root/<Series>/<Chapter N>/inpaint_lama.json` | `omniscan inpaint --lama` | LaMa clean record for the regions the flat fill could not clean |
+| `work_root/<Series>/<Chapter N>/patches_lama.npz` | `omniscan inpaint --lama` | LaMa-cleaned crops and masks (export applies them after `patches.npz`) |
 | `work_root/<Series>/<Chapter N>/filter.json` | `omniscan filter run` / `restore` | promo-filter decisions |
 | `work_root/<Series>/<Chapter N>/manifest.json` | the stage runner | per-stage status, inputs and config hashes |
 | `work_root/<Series>/<Chapter N>/converted/` | `omniscan ingest` | JPEG cache for raws that were not JPEG |
@@ -53,7 +55,7 @@ Every key in `config/default.toml`:
 | `paths.work_root` | where artifacts and per-series dbs live | yes |
 | `paths.output_root` | where final English chapters live | yes |
 | `paths.promo_examples` | where promo-filter example images live | yes (`filter run`) |
-| `paths.models_dir` | local cache for model weights | no consumer yet |
+| `paths.models_dir` | local cache for model weights | yes (LaMa weights for `omniscan inpaint --lama`) |
 | `gpu.device` | torch device: `auto` (default: strongest discrete GPU, else Apple MPS, else CPU), `cpu`, `mps`, `cuda:N` | yes (a named GPU that is unreachable falls back to CPU) |
 | `gpu.vram_budget_gib` | VRAM budget in GiB | yes (the comic detector loads inside this budget) |
 | `gpu.codec` | `auto` / `rocjpeg` / `hybrid` / `turbo` | only `auto`/`turbo` work — both run the CPU `turbo` codec; `rocjpeg`/`hybrid` are not implemented yet |
@@ -104,6 +106,12 @@ Every key in `config/default.toml`:
 | `ocr.lang` | language code recorded on every OCR'd region | yes |
 | `export.jpeg_quality` | JPEG quality of the exported slices | yes (`omniscan export`) |
 | `export.subsampling` | chroma subsampling of the exported slices: `444`, `422` or `420` | yes (`omniscan export`) |
+| `inpaint.lama_url` | where the LaMa TorchScript weights are downloaded from | yes (`omniscan inpaint --lama`) |
+| `inpaint.lama_sha256` | expected sha256 of the LaMa weights, checked after every download | yes (`omniscan inpaint --lama`) |
+| `inpaint.lama_file` | file name of the weights inside `<models_dir>/lama/` | yes (`omniscan inpaint --lama`) |
+| `inpaint.lama_window` | one fixed window side in px (every new window shape costs a 10–25 s warm-up) | yes (`omniscan inpaint --lama`) |
+| `inpaint.lama_dilate_px` | extra growth of the flat-fill mask for LaMa, in px | yes (`omniscan inpaint --lama`) |
+| `inpaint.lama_context_px` | a region needs at least this much context inside the window on every side, else it is skipped | yes (`omniscan inpaint --lama`) |
 | `ollama.local_url` | local Ollama base URL | yes (`doctor`) |
 | `ollama.cloud_url` | Ollama cloud base URL | yes (`doctor`) |
 | `ollama.request_timeout_s` | per-request timeout | used by the LLM client module (no pipeline stage yet) |
@@ -249,25 +257,36 @@ uv run omniscan ocr DemoSeries
 
 ### `omniscan inpaint`
 
-Remove the source text from every OCR region with a flat fill and record the result (`inpaint.json`
-+ `patches.npz`). For every region with text lines a mask covers its text; where the surroundings of
-the text are one flat colour (a white or dark bubble interior) the masked pixels are replaced by
-exactly that colour. Regions on textured art cannot be cleaned this way — they are recorded with a
-`needs_lama` flag for a later model-based pass, and SFX regions always are. The pixels themselves
-stay out of the JSON: `patches.npz` holds one cleaned crop plus its mask per region, and the later
-export stage applies them. Like `translate`, this needs `ocr.json`, which no stage produces yet.
+Remove the source text from every OCR region and record the result (`inpaint.json` + `patches.npz`).
+For every region with text lines a mask covers its text; where the surroundings of the text are one
+flat colour (a white or dark bubble interior) the masked pixels are replaced by exactly that colour.
+Regions on textured art cannot be cleaned this way — they are recorded with a `needs_lama` flag, and
+SFX regions always are.
+
+With `--lama` a second stage (`inpaint_lama`) cleans exactly those regions with the LaMa model
+(TorchScript `big-lama.pt`, Apache-2.0): for every such region a fixed 512×512 window of the strip
+around it is inpainted on the GPU in fp32 and stored as a patch in `patches_lama.npz` (+
+`inpaint_lama.json`); export applies `patches.npz` first and `patches_lama.npz` after it. The weights
+(205 MB) are downloaded from `inpaint.lama_url` into `paths.models_dir/lama/` on first use and their
+sha256 is checked; regions wider or taller than
+`inpaint.lama_window - 2 * inpaint.lama_context_px` are skipped. The pixels themselves stay out of
+the JSON: the `.npz` files hold one cleaned crop plus its mask per region, and the later export stage
+applies them. Like `translate`, this needs `ocr.json`, which no stage produces yet.
 
 | Argument/option | Meaning |
 |---|---|
 | `series` | series name (required) |
 | `--chapter`, `-c <str>` | chapter folder name; repeatable. Default: all |
 | `--force` | re-run even if up to date |
+| `--lama` | Also clean regions on textured art with LaMa (downloads 205 MB on first use) |
 
 Reads `ingest.json`, `slices.json`, `ocr.json` and the raw images; writes `inpaint.json` and
-`patches.npz` in the chapter work dir. Exit codes as for `ingest`.
+`patches.npz` — with `--lama` also `inpaint_lama.json` and `patches_lama.npz` — in the chapter work
+dir. Exit codes as for `ingest`.
 
 ```bash
 uv run omniscan inpaint DemoSeries
+uv run omniscan inpaint DemoSeries --lama
 ```
 
 ### `omniscan export`

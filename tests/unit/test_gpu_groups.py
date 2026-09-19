@@ -16,7 +16,7 @@ from typer.testing import CliRunner
 import omniscan.cli
 from omniscan.cli import app
 from omniscan.core.config import Config, GpuConfig, OllamaConfig, PathsConfig
-from omniscan.core.schemas import RegionsArtifact
+from omniscan.core.schemas import BBox, OcrLine, Region, RegionsArtifact, Slice, SlicesArtifact
 from omniscan.detect.model import Detector, RawDet
 from omniscan.ocr.lines import LineBox
 from omniscan.ocr.model import LineDetector, LineRecognizer
@@ -160,6 +160,29 @@ def test_import_groups_does_not_import_transformers() -> None:
     assert subprocess.run([sys.executable, "-c", code]).returncode == 0
 
 
+def test_build_vram_manager_registers_inpaint(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from omniscan.gpu.groups import INPAINT_GROUP, VISION_GROUP, build_vram_manager
+    from omniscan.inpaint.lama import LamaInpainter
+
+    fake_lama, fake_detector = object(), object()
+    seen: dict[str, Any] = {}
+
+    def fake_load(cfg: Any, models_dir: Path, device: torch.device) -> object:
+        seen["call"] = (cfg, models_dir, device)
+        return fake_lama
+
+    monkeypatch.setattr(LamaInpainter, "load", fake_load)
+    monkeypatch.setattr(Detector, "load", lambda cfg_, device: fake_detector)
+
+    cfg = cli_cfg(tmp_path)
+    manager = build_vram_manager(cfg)
+    assert manager.acquire(INPAINT_GROUP) == {"lama": fake_lama}
+    assert seen["call"] == (cfg.inpaint, cfg.paths.models_dir, manager.device)
+    manager.release()
+    assert manager.acquire(VISION_GROUP) == {"detector": fake_detector}  # the vision group stays
+    manager.release()
+
+
 # ---------------------------------------------------------------- CLI (tests 19, 20)
 
 
@@ -281,3 +304,89 @@ def test_detect_is_no_longer_a_stub() -> None:
 def test_ocr_is_no_longer_a_stub() -> None:
     result = runner.invoke(app, ["ocr", "NoSuchSeries"])
     assert "not implemented yet" not in result.output
+
+
+# ---------------------------------------------------------------- CLI inpaint --lama (test 13)
+
+
+class FakeLamaInpainter:
+    """No-op inpainting: outside its mask the model output is the input anyway."""
+
+    def inpaint(self, image: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        return image
+
+
+class FakeLamaManager:
+    """The GpuScheduler/release surface _run_stages needs, for the inpaint group."""
+
+    def __init__(self) -> None:
+        self.released = False
+
+    def acquire(self, group: str) -> dict[str, Any]:
+        assert group == "inpaint"
+        return {"lama": FakeLamaInpainter()}
+
+    def reset_peak(self) -> None:
+        pass
+
+    def peak_gib(self) -> float:
+        return 0.0
+
+    def release(self) -> None:
+        self.released = True
+
+
+def write_slices_and_ocr(cfg: Config, chapter: str) -> None:
+    """A slices.json for the 400x900 strip and one SFX region (always needs_lama)."""
+    work = cfg.paths.work_root / SERIES / chapter
+    work.mkdir(parents=True, exist_ok=True)
+    SlicesArtifact(
+        strip_width=400,
+        strip_height=900,
+        bands=[],
+        slices=[Slice(index=0, y0=0, y1=900)],
+    ).save(work / "slices.json")
+    box = BBox(x0=10, y0=10, x1=90, y1=90)
+    RegionsArtifact(
+        regions=[
+            Region(
+                id="r0001",
+                slice_index=0,
+                kind="sfx",
+                bbox=box,
+                lines=[OcrLine(bbox=box, text="쾅!", score=0.9, engine="test")],
+            )
+        ]
+    ).save(work / "ocr.json")
+
+
+def test_cli_inpaint_lama_flag(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    cfg = cli_cfg(tmp_path)
+    raw_jpegs(cfg, "Chapter 1")
+    write_slices_and_ocr(cfg, "Chapter 1")
+    monkeypatch.setattr(omniscan.cli, "get_config", lambda: cfg)
+
+    def explode(cfg_: Config) -> None:
+        raise AssertionError("inpaint without --lama must not build a VRAM manager")
+
+    monkeypatch.setattr("omniscan.gpu.groups.build_vram_manager", explode)
+    result = runner.invoke(app, ["ingest", SERIES])
+    assert result.exit_code == 0
+    result = runner.invoke(app, ["inpaint", SERIES])
+    assert result.exit_code == 0
+    assert f"{SERIES}/Chapter 1 inpaint: done" in result.output
+    assert "inpaint_lama" not in result.output  # without --lama only the flat stage runs
+
+    manager = FakeLamaManager()
+    monkeypatch.setattr("omniscan.gpu.groups.build_vram_manager", lambda cfg_: manager)
+    result = runner.invoke(app, ["inpaint", SERIES, "--force", "--lama"])
+    assert result.exit_code == 0
+    assert f"{SERIES}/Chapter 1 inpaint: done" in result.output
+    assert f"{SERIES}/Chapter 1 inpaint_lama: done" in result.output  # one line per stage per chapter
+    assert manager.released  # the models left VRAM when the command ended
+    work = cfg.paths.work_root / SERIES / "Chapter 1"
+    assert (work / "inpaint_lama.json").is_file() and (work / "patches_lama.npz").is_file()
+
+    again = runner.invoke(app, ["inpaint", SERIES, "--lama"])
+    assert again.exit_code == 0
+    assert again.output.count("skipped") == 2  # both stages are up to date

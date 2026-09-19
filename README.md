@@ -20,7 +20,7 @@ packaged into CBZ/PDF.
 | ocr | working — `omniscan ocr` (ocr.json) |
 | translate | working — `omniscan translate` (candidate runs only; needs ocr.json from `omniscan ocr`) |
 | judge | working — `omniscan judge` (final.json) |
-| inpaint | working — `omniscan inpaint` (flat fill only; needs ocr.json) |
+| inpaint | working — `omniscan inpaint` (flat fill; `--lama` for textured art) |
 | typeset | working — `omniscan typeset` (layout.json; needs ocr.json, final.json, inpaint.json) |
 | export | working — `omniscan export` (needs inpaint.json, patches.npz, layout.json) |
 | pack | working — `omniscan pack` (CBZ/PDF of finished output) |
