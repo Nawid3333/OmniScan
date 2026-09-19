@@ -305,6 +305,112 @@ def cmd_ocr(
 app.command("ocr")(cmd_ocr)
 
 
+def _ratio(value: float | None, numerator: int, denominator: int, suffix: str = "") -> str:
+    """'0.874 (76/87)' for a score, 'n/a (0/0)' when the denominator was zero."""
+    text = f"{value:.3f}" if value is not None else "n/a"
+    return f"{text} ({numerator}/{denominator}{suffix})"
+
+
+def _num(value: float | None) -> str:
+    """A metric with three decimals, or 'n/a' when it could not be computed."""
+    return f"{value:.3f}" if value is not None else "n/a"
+
+
+def _short(text: str) -> str:
+    return text[:40]
+
+
+def _box_entry(result: Any) -> str:
+    return (
+        f"p{result.page:02d} [{result.bbox.x0},{result.bbox.y0},{result.bbox.x1},{result.bbox.y1}]"
+        f' "{_short(result.text)}"'
+    )
+
+
+def _eval_block(report: Any, with_translation: bool) -> str:
+    """The human-readable score block of one chapter."""
+    lines = [
+        f"{report.series}/{report.chapter}: {report.pages} pages, {report.truth_boxes} truth boxes "
+        f"({report.ignored_boxes} ignored, {report.dropped_boxes} dropped)",
+        f"  {'detection':<13}recall {_ratio(report.recall, report.detected_boxes, report.truth_boxes)}"
+        f"  precision {_ratio(report.precision, report.assigned_regions, report.regions, ' regions')}",
+        f"  {'OCR':<13}CER macro {_num(report.cer_macro)}  micro {_num(report.cer_micro)}"
+        f"  ({report.cer_boxes} boxes)",
+    ]
+    if with_translation:
+        lines.append(
+            f"  {'translation':<13}chrF {_num(report.chrf_mean)} ({report.chrf_pages} pages)"
+        )
+    if report.missed:
+        lines.append("  missed: " + " … ".join(_box_entry(r) for r in report.missed[:5]))
+    if report.worst_cer:
+        lines.append(
+            "  worst CER: "
+            + " … ".join(f'p{r.page:02d} {r.cer:.2f} "{_short(r.text)}"' for r in report.worst_cer[:5])
+        )
+    return "\n".join(lines)
+
+
+def cmd_eval(
+    series: Annotated[str, typer.Argument()],
+    chapter: Annotated[
+        list[str] | None,
+        typer.Option("--chapter", "-c", help="Chapter folder name; repeatable. Default: all."),
+    ] = None,
+    lang: Annotated[
+        str, typer.Option("--lang", help="Ground-truth language code (kr, cn, ja...).")
+    ] = "kr",
+    as_json: Annotated[
+        bool, typer.Option("--json", help="One JSON object per chapter instead of the text block.")
+    ] = False,
+) -> None:
+    """Score chapters' ocr.json/final.json against ground-truth SVG text layers (eval.json)."""
+    from omniscan.core.schemas import FinalArtifact, RegionsArtifact
+    from omniscan.eval.score import score_chapter, to_json_lines
+    from omniscan.eval.truth import load_english_pages, load_truth
+
+    cfg = get_config()
+    sp = SeriesPaths.from_config(cfg, series)
+    chapters = chapter or sp.chapters()
+    if not chapters:
+        typer.echo(f"eval: no chapters found for series {series!r}", err=True)
+        raise typer.Exit(2)
+    missing = 0
+    for chap in chapters:
+        work = sp.chapter(chap).work_dir
+        ocr_path = work / "ocr.json"
+        if not ocr_path.is_file():
+            typer.echo(f"eval: {chap}: ocr.json missing — run the ocr stage first", err=True)
+            missing += 1
+            continue
+        if not (work / "ingest.json").is_file():
+            typer.echo(f"eval: {chap}: ingest.json missing — run the ingest stage first", err=True)
+            missing += 1
+            continue
+        check_dir = cfg.paths.library_root.parent / "translated-check" / series / chap / "truth"
+        truth_dir = check_dir / lang
+        if not truth_dir.is_dir():
+            typer.echo(f"eval: {chap}: no ground truth at {truth_dir}", err=True)
+            raise typer.Exit(2)
+        ingest = IngestArtifact.load(work / "ingest.json")
+        regions = RegionsArtifact.load(ocr_path)
+        final_path = work / "final.json"
+        final = FinalArtifact.load(final_path) if final_path.is_file() else None
+        truth, stats = load_truth(check_dir, lang, ingest)
+        english = load_english_pages(check_dir, ingest)
+        report = score_chapter(series, chap, ingest, regions, final, truth, english, stats)
+        (work / "eval.json").write_text(report.to_json(), encoding="utf-8")
+        if as_json:
+            typer.echo(to_json_lines([report]))
+        else:
+            typer.echo(_eval_block(report, with_translation=final is not None))
+    if missing:
+        raise typer.Exit(1)
+
+
+app.command("eval")(cmd_eval)
+
+
 def cmd_translate(
     series: Annotated[str, typer.Argument()],
     chapter: Annotated[
