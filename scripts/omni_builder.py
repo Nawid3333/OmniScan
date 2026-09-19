@@ -2,8 +2,8 @@
 
 Model policy (2026-09-18): glm-5.3-flash:cloud is the default and should be used for essentially every card — flash
 is meant to be used MORE than glm-5.3:cloud because the full model is noticeably more token-costly. Use `--model glm`
-only for a card that is genuinely hard/large or that flash already failed on. Up to 2 builders may run at once (Ollama
-Pro allows 3 concurrent requests; 1 is kept free for tests/doctor). Avoid deepseek/kimi as builders: one deepseek run
+only for a card that is genuinely hard/large or that flash already failed on. Up to 3 builders may run at once (the owner allowed 3 on 2026-09-19; Ollama
+Pro allows 3 concurrent requests, so with 3 builders running nothing is left for a live Ollama check: use OMNI_SLOTS=2 then). Avoid deepseek/kimi as builders: one deepseek run
 burned ~5M input tokens / $26.77 over 71 turns and hit the account's session limit before finishing a card.
 
 Usage (from the repo root):
@@ -12,7 +12,7 @@ Usage (from the repo root):
   uv run python scripts/omni_builder.py smoke [--model MODEL]                             # 3-turn connectivity test
 Model aliases: flash (default) | glm | deepseek | kimi — or any full Ollama model name.
 
-Env overrides: OMNI_REPO (default: this repo), OMNI_WT (default: "<repo>-wt" next to it), OMNI_SLOTS (default 2),
+Env overrides: OMNI_REPO (default: this repo), OMNI_WT (default: "<repo>-wt" next to it), OMNI_SLOTS (default 3),
                OLLAMA_URL (default http://localhost:11434), CLAUDE_BIN (path to the claude executable).
 The card text is passed to `claude -p` on stdin (a multi-KB prompt through a Windows .cmd shim would be mangled).
 """
@@ -33,7 +33,7 @@ from typing import IO, NoReturn
 
 REPO = Path(os.environ.get("OMNI_REPO", Path(__file__).resolve().parents[1])).resolve()
 WT_ROOT = Path(os.environ.get("OMNI_WT", REPO.parent / f"{REPO.name}-wt"))
-SLOTS = int(os.environ.get("OMNI_SLOTS", "2"))
+SLOTS = int(os.environ.get("OMNI_SLOTS", "3"))
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 LOG_DIR = REPO / ".builder" / "logs"
 LOCK_DIR = Path(tempfile.gettempdir()) / "omni-builder"

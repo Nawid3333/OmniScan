@@ -17,7 +17,7 @@ OmniScan: raw KO/ZH/JA manhwa/manga → industry-quality English (slicer, promo 
 - Split: GLM builder (Claude Code CLI on Ollama, glm-5.3-flash:cloud) builds B-cards via `uv run python scripts/omni_builder.py`; Claude builds C-cards (codec, OCR, translation logic, inpaint, typeset, SFX) and reviews everything. See [[omniscan-env]], [[user-gpu-first]].
 
 **Why:** user wants Claude to delegate volume work to the cheaper Ollama agent and only do heavy parts + review.
-**How to apply:** write unambiguous task cards (GLM wastes tokens on vague specs), review diffs before merge. Builder policy is **flash-first, up to 2 agents at once** — see [[user-gpu-first]].
+**How to apply:** write unambiguous task cards (GLM wastes tokens on vague specs), review diffs before merge. Builder policy is **flash-first, up to 3 agents at once (owner, 2026-09-19)** — see [[user-gpu-first]].
 
 **RESUME HERE:** read `docs/CHECKPOINT.md` in the repo first (current state, evidence, the half-built detection card = branch `C3`, next
 steps, the card→review→merge loop and its Windows gotchas). Then `docs/OPEN_QUESTIONS.md` (see [[feedback-open-questions]]) — ask 2–3 at natural pauses.

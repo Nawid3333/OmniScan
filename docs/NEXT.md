@@ -17,7 +17,7 @@ with `omniscan run`) on synthetic Korean pages, then quality upgrades once real 
 1. C3 (detection) and C5a (post-check/agreement) merged; detections looked at on real pages in the OCR view.
 2. The Korean synthetic-page fixture card (X1) and the OCR card (C4a) written; ideally both running.
 3. Render-pass contracts (`inpaint.json`, `patches.npz`, export inputs) written into `ARCHITECTURE.md`/`core/schemas.py`.
-4. `docs/CHECKPOINT.md` updated; at most 2 builders running at the end, both with a card that is ready to review next time.
+4. `docs/CHECKPOINT.md` updated; at most 3 builders running at the end, each with a card that is ready to review next time.
 
 ## Start of session (director, ~15 min)
 ```powershell
@@ -38,14 +38,14 @@ Then start the two ready builders as **tracked background calls** (never sleep-p
 `uv run python scripts/omni_builder.py run C3` and `uv run python scripts/omni_builder.py run C5a` (both `flash`, default).
 
 ## Builder queue
-Model is `flash` unless stated. At most 2 running. Review tier: **T1** = run checks + one mutation check; **T2** = read the diff of
+Model is `flash` unless stated. At most 3 running. Review tier: **T1** = run checks + one mutation check; **T2** = read the diff of
 the logic + the report's Questions; **T3** = also a live GPU/real-page check by the director.
 
 | Wave | ID | What | Depends on | Tier | State |
 |---|---|---|---|---|---|
-| 1 | **C3** | Detection stage: RT-DETR wrapper, `vision` VRAM group, `DetectStage`, `omniscan detect`, tests for the WIP tiles/post-processing | — | T3 | **card written** (`docs/tasks/C3.md`) |
-| 1 | **C5a** | Pure logic: locked-term post-check + candidate agreement (`translate/postcheck.py`, `agree.py`) | — | T1 | **card written** (`docs/tasks/C5a.md`) |
-| 1b | **X1** | Synthetic **Korean** page generator (`tests/fixtures/korean_pages.py`): bubbles + free text + SFX on noisy/gradient art, rendered with the bundled OFL font, returns the image *and* ground truth (`RegionsArtifact`, per-line boxes, text mask). Foundation for OCR, inpaint and typeset tests | fonts in `fonts/` (director, D1) | T2 | write card |
+| 1 | **C3** | Detection stage: RT-DETR wrapper, `vision` VRAM group, `DetectStage`, `omniscan detect`, tests for the WIP tiles/post-processing | — | T3 | **running** since 2026-09-19 (`docs/tasks/C3.md`) |
+| 1 | **C5a** | Pure logic: locked-term post-check + candidate agreement (`translate/postcheck.py`, `agree.py`) | — | T1 | **running** since 2026-09-19 (`docs/tasks/C5a.md`) |
+| 1b | **X1** | Synthetic **Korean** page generator (`tests/fixtures/korean_pages.py`): bubbles + free text + SFX on noisy/gradient art, rendered with the bundled OFL font, returns the image *and* ground truth (`RegionsArtifact`, per-line boxes, text mask). Foundation for OCR, inpaint and typeset tests | fonts in `fonts/` (director, D1) | T2 | **running** since 2026-09-19 (`docs/tasks/X1.md`) |
 | 1b | **C5b** | The judge: `translate/judge.py` + `omniscan judge` → `final.json`. Runs only on lines where candidates disagree (`agreement < 0.9`) or a locked term is violated (question D5 default); repair round for violations; tolerant parsing as in B29; director supplies the prompt text | C5a | T2 (+ live check on 3 profiles) | write card |
 | 2 | **C4a** | OCR core: per-region crop → PP-OCR **detection** (safetensors) → line boxes → Korean **recognition** → `ocr.json`; `OcrStage` (adds the recognition/detection models to the `vision` group), `omniscan ocr` | C3, X1, OCR probe (D2) | T3 | write card after the probe |
 | 2 | **C5c** | Story memory (per-chapter summaries in `series.db`) + glossary proposals from OCR text (LLM extraction → `proposed` entries) | C5b patterns | T2 | write card |
@@ -98,7 +98,7 @@ the logic + the report's Questions; **T3** = also a live GPU/real-page check by 
 
 ## Rules for the builders this week (from `HANDOFF.md`, restated)
 - `flash` for everything; escalate a card to `--model glm` only after flash failed twice on it; never deepseek/kimi except `kimi`
-  for a TypeScript view where flash struggles and only after asking. ≤ 2 running, and **stop starting builders when a live
+  for a TypeScript view where flash struggles and only after asking. ≤ 3 running (owner allowed 3 on 2026-09-19), and **use OMNI_SLOTS=2 or stop starting builders when a live
   cloud-translation check is planned** (they share the Ollama Cloud limit); a hard 429 means wait, then `resume`.
 - Cards follow `docs/tasks/_TEMPLATE.md` and the B29/C3 level of detail: exact signatures, golden values computed from real code
   (run them before writing the card), numbered acceptance tests, file allowlist, stop-and-ask. A vague card costs more tokens than it saves.

@@ -30,7 +30,7 @@ Repo: `V:\OmniScan` (Windows 11 native) · GitHub `Nawid3333/OmniScan` (private)
   task cards, reviews and merges, and does the genuinely hard parts (codec, detection/OCR, translation logic, inpaint, typeset).
   *Builders* are Claude Code CLI sessions running on Ollama Cloud models (`scripts/omni_builder.py`) that implement well-specified cards.
 - **Builder policy.** `glm-5.3-flash:cloud` for essentially every card (the owner wants it used *more* than `glm-5.3:cloud`, which costs
-  more tokens); `--model glm` only for genuinely hard cards or after flash failed. At most **2 builders at once**. **Never** deepseek/kimi
+  more tokens); `--model glm` only for genuinely hard cards or after flash failed. At most **3 builders at once** (raised from 2 by the owner on 2026-09-19; use `OMNI_SLOTS=2` when a live Ollama check is planned, because the Pro plan allows only 3 concurrent requests). **Never** deepseek/kimi
   as builders — one deepseek run burned ~5M tokens / $26.77 and hit the Ollama Cloud session limit (hard 429, rolling ~5 h window).
 - **Keep the builders busy and notice completions yourself.** Launch a builder as a tracked background tool call and review the moment it
   finishes; the owner complained about having to remind the director. Never poll with sleeps.

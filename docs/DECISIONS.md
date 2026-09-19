@@ -48,7 +48,7 @@ group. "Status": **firm** (measured or explicitly decided), **default** (my choi
 ## Tooling and process
 | Decision | Why / evidence | Status |
 |---|---|---|
-| **Director + builders**: the director writes exact cards and reviews; Claude Code CLI on Ollama (`glm-5.3-flash:cloud`) builds; ≤ 2 concurrent; no deepseek/kimi | Token cost and the $26.77 incident; flash landed every well-specified card cleanly | firm |
+| **Director + builders**: the director writes exact cards and reviews; Claude Code CLI on Ollama (`glm-5.3-flash:cloud`) builds; ≤ 3 concurrent (owner, 2026-09-19); no deepseek/kimi | Token cost and the $26.77 incident; flash landed every well-specified card cleanly | firm |
 | Builder cards: exact interfaces, numbered acceptance tests, file allowlist, "stop and ask" | Vague specs made builders burn tokens; their questions caught real spec bugs | firm |
 | Web debug tool: FastAPI + Svelte/TypeScript, read-only except the Filtered view's Restore (JSON content-type required as a CSRF guard) | Reviewable stage output for scanlation groups; a cross-site page can send `text/plain` POSTs without a preflight | firm |
 | Job queue: SQLite, single worker per queue, notifications never fail a job | Simple, resumable; multi-worker not needed yet | firm |

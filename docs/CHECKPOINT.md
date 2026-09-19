@@ -74,7 +74,7 @@ they differ — e.g. C3 is now a builder card, `docs/tasks/C3.md`, instead of a 
    C7 typeset, export.
 3. **Cross-platform groundwork still open:** a Windows (and macOS) CPU CI job, a first PyInstaller/Nuitka smoke build on
    Windows, a hardware-detection screen for the future app (GPU list, chosen device, self-test).
-4. Unblocked builder cards (flash, up to 2 at a time): **acquire plumbing** (sources.toml, resumable downloader, non-chapter
+4. Unblocked builder cards (flash, up to 3 at a time): **acquire plumbing** (sources.toml, resumable downloader, non-chapter
    image filter, DRM-domain warning — everything except the extract.pics request/response shapes), duplicate-chapter
    detection, `doctor` check that translation-profile models exist, model pinning/integrity.
 
@@ -91,7 +91,7 @@ and record answers there. The most pressing ones:
 - **Builders:** `uv run python scripts/omni_builder.py run <ID>` from `V:\OmniScan` (default `glm-5.3-flash:cloud`;
   `--model glm` for glm-5.3 only when a card is genuinely hard; `resume <ID> <feedback-file>`; `smoke`). Worktrees go to
   `V:\OmniScan-wt\<ID>` with a junction to the shared `.venv`. Launch it as a background tool call so the completion
-  notification arrives; at most 2 at once. Needs Ollama running and the CLI (`npm install -g --allow-scripts=@anthropic-ai/claude-code
+  notification arrives; at most 3 at once (`OMNI_SLOTS=2` when a live Ollama check is planned). Needs Ollama running and the CLI (`npm install -g --allow-scripts=@anthropic-ai/claude-code
   @anthropic-ai/claude-code`; npm blocks the postinstall step otherwise). Do not use deepseek/kimi as builders (one run burned ~$27).
 - **Card → review → merge:** write `docs/tasks/<ID>.md` (exact interfaces, numbered acceptance tests, file allowlist,
   stop-and-ask rule), `ruff format` it and commit; after the builder finishes: in the worktree `git rebase main` (every card
