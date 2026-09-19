@@ -96,3 +96,9 @@ statuses and exits 0.
    no-op daemon-side). The CLI avoids the re-pull by checking `/api/tags` first. If U2b or the GUI
    wants `download_model` itself to skip, it needs an `ollama_names` parameter — not added now to
    keep the card's signature.
+## Review addendum (director)
+- Rebased onto `main` (no conflicts); ruff, pyright, the four models test files and `test_docs.py` are green; the `.gitignore` change (`/models/` anchored) is accepted (it was hiding the new package).
+- **Catalog check:** all four `zip`/`file` entries match the published `models-v1/manifest.json` (sha256, bytes, file name).
+- **Live check on the real machine** (`OMNISCAN_PATHS__MODELS_DIR` pointing at an empty temp folder): `omniscan models list` shows the three required models as missing ("262 MB to download") and the three local Ollama models as installed via the real daemon; `models download ocr-rec-korean-ppocrv5-mobile` tried the private mirror (anonymous 404), fell back to Hugging Face and printed `installed from upstream`; `.installed.json` records the pinned revision; `models verify` says `installed`. So the fallback works end to end.
+- **Answers to the questions:** (1) the `required` flag is fine for now. (2) A folder without `.installed.json` counts as corrupt — U2b decides how to adopt existing Hugging Face cache copies. (3) Accepted; the GUI/U2b will use the CLI path (which checks `/api/tags` first).
+- Follow-ups: **U2b** (the pipeline loads models from `models_dir`, so the download is actually used) and a mutation review of `models/*` (Q4).
