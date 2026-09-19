@@ -13,12 +13,12 @@ MUTANTS: list[tuple[str, str, str, str]] = [
     (
         "src/omniscan/acquire/drm.py",
         '        if host == domain or host.endswith("." + domain):\n            return name',
-        '        if host == domain or host.endswith(domain):\n            return name',
+        "        if host == domain or host.endswith(domain):\n            return name",
         "suffix match drops the dot",
     ),
     (
         "src/omniscan/acquire/drm.py",
-        '    host = _host(url)\n    if host is None:\n        return None\n    for domain, name in DRM_PLATFORMS.items():',
+        "    host = _host(url)\n    if host is None:\n        return None\n    for domain, name in DRM_PLATFORMS.items():",
         "    host = _host(url)\n    for domain, name in DRM_PLATFORMS.items():",
         "drop None-host guard",
     ),

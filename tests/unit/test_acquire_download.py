@@ -607,3 +607,114 @@ def test_earlier_rejections_are_fetched_when_the_filters_are_switched_off(tmp_pa
         files=["001.jpg", "002.jpg", "003.jpg", "004.png"], downloaded=2, skipped=2, rejected=0
     )
     assert json.loads((dest / "acquire.json").read_text(encoding="utf-8"))["rejected"] == []
+
+
+# --- gap tests from the Q3 mutation review ---
+
+
+def test_retries_zero_fails_on_the_first_transport_error(tmp_path: Path) -> None:
+    """With retries=0 a transport error fails on the first attempt without sleeping."""
+    urls = urls_for(1)
+    server = Server()
+    server.script(urls[0], httpx.ConnectError("refused"))
+    sleeps: list[float] = []
+
+    with pytest.raises(AcquireError, match="#1 network error: refused"):
+        download_chapter(
+            [ImageRef(url=urls[0])], tmp_path / "c", client=server.client(), retries=0, sleep=sleeps.append
+        )
+
+    assert len(server.requests) == 1
+    assert sleeps == []
+
+
+def test_unparsable_retry_after_falls_back_to_the_backoff(tmp_path: Path) -> None:
+    """A non-integer Retry-After header is ignored and the backoff schedule is used."""
+    urls = urls_for(1)
+    server = Server()
+    server.script(urls[0], (429, {"Retry-After": "later"}), noise_image("JPEG", seed=1))
+    sleeps: list[float] = []
+
+    result = download_chapter(
+        [ImageRef(url=urls[0])], tmp_path / "c", client=server.client(), sleep=sleeps.append
+    )
+
+    assert result.downloaded == 1
+    assert sleeps == [0.5]
+
+
+def test_default_retries_covers_three_5xx_responses(tmp_path: Path) -> None:
+    """The default retry budget survives three 5xx responses before succeeding."""
+    urls = urls_for(1)
+    server = Server()
+    server.script(urls[0], 500, 500, 500, noise_image("JPEG", seed=1))
+    sleeps: list[float] = []
+
+    result = download_chapter(
+        [ImageRef(url=urls[0])], tmp_path / "c", client=server.client(), sleep=sleeps.append
+    )
+
+    assert result.downloaded == 1
+    assert sleeps == [0.5, 1.0, 2.0]
+    assert len(server.requests) == 4
+
+
+def test_size_exactly_at_the_limit_is_kept(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Data of exactly MAX_IMAGE_BYTES passes the size check; only larger data fails."""
+    urls = urls_for(1)
+    data = noise_image("JPEG", seed=1)
+    server = Server()
+    server.script(urls[0], data)
+    monkeypatch.setattr(download_mod, "MAX_IMAGE_BYTES", len(data))
+
+    result = download_chapter(
+        [ImageRef(url=urls[0])], tmp_path / "c", client=server.client(), sleep=lambda _s: None
+    )
+
+    assert result.files == ["001.jpg"]
+    assert result.downloaded == 1
+
+
+def test_truncated_body_with_valid_header_is_undecodable(tmp_path: Path) -> None:
+    """A PNG with a valid IHDR but a cut-off body still fails to decode."""
+    urls = urls_for(1)
+    server = Server()
+    server.script(urls[0], noise_image("PNG", seed=1)[:200])  # inside the IDAT: header intact, body cut off
+
+    with pytest.raises(AcquireError, match="#1 not a supported image \\(undecodable\\)"):
+        download_chapter(
+            [ImageRef(url=urls[0])], tmp_path / "c", client=server.client(), sleep=lambda _s: None
+        )
+
+    manifest = json.loads((tmp_path / "c" / "acquire.json").read_text(encoding="utf-8"))
+    assert manifest == {"images": [], "rejected": []}
+
+
+def test_failure_detail_is_sorted_by_position(tmp_path: Path) -> None:
+    """The AcquireError detail lists failures in position order, not completion order."""
+    urls = urls_for(3)
+    server = Server()
+    server.script(urls[0], 500)  # four requests with the real backoff: finishes last
+    server.script(urls[1], noise_image("JPEG", seed=1))
+    server.script(urls[2], 404)
+
+    with pytest.raises(AcquireError) as excinfo:
+        download_chapter([ImageRef(url=url) for url in urls], tmp_path / "c", client=server.client())
+
+    assert str(excinfo.value) == "2 of 3 image(s) failed: #1 HTTP 500; #3 HTTP 404"
+
+
+def test_manifest_and_files_are_in_position_order_not_completion_order(tmp_path: Path) -> None:
+    """Position 1 is slow (two 5xx retries) but still sorts first in files and manifest."""
+    urls = urls_for(3)
+    payload = [noise_image("JPEG", seed=i) for i in (1, 2, 3)]
+    server = Server()
+    server.script(urls[0], 500, 500, payload[0])
+    server.script(urls[1], payload[1])
+    server.script(urls[2], payload[2])
+
+    result = download_chapter([ImageRef(url=url) for url in urls], tmp_path / "c", client=server.client())
+
+    assert result.files == ["001.jpg", "002.jpg", "003.jpg"]
+    manifest = json.loads((tmp_path / "c" / "acquire.json").read_text(encoding="utf-8"))
+    assert [entry["position"] for entry in manifest["images"]] == [1, 2, 3]
