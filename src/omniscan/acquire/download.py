@@ -120,7 +120,9 @@ def download_chapter(
                 if carried is not None and _file_matches(dest, carried):
                     images.append(dict(carried))
                     skipped += 1
-                elif key in old_rejected:
+                elif (
+                    apply_filters and key in old_rejected
+                ):  # with the filters off a rejected ref is fetched after all
                     rejected.append(dict(old_rejected[key]))
                     rejected_count += 1
                 else:

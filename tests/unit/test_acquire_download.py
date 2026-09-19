@@ -574,3 +574,36 @@ def test_nested_dest_is_created(tmp_path: Path) -> None:
 
     assert (dest / "001.jpg").exists()
     assert result.files == ["001.jpg"]
+
+
+def test_earlier_rejections_are_fetched_when_the_filters_are_switched_off(tmp_path: Path) -> None:
+    urls = [*urls_for(3), "https://cdn.example.org/ch1/logo.png"]
+    payload = [
+        noise_image("JPEG", seed=1),
+        noise_image("JPEG", seed=2, width=200, height=500),
+        noise_image("JPEG", seed=3),
+        noise_image("PNG", seed=4),
+    ]
+    dest = tmp_path / "c"
+    sleeps: list[float] = []
+    first = Server()
+    for url, data in zip(urls, payload, strict=True):
+        first.script(url, data)
+    download_chapter([ImageRef(url=url) for url in urls], dest, client=first.client(), sleep=sleeps.append)
+
+    second = Server()
+    for url, data in zip(urls, payload, strict=True):
+        second.script(url, data)
+    result = download_chapter(
+        [ImageRef(url=url) for url in urls],
+        dest,
+        client=second.client(),
+        apply_filters=False,
+        sleep=sleeps.append,
+    )
+
+    assert [str(r.url) for r in second.requests] == [urls[1], urls[3]]  # only the formerly rejected refs
+    assert result == DownloadResult(
+        files=["001.jpg", "002.jpg", "003.jpg", "004.png"], downloaded=2, skipped=2, rejected=0
+    )
+    assert json.loads((dest / "acquire.json").read_text(encoding="utf-8"))["rejected"] == []
