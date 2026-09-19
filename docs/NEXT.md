@@ -41,23 +41,24 @@ Then start the two ready builders as **tracked background calls** (never sleep-p
 Model is `flash` unless stated. At most 3 running. Review tier: **T1** = run checks + one mutation check; **T2** = read the diff of
 the logic + the report's Questions; **T3** = also a live GPU/real-page check by the director.
 
-| Wave | ID | What | Depends on | Tier | State |
+| Wave | ID | What | Depends on | Tier | State (updated 2026-09-19 evening) |
 |---|---|---|---|---|---|
-| 1 | **C3** | Detection stage: RT-DETR wrapper, `vision` VRAM group, `DetectStage`, `omniscan detect`, tests for the WIP tiles/post-processing | — | T3 | **running** since 2026-09-19 (`docs/tasks/C3.md`) |
-| 1 | **C5a** | Pure logic: locked-term post-check + candidate agreement (`translate/postcheck.py`, `agree.py`) | — | T1 | **running** since 2026-09-19 (`docs/tasks/C5a.md`) |
-| 1b | **X1** | Synthetic **Korean** page generator (`tests/fixtures/korean_pages.py`): bubbles + free text + SFX on noisy/gradient art, rendered with the bundled OFL font, returns the image *and* ground truth (`RegionsArtifact`, per-line boxes, text mask). Foundation for OCR, inpaint and typeset tests | fonts in `fonts/` (director, D1) | T2 | **running** since 2026-09-19 (`docs/tasks/X1.md`) |
-| 1b | **C5b** | The judge: `translate/judge.py` + `omniscan judge` → `final.json`. Runs only on lines where candidates disagree (`agreement < 0.9`) or a locked term is violated (question D5 default); repair round for violations; tolerant parsing as in B29; director supplies the prompt text | C5a | T2 (+ live check on 3 profiles) | **running** since 2026-09-19 (`docs/tasks/C5b.md`) |
-| 2 | **C4a** | OCR core: per-region crop → PP-OCR **detection** (safetensors) → line boxes → Korean **recognition** → `ocr.json`; `OcrStage` (adds the recognition/detection models to the `vision` group), `omniscan ocr` | C3, X1, OCR probe (D2) | T3 | **card written** (`docs/tasks/C4a.md`); launch after C3 + X1 merge |
-| 2 | **C5c** | Story memory (per-chapter summaries in `series.db`) + glossary proposals from OCR text (LLM extraction → `proposed` entries) | C5b patterns | T2 | write card |
-| 2 | **C6a** | Inpaint v1: text mask from OCR line boxes (dilated), flat fill for uniform bubble interiors (ring-colour + variance test), everything else flagged `needs_lama`; `InpaintStage` → `inpaint.json` + `patches.npz` | contracts (D3), X1, C4a | T2/T3 | **card written** (`docs/tasks/C6a.md`); needs X1 merged + `InpaintConfig` |
-| 2 | **C7a** | Typeset layout engine (pure): fit a line of English into a box — font-size search, greedy line breaking with PIL font metrics, alignment, overflow flag → `LayoutArtifact` | contracts (D3), X1 | T1/T2 | **running** since 2026-09-19 (`docs/tasks/C7a.md`) |
-| 3 | **C7b** | Renderer + `export` stage: glyph patches (PIL, stroke), composite on the GPU strip, cut into slices, encode, write `output/<Series>/<Chapter>/0001.jpg…` | C6a, C7a | T3 | — |
-| 3 | **R1** | `omniscan run`: stage order, VRAM group sequencing (vision → local Ollama → torch again), resumable, queue integration (B23's stage table) | C4a, C5b, C6a, C7b | T2 (director reviews the sequencing) | — |
-| 3 | **E2E** | Golden test: synthetic Korean chapter → full pipeline with fake LLM client → output images exist, text removed, English inside boxes | R1 | T1 | — |
-| 3 | **B11'** | Web views: raw \| mask \| clean slider and a layout overlay (Svelte/TS, `kimi` alias has vision if flash struggles) | C6a, C7a | T2 | — |
-| later | **C6b** | LaMa inpainting for `needs_lama` regions (after the LaMa probe, D4) | D4 | T3 | — |
+| 1 | **C3** | Detection stage, `vision` VRAM group, `omniscan detect` | — | T3 | ✔ **merged** (live check on Pepper&Carrot done; thresholds untuned until real Korean pages) |
+| 1 | **C5a** | Locked-term post-check + candidate agreement | — | T1 | ✔ merged |
+| 1 | **X1** | Synthetic Korean pages with ground truth (`tests/fixtures/korean_pages.py`) | fonts | T2 | ✔ merged |
+| 1 | **C7a** | Typeset layout engine (`typeset/fit.py`) | — | T1 | ✔ merged (25/25 mutants killed) |
+| 1b | **C5b** | Judge + `omniscan judge` | C5a | T2 | ✔ merged (23/23 mutants killed); **live check on real Ollama still to do** |
+| 2 | **C4a** | OCR stage: PP-OCRv5 line detection + Korean recognition → `ocr.json` | C3, X1 | T3 | **running** (`docs/tasks/C4a.md`) |
+| 2 | **C6a** | Inpaint v1: masks + flat fill → `inpaint.json` + `patches.npz` | X1, contracts | T2 | **running** (`docs/tasks/C6a.md`) |
+| 2 | **C7b** | Typeset stage → `layout.json` | C7a, contracts | T2 | **running** (`docs/tasks/C7b.md`) |
+| 3 | **C7c** | Glyph renderer (`typeset/render.py`) + GPU compositing + `export` stage → `output/<Series>/<Chapter>/0001.jpg…` + `export.json` | C6a, C7b | T3 | write card |
+| 3 | **C6b** | LaMa stage (`inpaint_lama`): fixed 512² windows, fp32, weights fetched with sha256 check → `patches_lama.npz` | C6a, `docs/benchmarks/lama-probe.md` | T3 | write card |
+| 3 | **R1** | `omniscan run`: stage order, VRAM group sequencing (vision → local Ollama → torch), resumable, queue `STAGE_TABLE` gets every stage | C4a, C6a, C7b, C7c | T2 (director reviews the sequencing) | — |
+| 3 | **E2E** | Golden test: synthetic Korean chapter → full pipeline with a fake LLM client → output images exist, text removed, English inside boxes | R1 | T1 | — |
+| 3 | **C5c** | Story memory (per-chapter summaries in `series.db`) + glossary proposals from OCR text | C5b patterns | T2 | write card |
+| 3 | **B11'** | Web views: raw \| mask \| clean slider and a layout overlay (Svelte/TS) | C6a, C7b | T2 | — |
 | later | **C4b/c** | PaddleOCR-VL second opinion; zh/ja model packs (config + tests) | C4a, real data | T3 | — |
-| later | **C7c** | Polygon fitting, font roles (dialogue/shout/thought/narration), colour matching | C7b | T3 | — |
+| later | **C7d** | Polygon fitting, font roles (dialogue/shout/thought/narration), colour matching | C7c | T3 | — |
 
 **Fillers** (well specified, no dependencies — use them whenever a slot would otherwise idle; each needs a short card):
 - **B31** duplicate/near-duplicate chapter detection (reuse the promo filter's dHash).
