@@ -98,7 +98,7 @@ def test_list_rejects_unknown_status(patched_cfg: Config) -> None:
 def test_queue_run_slices_a_chapter(patched_cfg: Config) -> None:
     write_slicables(patched_cfg)
 
-    result = runner.invoke(app, ["queue", "add", SERIES, "--stage", "slice"])
+    result = runner.invoke(app, ["queue", "add", SERIES, "--stage", "ingest", "--stage", "slice"])
     assert result.exit_code == 0
 
     result = runner.invoke(app, ["queue", "run"])
@@ -107,7 +107,7 @@ def test_queue_run_slices_a_chapter(patched_cfg: Config) -> None:
     assert "done=1 failed=0 retried=0" in result.output
     assert (patched_cfg.paths.work_root / SERIES / CHAPTER / "slices.json").is_file()
 
-    result = runner.invoke(app, ["queue", "add", SERIES, "--stage", "slice"])
+    result = runner.invoke(app, ["queue", "add", SERIES, "--stage", "ingest", "--stage", "slice"])
     assert result.exit_code == 0
     result = runner.invoke(app, ["queue", "run"])
     assert result.exit_code == 0  # the manifest makes the repeated ingest/slice a skipped
@@ -115,13 +115,21 @@ def test_queue_run_slices_a_chapter(patched_cfg: Config) -> None:
     assert "done=1 failed=0 retried=0" in result.output
 
 
-def test_queue_run_fails_permanent_stage(patched_cfg: Config) -> None:
+def test_queue_add_accepts_inpaint_lama(patched_cfg: Config) -> None:
+    result = runner.invoke(app, ["queue", "add", SERIES, "--stage", "inpaint_lama"])
+    assert result.exit_code == 0
+    assert "queued job 1: S stages=inpaint_lama" in result.output
+    result = runner.invoke(app, ["queue", "list"])
+    assert "inpaint_lama" in result.output
+
+
+def test_queue_run_fails_permanent_without_chapters(patched_cfg: Config) -> None:
     result = runner.invoke(app, ["queue", "add", SERIES, "--stage", "detect"])
     assert result.exit_code == 0
 
     result = runner.invoke(app, ["queue", "run"])
     assert result.exit_code == 1
-    assert "job 1 failed: stage 'detect' is not implemented yet" in result.output
+    assert "job 1 failed: no chapters found for series 'S'" in result.output
     assert "failed=1" in result.output
 
     result = runner.invoke(app, ["queue", "list"])
@@ -150,7 +158,7 @@ def test_pause_resume_cancel_round_trip(patched_cfg: Config) -> None:
 
 def test_cancel_of_a_done_job_fails(patched_cfg: Config) -> None:
     write_slicables(patched_cfg)
-    runner.invoke(app, ["queue", "add", SERIES, "--stage", "slice"])
+    runner.invoke(app, ["queue", "add", SERIES, "--stage", "ingest", "--stage", "slice"])
     assert runner.invoke(app, ["queue", "run"]).exit_code == 0
 
     result = runner.invoke(app, ["queue", "cancel", "1"])
@@ -166,7 +174,7 @@ def test_pause_unknown_job(patched_cfg: Config) -> None:
 
 def test_clear_removes_finished_jobs(patched_cfg: Config) -> None:
     write_slicables(patched_cfg)
-    runner.invoke(app, ["queue", "add", SERIES, "--stage", "slice"])
+    runner.invoke(app, ["queue", "add", SERIES, "--stage", "ingest", "--stage", "slice"])
     assert runner.invoke(app, ["queue", "run"]).exit_code == 0  # job 1 -> done
     runner.invoke(app, ["queue", "add", SERIES])
     runner.invoke(app, ["queue", "pause", "2"])
@@ -192,7 +200,7 @@ def test_webhook_is_created_with_the_given_url_and_receives_events(
     patched_cfg: Config, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     write_slicables(patched_cfg)
-    runner.invoke(app, ["queue", "add", SERIES, "--stage", "slice"])
+    runner.invoke(app, ["queue", "add", SERIES, "--stage", "ingest", "--stage", "slice"])
 
     created: list[str] = []
     events: list[str] = []

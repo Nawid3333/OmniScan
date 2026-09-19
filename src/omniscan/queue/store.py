@@ -23,6 +23,7 @@ KNOWN_STAGES: tuple[str, ...] = (
     "translate",
     "judge",
     "inpaint",
+    "inpaint_lama",
     "typeset",
     "export",
 )

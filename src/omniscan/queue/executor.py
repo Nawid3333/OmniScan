@@ -1,62 +1,56 @@
-"""Executor that runs a queued job's pipeline stages through the core stage runner."""
+"""Executor that runs a queued job's stages through the pipeline runner (one run_pipeline per job)."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Any
-
-from omniscan.core.config import Config
+from omniscan.core.config import Config, get_secrets
 from omniscan.core.paths import SeriesPaths
-from omniscan.core.stage import run_series
+from omniscan.llm.ollama import OllamaClient
+from omniscan.pipeline.runner import needs_gpu, run_pipeline
+from omniscan.pipeline.stages import PASS_OF, STAGE_ORDER
 from omniscan.queue.store import Job
 from omniscan.queue.worker import Executor, PermanentJobError
 
-
-def _ingest_stages() -> list[Any]:
-    from omniscan.ingest.stage import IngestStage
-
-    return [IngestStage()]
-
-
-def _slice_stages() -> list[Any]:
-    from omniscan.ingest.stage import IngestStage
-    from omniscan.slicer.stage import SliceStage
-
-    return [IngestStage(), SliceStage()]
-
-
-# Stage table: name -> factory building the stage list to run, mirroring the CLI. Stages are built per
-# executor call (not at import) so importing this module — and `omniscan --help` — stays fast.
-STAGE_TABLE: dict[str, Callable[[], list[Any]]] = {
-    "ingest": _ingest_stages,
-    "slice": _slice_stages,
-}
+# Kept importable for older callers: every stage name the executor can run. The pipeline's STAGE_ORDER
+# is the source of truth; the execution path below goes through run_pipeline.
+STAGE_TABLE: dict[str, str] = {name: name for name in STAGE_ORDER}
 
 
 def stage_executor(cfg: Config) -> Executor:
-    """Run a queued job's stages over its series via `run_series`; unimplemented stages never retry."""
+    """Run a queued job's stages over its series via run_pipeline; unknown stages never retry."""
 
     def _run(job: Job) -> None:
-        unknown = next((name for name in job.stages if name not in STAGE_TABLE), None)
+        unknown = next((name for name in job.stages if name not in STAGE_ORDER), None)
         if unknown is not None:
             raise PermanentJobError(f"stage {unknown!r} is not implemented yet")
         if job.chapters is None and not SeriesPaths.from_config(cfg, job.series).chapters():
             raise PermanentJobError(f"no chapters found for series {job.series!r}")
-        for name in job.stages:
-            results = run_series(
-                STAGE_TABLE[name](),
-                cfg,
-                job.series,
-                list(job.chapters) if job.chapters is not None else None,
-                force=job.force,
+        names = list(job.stages)
+        client = (
+            OllamaClient(cfg.ollama, get_secrets())
+            if any(PASS_OF[name] == "text" for name in names)
+            else None
+        )
+        gpu = None
+        try:
+            if needs_gpu(names, cfg, client):
+                from omniscan.gpu.groups import (
+                    build_vram_manager,  # deferred: importing this module must not pull torch
+                )
+
+                gpu = build_vram_manager(cfg)
+            result = run_pipeline(
+                cfg, job.series, job.chapters, stages=names, force=job.force, client=client, gpu=gpu
             )
-            failures = [
-                f"{chapter}/{outcome.stage}: {outcome.error}"
-                for chapter, outcomes in results.items()
-                for outcome in outcomes
-                if outcome.status == "failed"
-            ]
-            if failures:
-                raise RuntimeError("; ".join(failures))  # later stage names are not run
+        finally:
+            if gpu is not None:
+                gpu.release()  # the models leave VRAM when the job ends
+            if client is not None:
+                client.close()
+        if not result.ok:
+            if result.aborted is not None:
+                raise RuntimeError("Ollama rate limit reached")  # the worker retries under its attempt rules
+            raise RuntimeError(
+                "; ".join(f"{chapter}: {message}" for chapter, message in result.failed.items())
+            )
 
     return _run

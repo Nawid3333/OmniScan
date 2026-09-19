@@ -35,7 +35,6 @@ STATUS_STYLES = {"OK": "green", "WARN": "yellow", "FAIL": "red"}
 
 _STUB_COMMANDS = (
     "acquire",
-    "run",
     "reference",
 )
 
@@ -497,9 +496,79 @@ def cmd_export(
 app.command("export")(cmd_export)
 
 
-def cmd_run(series: Annotated[str | None, typer.Argument()] = None) -> None:
-    """Not implemented yet."""
-    _stub("run", series)
+def cmd_run(
+    series: Annotated[str, typer.Argument()],
+    chapter: Annotated[
+        list[str] | None,
+        typer.Option("--chapter", "-c", help="Chapter folder name; repeatable. Default: all."),
+    ] = None,
+    stage: Annotated[
+        list[str] | None,
+        typer.Option("--stage", "-s", help="Stage name; repeatable. Default: all ten stages."),
+    ] = None,
+    no_lama: Annotated[
+        bool, typer.Option("--no-lama", help="Skip the LaMa inpaint stage (inpaint_lama).")
+    ] = False,
+    force: Annotated[bool, typer.Option("--force", help="Re-run stages even if up to date.")] = False,
+) -> None:
+    """Take a series from raw chapters to exported English slices in three passes (vision, text, render)."""
+    from omniscan.core.stage import StageOutcome
+    from omniscan.pipeline.runner import needs_gpu, run_pipeline
+    from omniscan.pipeline.stages import PASS_OF, STAGE_ORDER
+
+    cfg = get_config()
+    if chapter is None and not SeriesPaths.from_config(cfg, series).chapters():
+        typer.echo(f"run: no chapters found for series {series!r}", err=True)
+        raise typer.Exit(2)
+    names = list(stage) if stage else list(STAGE_ORDER)
+    unknown = next((name for name in names if name not in STAGE_ORDER), None)
+    if unknown is not None:
+        typer.echo(f"run: unknown stage {unknown!r} (known: {', '.join(STAGE_ORDER)})", err=True)
+        raise typer.Exit(2)
+    client = (
+        OllamaClient(cfg.ollama, get_secrets()) if any(PASS_OF[name] == "text" for name in names) else None
+    )
+    gpu = None
+
+    def report(chapter: str, outcome: StageOutcome) -> None:
+        typer.echo(f"{series}/{chapter} {outcome.stage}: {outcome.status} ({outcome.seconds:.2f}s)")
+        if outcome.status == "failed":
+            typer.echo(f"    {outcome.error}")
+
+    try:
+        if needs_gpu(names, cfg, client):
+            from omniscan.gpu.groups import build_vram_manager
+
+            gpu = build_vram_manager(cfg)
+        result = run_pipeline(
+            cfg,
+            series,
+            chapter,
+            stages=names,
+            lama=not no_lama,
+            force=force,
+            client=client,
+            gpu=gpu,
+            report=report,
+        )
+    except ValueError as exc:
+        typer.echo(f"run: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    finally:
+        if gpu is not None:
+            gpu.release()  # the models leave VRAM when the command ends
+        if client is not None:
+            client.close()
+    if result.aborted is not None:
+        typer.echo("run: Ollama rate limit reached — re-run later", err=True)
+        raise typer.Exit(3) from None
+    failed = len(result.failed)
+    typer.echo(f"{len(result.outcomes) - failed} chapter(s) ok, {failed} failed")
+    if failed:
+        raise typer.Exit(1)
+
+
+app.command("run")(cmd_run)
 
 
 def cmd_serve(

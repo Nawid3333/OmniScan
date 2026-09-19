@@ -1,8 +1,7 @@
-"""Tests for the stage executor (card B23): run_series wiring, unknown stages, failed outcomes."""
+"""Tests for the stage executor (card R1): run_pipeline wiring, unknown stages, client/manager lifecycle."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -11,7 +10,7 @@ import pytest
 
 import omniscan.queue.executor as executor_module
 from omniscan.core.config import Config, GpuConfig, PathsConfig
-from omniscan.core.stage import Stage, StageOutcome, run_series
+from omniscan.pipeline.runner import PipelineResult, run_pipeline
 from omniscan.queue.executor import stage_executor
 from omniscan.queue.store import Job
 from omniscan.queue.worker import PermanentJobError
@@ -36,28 +35,40 @@ def cfg(tmp_path: Path) -> Config:
 
 @dataclass
 class Recorder:
-    """Monkeypatched run_series collecting its calls and returning scripted outcomes."""
+    """Monkeypatched run_pipeline collecting its calls and returning a scripted result."""
 
     calls: list[dict[str, Any]] = field(default_factory=list)
-    outcome: Callable[[list[Stage]], StageOutcome] = lambda stages: StageOutcome(stages[-1].name, "done")
+    result: PipelineResult = field(default_factory=PipelineResult)
 
 
-def recorder(monkeypatch: pytest.MonkeyPatch) -> Recorder:
-    record = Recorder()
+def recorder(monkeypatch: pytest.MonkeyPatch, result: PipelineResult | None = None) -> Recorder:
+    record = Recorder(result=result if result is not None else PipelineResult())
 
-    def fake_run_series(
-        stages: list[Stage],
+    def fake_run_pipeline(
         cfg: Config,
         series: str,
         chapters: list[str] | None,
-        **kwargs: bool,
-    ) -> dict[str, list[StageOutcome]]:
+        *,
+        stages: list[str] | None = None,
+        lama: bool = True,
+        force: bool = False,
+        client: Any = None,
+        gpu: Any = None,
+        report: Any = None,
+    ) -> PipelineResult:
         record.calls.append(
-            {"stages": stages, "series": series, "chapters": chapters, "force": kwargs.get("force", False)}
+            {
+                "series": series,
+                "chapters": chapters,
+                "stages": stages,
+                "force": force,
+                "client": client,
+                "gpu": gpu,
+            }
         )
-        return {chapter: [record.outcome(stages)] for chapter in (chapters or ["Chapter 1"])}
+        return record.result
 
-    monkeypatch.setattr(executor_module, "run_series", fake_run_series)
+    monkeypatch.setattr(executor_module, "run_pipeline", fake_run_pipeline)
     return record
 
 
@@ -86,51 +97,58 @@ def make_job(stages: tuple[str, ...], chapters: tuple[str, ...] | None = None, f
     )
 
 
-def test_slice_job_runs_ingest_then_slice(cfg: Config, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_slice_job_runs_only_the_slice_stage(cfg: Config, monkeypatch: pytest.MonkeyPatch) -> None:
     record = recorder(monkeypatch)
     stage_executor(cfg)(make_job(("slice",), chapters=("Chapter 1",), force=True))
 
     assert len(record.calls) == 1
     call = record.calls[0]
-    assert [stage.name for stage in call["stages"]] == ["ingest", "slice"]
+    assert call["stages"] == ["slice"]
     assert call["series"] == SERIES
-    assert call["chapters"] == ["Chapter 1"]
+    assert call["chapters"] == ("Chapter 1",)
     assert call["force"] is True
+    assert call["client"] is None
+    assert call["gpu"] is None
 
 
-def test_ingest_and_slice_run_as_two_calls(cfg: Config, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ingest_and_slice_run_in_one_pipeline_call(cfg: Config, monkeypatch: pytest.MonkeyPatch) -> None:
     make_chapter(cfg)
     record = recorder(monkeypatch)
     stage_executor(cfg)(make_job(("ingest", "slice")))
 
-    assert [stage.name for call in record.calls for stage in call["stages"]] == [
-        "ingest",
-        "ingest",
-        "slice",
-    ]
-    assert [call["chapters"] for call in record.calls] == [None, None]
+    assert len(record.calls) == 1
+    assert record.calls[0]["stages"] == ["ingest", "slice"]
+    assert record.calls[0]["chapters"] is None
 
 
 def test_unknown_stage_fails_permanently_before_running(cfg: Config, monkeypatch: pytest.MonkeyPatch) -> None:
     record = recorder(monkeypatch)
 
-    with pytest.raises(PermanentJobError, match="stage 'detect' is not implemented yet"):
-        stage_executor(cfg)(make_job(("slice", "detect")))
+    with pytest.raises(PermanentJobError, match="stage 'nope' is not implemented yet"):
+        stage_executor(cfg)(make_job(("slice", "nope")))
 
     assert record.calls == []  # nothing ran at all
 
 
-def test_failed_outcome_raises_and_skips_later_stages(cfg: Config, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_failed_chapter_raises_with_chapter_stage_and_error(
+    cfg: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
     make_chapter(cfg)
-    record = recorder(monkeypatch)
-    record.outcome = lambda stages: StageOutcome(stages[-1].name, "failed", error="ingest.json is missing")
+    failure = PipelineResult(failed={"Chapter 1": "slice: FileNotFoundError: ingest.json missing"})
+    recorder(monkeypatch, failure)
 
     with pytest.raises(RuntimeError) as excinfo:
-        stage_executor(cfg)(make_job(("slice", "ingest")))
+        stage_executor(cfg)(make_job(("slice",)))
 
-    assert "Chapter 1/slice" in str(excinfo.value)
-    assert "ingest.json is missing" in str(excinfo.value)
-    assert len(record.calls) == 1  # the later stage name ('ingest') was not run
+    assert "Chapter 1: slice: FileNotFoundError: ingest.json missing" in str(excinfo.value)
+
+
+def test_rate_limit_abort_raises_the_retryable_error(cfg: Config, monkeypatch: pytest.MonkeyPatch) -> None:
+    make_chapter(cfg)
+    recorder(monkeypatch, PipelineResult(aborted="rate limit"))
+
+    with pytest.raises(RuntimeError, match="Ollama rate limit reached"):
+        stage_executor(cfg)(make_job(("translate",), chapters=("Chapter 1",)))
 
 
 def test_no_chapters_found_is_permanent(cfg: Config, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -148,13 +166,94 @@ def test_named_chapters_skip_the_chapter_check(cfg: Config, monkeypatch: pytest.
     stage_executor(cfg)(make_job(("slice",), chapters=("Chapter 9",)))
 
     assert len(record.calls) == 1
-    assert record.calls[0]["chapters"] == ["Chapter 9"]
+    assert record.calls[0]["chapters"] == ("Chapter 9",)
 
 
-def test_stage_table_covers_the_known_running_stages() -> None:
-    assert set(executor_module.STAGE_TABLE) == {"ingest", "slice"}
+def test_stage_table_covers_all_ten_stages() -> None:
+    assert set(executor_module.STAGE_TABLE) == {
+        "ingest",
+        "slice",
+        "detect",
+        "ocr",
+        "translate",
+        "judge",
+        "inpaint",
+        "inpaint_lama",
+        "typeset",
+        "export",
+    }
 
 
-def test_run_series_is_the_module_level_import() -> None:
-    """Tests monkeypatch omniscan.queue.executor.run_series; the module must own that name."""
-    assert executor_module.run_series is run_series
+def test_run_pipeline_is_the_module_level_import() -> None:
+    """Tests monkeypatch omniscan.queue.executor.run_pipeline; the module must own that name."""
+    assert executor_module.run_pipeline is run_pipeline
+
+
+def test_text_stages_build_and_close_a_client(cfg: Config, monkeypatch: pytest.MonkeyPatch) -> None:
+    make_chapter(cfg)
+    record = recorder(monkeypatch)
+    built: list[Any] = []
+    closed: list[bool] = []
+
+    class FakeClient:
+        def __init__(self, ollama_cfg: Any, secrets: Any) -> None:
+            self.args = (ollama_cfg, secrets)
+            built.append(self)
+
+        def close(self) -> None:
+            closed.append(True)
+
+    monkeypatch.setattr(executor_module, "OllamaClient", FakeClient)
+    monkeypatch.setattr(executor_module, "get_secrets", lambda: "secrets")
+    stage_executor(cfg)(make_job(("translate",), chapters=("Chapter 1",)))
+
+    assert len(built) == 1
+    assert built[0].args == (cfg.ollama, "secrets")
+    assert closed == [True]
+    assert record.calls[0]["client"] is built[0]
+
+
+def test_vision_stages_build_no_client(cfg: Config, monkeypatch: pytest.MonkeyPatch) -> None:
+    make_chapter(cfg)
+    record = recorder(monkeypatch)
+    built: list[Any] = []
+
+    class FakeClient:
+        def __init__(self, *args: Any) -> None:
+            built.append(args)
+
+        def close(self) -> None:
+            raise AssertionError("no client to close")
+
+    monkeypatch.setattr(executor_module, "OllamaClient", FakeClient)
+    stage_executor(cfg)(make_job(("slice",), chapters=("Chapter 1",)))
+
+    assert built == []
+    assert record.calls[0]["client"] is None
+
+
+def test_gpu_jobs_build_and_release_a_vram_manager(cfg: Config, monkeypatch: pytest.MonkeyPatch) -> None:
+    make_chapter(cfg)
+    record = recorder(monkeypatch)
+    released: list[bool] = []
+
+    class FakeManager:
+        def release(self) -> None:
+            released.append(True)
+
+    monkeypatch.setattr("omniscan.gpu.groups.build_vram_manager", lambda _cfg: FakeManager())
+    stage_executor(cfg)(make_job(("detect",), chapters=("Chapter 1",)))  # real needs_gpu: detect has a group
+
+    assert released == [True]
+    assert record.calls[0]["gpu"] is not None
+
+
+def test_non_gpu_jobs_build_no_vram_manager(cfg: Config, monkeypatch: pytest.MonkeyPatch) -> None:
+    make_chapter(cfg)
+    record = recorder(monkeypatch)
+    built: list[Any] = []
+    monkeypatch.setattr("omniscan.gpu.groups.build_vram_manager", lambda _cfg: built.append(1))
+    stage_executor(cfg)(make_job(("typeset",), chapters=("Chapter 1",)))
+
+    assert built == []
+    assert record.calls[0]["gpu"] is None

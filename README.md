@@ -23,6 +23,7 @@ packaged into CBZ/PDF.
 | inpaint | working — `omniscan inpaint` (flat fill; `--lama` for textured art) |
 | typeset | working — `omniscan typeset` (layout.json; needs ocr.json, final.json, inpaint.json) |
 | export | working — `omniscan export` (needs inpaint.json, patches.npz, layout.json) |
+| run | working — `omniscan run` (ingest → export, three passes) |
 | pack | working — `omniscan pack` (CBZ/PDF of finished output) |
 | job queue | working — `omniscan queue add` / `list` / `run` / `pause` / `resume` / `cancel` / `retry` / `clear` |
 | web viewer | working — `omniscan serve` + `npm run dev` (Slicer, OCR, Translation, Reader and Filtered views — read-only except the Filtered view's Restore button; the OCR/Translation views need an `ocr.json`) |
@@ -34,7 +35,7 @@ pipeline stage consumes it yet.
 
 | Command | Behaviour |
 |---|---|
-| `acquire`, `run`, `reference` | registered stubs; they print `not implemented yet` and exit 2 |
+| `acquire`, `reference` | registered stubs; they print `not implemented yet` and exit 2 |
 
 ## Requirements
 

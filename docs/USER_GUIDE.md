@@ -128,7 +128,7 @@ OMNISCAN_RELAY_CLIENT_TOKEN=...
 
 ## Commands
 
-Stubs (`acquire`, `run`,
+Stubs (`acquire`,
 `reference`) are registered but not usable; each prints `not implemented yet` and exits 2. Every other
 command below is fully working. The examples assume you generated the demo chapter with
 `uv run python scripts/make_demo_chapter.py`.
@@ -313,6 +313,33 @@ with the stage to run named. Exit codes as for `ingest`.
 
 ```bash
 uv run omniscan export DemoSeries
+```
+
+### `omniscan run`
+
+Run the whole pipeline over a series: the ten stages in three passes (vision: `ingest` → `ocr`, text:
+`translate` → `judge`, render: `inpaint` → `export`), so each model group is loaded once per pass
+instead of once per chapter. Chapters whose stage fails are dropped from the later passes; everything
+is resumable through the chapter manifests, so a re-run only executes what changed.
+
+| Argument/option | Meaning |
+|---|---|
+| `series` | series name (required) |
+| `--chapter`, `-c <str>` | chapter folder name; repeatable. Default: all |
+| `--stage`, `-s <name>` | stage name; repeatable. Default: all ten (`ingest`, `slice`, `detect`, `ocr`, `translate`, `judge`, `inpaint`, `inpaint_lama`, `typeset`, `export`) |
+| `--no-lama` | skip the LaMa inpaint stage (`inpaint_lama`) |
+| `--force` | re-run stages even if up to date |
+
+The text pass talks to Ollama (local or cloud models); the vision and LaMa models are loaded through
+the VRAM manager, which frees the previous group first, so the three passes never fight over 16 GB.
+One line is printed per stage outcome, then a summary line. Exit 2 for an unknown series or stage
+name; exit 1 when any chapter failed; exit 3 on an Ollama rate limit (partial results are kept —
+re-run later).
+
+```bash
+uv run omniscan run DemoSeries
+uv run omniscan run DemoSeries -c "Chapter 1" -s ingest -s slice
+uv run omniscan run DemoSeries --no-lama --force
 ```
 
 ### `omniscan filter run`
@@ -568,13 +595,14 @@ series. You add jobs, then a worker drains them one at a time. Everything lives 
 (the interrupted job is queued again with its attempt refunded). Exactly one worker per `queue.db` is
 supported.
 
-A job is "run these stages over this series (optionally only some chapters)". Jobs for stages that
-are not implemented yet are accepted but fail permanently with a clear message, so adding the stage
-later only means adding it to the executor's stage table.
+A job is "run these stages over this series (optionally only some chapters)". Any of the ten pipeline
+stage names is accepted (`ingest`, `slice`, `detect`, `ocr`, `translate`, `judge`, `inpaint`,
+`inpaint_lama`, `typeset`, `export`); the stages run exactly as listed, in pipeline order and passes
+(like `omniscan run`), so a fresh chapter needs `ingest` listed before `slice`.
 
 | Subcommand | Effect |
 |---|---|
-| `add <series>` | queue a job. Options: `--stage`, `-s <name>` (repeatable, default `slice`), `--chapter`, `-c <name>` (repeatable, default all), `--priority`, `-p <int>` (higher runs first, default 0), `--max-attempts <int>` (default 2), `--force` |
+| `add <series>` | queue a job. Options: `--stage`, `-s <name>` (repeatable, default `slice`; any of the ten stage names), `--chapter`, `-c <name>` (repeatable, default all), `--priority`, `-p <int>` (higher runs first, default 0), `--max-attempts <int>` (default 2), `--force` |
 | `list [--status <status>]` | print the jobs, one line each; filter by `queued` / `running` / `paused` / `done` / `failed` / `cancelled` |
 | `run [--webhook <url>] [--max-jobs <n>]` | drain the queue as the worker. `--webhook` POSTs every event as JSON (also settable with the `OMNISCAN_NOTIFY_WEBHOOK` env var); `--max-jobs` stops after n jobs |
 | `pause <id>` / `resume <id>` | pause a queued job / put a paused job back into the queue |
