@@ -7,8 +7,10 @@ strip never leaves the GPU and no copy per detection is made.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, cast
 
 import torch
@@ -16,6 +18,9 @@ import torch.nn.functional as F  # noqa: N812 — torch's standard alias
 
 from omniscan.core.config import DetectConfig
 from omniscan.detect.postprocess import Box, DetClass
+from omniscan.models.resolve import local_model_source
+
+log = logging.getLogger(__name__)
 
 _CLASSES: tuple[DetClass, ...] = ("bubble", "text_bubble", "text_free")
 
@@ -57,17 +62,31 @@ class Detector:
         return self._device
 
     @classmethod
-    def load(cls, cfg: DetectConfig, device: torch.device) -> Detector:
+    def load(cls, cfg: DetectConfig, device: torch.device, models_dir: Path | None = None) -> Detector:
         """Download (first use) and load the model, fp32 everywhere (MIOpen fp16 conv fails at small batch sizes)."""
         from transformers import AutoImageProcessor, RTDetrV2ForObjectDetection
 
         if device.type == "cuda":
             # MIOpen launches kernels against the current device (the iGPU here), not the tensors' device
             torch.cuda.set_device(device)
-        extra: dict[str, Any] = {"revision": cfg.revision} if cfg.revision else {}
-        model = RTDetrV2ForObjectDetection.from_pretrained(cfg.repo, **extra)
+        source = local_model_source(cfg.repo, models_dir) if models_dir is not None else None
+        if source is not None:
+            log.info("loading %s from %s", cfg.repo, source)
+            extra: dict[str, Any] = {"local_files_only": True}
+            repo = source
+        else:
+            if models_dir is not None:
+                log.warning(
+                    "model %s is not installed in %s; using the Hugging Face hub/cache. "
+                    'Run "omniscan models download --required" to install it.',
+                    cfg.repo,
+                    models_dir,
+                )
+            extra = {"revision": cfg.revision} if cfg.revision else {}
+            repo = cfg.repo
+        model = RTDetrV2ForObjectDetection.from_pretrained(repo, **extra)
         model = _to_device(model, device).eval()
-        processor = AutoImageProcessor.from_pretrained(cfg.repo, **extra)
+        processor = AutoImageProcessor.from_pretrained(repo, **extra)
         return cls(model, processor, device, threshold=cfg.threshold)
 
     def detect(self, tiles: Sequence[torch.Tensor]) -> list[list[RawDet]]:

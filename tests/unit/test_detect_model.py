@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import logging
 import time
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -14,6 +17,10 @@ from PIL import Image
 from omniscan.core.config import DetectConfig
 from omniscan.detect.model import Detector
 from omniscan.gpu.device import resolve_device
+from omniscan.models.catalog import ModelEntry
+from omniscan.models.store import MARKER_NAME
+
+_CATALOG_SHA = "b" * 64
 
 
 class FakeModel:
@@ -169,6 +176,137 @@ def test_load_passes_revision_and_stays_fp32_on_cpu(monkeypatch: pytest.MonkeyPa
     assert detector.device == torch.device("cpu")
     assert fake_model.eval_called is True
     assert next(fake_model.parameters()).dtype == torch.float32  # fp32 on CPU: no .half()
+
+
+# ---------------------------------------------------------------- load from models_dir (card U2b)
+
+
+def _catalog_entry(model_id: str, repo: str) -> ModelEntry:
+    return ModelEntry(
+        id=model_id,
+        name="Detector",
+        kind="vision",
+        required=True,
+        format="zip",
+        size_mb=1,
+        license="Apache-2.0",
+        description="d",
+        mirror_url=f"https://mirror/{model_id}.zip",
+        sha256=_CATALOG_SHA,
+        bytes=10,
+        upstream_repo=repo,
+        upstream_revision="rev1",
+    )
+
+
+def _install_fake_zip(models_dir: Path, model_id: str, sha: str) -> None:
+    folder = models_dir / model_id
+    folder.mkdir(parents=True)
+    (folder / "weights.bin").write_text("hello", encoding="utf-8")
+    (folder / MARKER_NAME).write_text(json.dumps({"id": model_id, "sha256": sha}), encoding="utf-8")
+
+
+def test_load_prefers_the_installed_models_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    from transformers import AutoImageProcessor, RTDetrV2ForObjectDetection
+
+    from omniscan.models import resolve as resolve_module
+
+    repo = "ogkalu/comic-text-and-bubble-detector"
+    entry = _catalog_entry("detector-comic-text-bubble", repo)
+    _install_fake_zip(tmp_path, entry.id, _CATALOG_SHA)
+    monkeypatch.setattr(resolve_module, "load_catalog", lambda: [entry])
+
+    fake_model = FakeModel({0: "bubble"})
+    seen: dict[str, Any] = {}
+
+    def fake_model_from(source: str, **kwargs: Any) -> FakeModel:
+        seen["model"] = (source, kwargs)
+        return fake_model
+
+    def fake_processor_from(source: str, **kwargs: Any) -> FakeProcessor:
+        seen["processor"] = (source, kwargs)
+        return FakeProcessor()
+
+    monkeypatch.setattr(RTDetrV2ForObjectDetection, "from_pretrained", fake_model_from)
+    monkeypatch.setattr(AutoImageProcessor, "from_pretrained", fake_processor_from)
+
+    with caplog.at_level(logging.INFO):
+        detector = Detector.load(DetectConfig(repo=repo, revision="pinned"), torch.device("cpu"), tmp_path)
+
+    folder = str(tmp_path / entry.id)
+    assert seen == {
+        "model": (folder, {"local_files_only": True}),
+        "processor": (folder, {"local_files_only": True}),
+    }  # the installed folder, no revision even though the config pins one
+    assert detector.device == torch.device("cpu")
+    assert fake_model.eval_called is True
+    assert f"loading {repo} from {folder}" in caplog.text
+
+
+def test_load_falls_back_to_hub_with_a_warning_when_not_installed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    from transformers import AutoImageProcessor, RTDetrV2ForObjectDetection
+
+    from omniscan.models import resolve as resolve_module
+
+    monkeypatch.setattr(resolve_module, "load_catalog", lambda: [])  # nothing installed
+    seen: dict[str, Any] = {}
+
+    def fake_model_from(source: str, **kwargs: Any) -> FakeModel:
+        seen["model"] = (source, kwargs)
+        return FakeModel({0: "bubble"})
+
+    def fake_processor_from(source: str, **kwargs: Any) -> FakeProcessor:
+        seen["processor"] = (source, kwargs)
+        return FakeProcessor()
+
+    monkeypatch.setattr(RTDetrV2ForObjectDetection, "from_pretrained", fake_model_from)
+    monkeypatch.setattr(AutoImageProcessor, "from_pretrained", fake_processor_from)
+
+    with caplog.at_level(logging.WARNING):
+        Detector.load(DetectConfig(repo="org/repo", revision="abc123"), torch.device("cpu"), tmp_path)
+
+    assert seen == {
+        "model": ("org/repo", {"revision": "abc123"}),
+        "processor": ("org/repo", {"revision": "abc123"}),
+    }  # exactly today's hub behaviour, with the pinned revision
+    warnings = [
+        r for r in caplog.records if r.name == "omniscan.detect.model" and r.levelno == logging.WARNING
+    ]
+    assert len(warnings) == 1
+    assert "omniscan models download --required" in warnings[0].message
+    assert str(tmp_path) in warnings[0].message
+
+
+def test_load_without_models_dir_keeps_hub_behaviour_and_no_warning(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from transformers import AutoImageProcessor, RTDetrV2ForObjectDetection
+
+    seen: dict[str, Any] = {}
+
+    def fake_model_from(source: str, **kwargs: Any) -> FakeModel:
+        seen["model"] = (source, kwargs)
+        return FakeModel({0: "bubble"})
+
+    def fake_processor_from(source: str, **kwargs: Any) -> FakeProcessor:
+        seen["processor"] = (source, kwargs)
+        return FakeProcessor()
+
+    monkeypatch.setattr(RTDetrV2ForObjectDetection, "from_pretrained", fake_model_from)
+    monkeypatch.setattr(AutoImageProcessor, "from_pretrained", fake_processor_from)
+
+    with caplog.at_level(logging.INFO):
+        Detector.load(DetectConfig(repo="org/repo", revision="abc123"), torch.device("cpu"))
+
+    assert seen == {
+        "model": ("org/repo", {"revision": "abc123"}),
+        "processor": ("org/repo", {"revision": "abc123"}),
+    }
+    assert not [r for r in caplog.records if r.name == "omniscan.detect.model"]
 
 
 # ---------------------------------------------------------------- real model (GPU)

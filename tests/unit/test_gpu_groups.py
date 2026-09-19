@@ -124,16 +124,16 @@ def test_build_vram_manager_registers_vision(monkeypatch: pytest.MonkeyPatch, tm
     fakes = (object(), object(), object())
     seen: dict[str, Any] = {}
 
-    def fake_detector_load(cfg: Any, device: torch.device) -> object:
-        seen["detector"] = (cfg, device)
+    def fake_detector_load(cfg: Any, device: torch.device, models_dir: Path | None) -> object:
+        seen["detector"] = (cfg, device, models_dir)
         return fakes[0]
 
-    def fake_line_detector_load(cfg: Any, device: torch.device) -> object:
-        seen["line_detector"] = (cfg, device)
+    def fake_line_detector_load(cfg: Any, device: torch.device, models_dir: Path | None) -> object:
+        seen["line_detector"] = (cfg, device, models_dir)
         return fakes[1]
 
-    def fake_recognizer_load(cfg: Any, device: torch.device) -> object:
-        seen["recognizer"] = (cfg, device)
+    def fake_recognizer_load(cfg: Any, device: torch.device, models_dir: Path | None) -> object:
+        seen["recognizer"] = (cfg, device, models_dir)
         return fakes[2]
 
     monkeypatch.setattr(Detector, "load", fake_detector_load)
@@ -147,6 +147,7 @@ def test_build_vram_manager_registers_vision(monkeypatch: pytest.MonkeyPatch, tm
     assert models == {"detector": fakes[0], "line_detector": fakes[1], "recognizer": fakes[2]}
     assert seen["detector"][0] is cfg.detect and seen["detector"][1].type == "cpu"
     assert seen["line_detector"][0] is cfg.ocr and seen["recognizer"][0] is cfg.ocr
+    assert seen["detector"][2] == seen["line_detector"][2] == seen["recognizer"][2] == cfg.paths.models_dir
     assert manager._groups[VISION_GROUP].est_gib == 3.0
     assert manager.resident == VISION_GROUP
     manager.release()
@@ -172,9 +173,9 @@ def test_build_vram_manager_registers_inpaint(monkeypatch: pytest.MonkeyPatch, t
         return fake_lama
 
     monkeypatch.setattr(LamaInpainter, "load", fake_load)
-    monkeypatch.setattr(Detector, "load", lambda cfg_, device: fake_detector)
-    monkeypatch.setattr(LineDetector, "load", lambda cfg_, device: object())
-    monkeypatch.setattr(LineRecognizer, "load", lambda cfg_, device: object())
+    monkeypatch.setattr(Detector, "load", lambda cfg_, device, models_dir=None: fake_detector)
+    monkeypatch.setattr(LineDetector, "load", lambda cfg_, device, models_dir=None: object())
+    monkeypatch.setattr(LineRecognizer, "load", lambda cfg_, device, models_dir=None: object())
 
     cfg = cli_cfg(tmp_path)
     manager = build_vram_manager(cfg)

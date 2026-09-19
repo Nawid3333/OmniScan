@@ -28,9 +28,9 @@ def build_vram_manager(cfg: Config) -> VramManager:
         from omniscan.ocr.model import LineDetector, LineRecognizer  # deferred
 
         return {
-            "detector": Detector.load(cfg.detect, device),
-            "line_detector": LineDetector.load(cfg.ocr, device),
-            "recognizer": LineRecognizer.load(cfg.ocr, device),
+            "detector": Detector.load(cfg.detect, device, models_dir=cfg.paths.models_dir),
+            "line_detector": LineDetector.load(cfg.ocr, device, models_dir=cfg.paths.models_dir),
+            "recognizer": LineRecognizer.load(cfg.ocr, device, models_dir=cfg.paths.models_dir),
         }
 
     def load_inpaint(device: torch.device) -> dict[str, Any]:

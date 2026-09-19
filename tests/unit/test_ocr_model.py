@@ -2,13 +2,23 @@
 
 from __future__ import annotations
 
+import json
+import logging
+from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import pytest
 import torch
 
 from omniscan.core.config import OcrConfig
+from omniscan.models.catalog import ModelEntry
+from omniscan.models.store import MARKER_NAME
 from omniscan.ocr.model import LineDetector, LineRecognizer
+
+_DET_REPO = "PaddlePaddle/PP-OCRv5_server_det_safetensors"
+_REC_REPO = "PaddlePaddle/korean_PP-OCRv5_mobile_rec_safetensors"
+_CATALOG_SHA = "b" * 64
 
 
 class FakeDetModel:
@@ -268,3 +278,144 @@ def test_line_recognizer_load(monkeypatch: pytest.MonkeyPatch) -> None:
     assert fake_model.to_device == torch.device("cpu")
     assert fake_model.eval_called is True
     assert next(fake_model.parameters()).dtype == torch.float32
+
+
+# ---------------------------------------------------------------- load from models_dir (card U2b)
+
+
+def _catalog_entry(model_id: str, repo: str) -> ModelEntry:
+    return ModelEntry(
+        id=model_id,
+        name="OCR",
+        kind="ocr",
+        required=True,
+        format="zip",
+        size_mb=1,
+        license="Apache-2.0",
+        description="d",
+        mirror_url=f"https://mirror/{model_id}.zip",
+        sha256=_CATALOG_SHA,
+        bytes=10,
+        upstream_repo=repo,
+        upstream_revision="rev1",
+    )
+
+
+def _install_fake_zip(models_dir: Path, model_id: str, sha: str) -> None:
+    folder = models_dir / model_id
+    folder.mkdir(parents=True)
+    (folder / "weights.bin").write_text("hello", encoding="utf-8")
+    (folder / MARKER_NAME).write_text(json.dumps({"id": model_id, "sha256": sha}), encoding="utf-8")
+
+
+def _recorder(seen: dict[str, Any], key: str, make: Callable[[], Any]) -> Any:
+    """A from_pretrained fake recording (source, kwargs) under `key` and returning `make()`."""
+
+    def fake_from(source: str, **kwargs: Any) -> Any:
+        seen[key] = (source, kwargs)
+        return make()
+
+    return fake_from
+
+
+def test_line_detector_load_prefers_the_installed_models_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    from transformers import AutoImageProcessor, AutoModelForObjectDetection
+
+    from omniscan.models import resolve as resolve_module
+
+    det = _catalog_entry("ocr-det-ppocrv5-server", _DET_REPO)
+    rec = _catalog_entry("ocr-rec-korean-ppocrv5-mobile", _REC_REPO)
+    _install_fake_zip(tmp_path, det.id, _CATALOG_SHA)
+    _install_fake_zip(tmp_path, rec.id, _CATALOG_SHA)
+    monkeypatch.setattr(resolve_module, "load_catalog", lambda: [det, rec])
+
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(
+        AutoModelForObjectDetection, "from_pretrained", _recorder(seen, "model", FakeLoadModel)
+    )
+    monkeypatch.setattr(
+        AutoImageProcessor, "from_pretrained", _recorder(seen, "processor", lambda: FakeDetProcessor([]))
+    )
+
+    with caplog.at_level(logging.INFO):
+        detector = LineDetector.load(
+            OcrConfig(det_repo=_DET_REPO, rec_repo=_REC_REPO, det_revision="abc123"),
+            torch.device("cpu"),
+            tmp_path,
+        )
+
+    folder = str(tmp_path / det.id)
+    assert seen == {
+        "model": (folder, {"local_files_only": True}),
+        "processor": (folder, {"local_files_only": True}),
+    }  # the installed folder, no revision even though the config pins one
+    assert detector.device == torch.device("cpu")
+    assert f"loading {_DET_REPO} from {folder}" in caplog.text
+
+
+def test_line_recognizer_load_prefers_the_installed_models_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    from transformers import AutoImageProcessor, AutoModelForTextRecognition
+
+    from omniscan.models import resolve as resolve_module
+
+    det = _catalog_entry("ocr-det-ppocrv5-server", _DET_REPO)
+    rec = _catalog_entry("ocr-rec-korean-ppocrv5-mobile", _REC_REPO)
+    _install_fake_zip(tmp_path, det.id, _CATALOG_SHA)
+    _install_fake_zip(tmp_path, rec.id, _CATALOG_SHA)
+    monkeypatch.setattr(resolve_module, "load_catalog", lambda: [det, rec])
+
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(
+        AutoModelForTextRecognition, "from_pretrained", _recorder(seen, "model", FakeLoadModel)
+    )
+    monkeypatch.setattr(
+        AutoImageProcessor, "from_pretrained", _recorder(seen, "processor", lambda: FakeDetProcessor([]))
+    )
+
+    with caplog.at_level(logging.INFO):
+        LineRecognizer.load(
+            OcrConfig(det_repo=_DET_REPO, rec_repo=_REC_REPO, rec_revision="def456"),
+            torch.device("cpu"),
+            tmp_path,
+        )
+
+    folder = str(tmp_path / rec.id)
+    assert seen == {
+        "model": (folder, {"local_files_only": True}),
+        "processor": (folder, {"local_files_only": True}),
+    }
+    assert f"loading {_REC_REPO} from {folder}" in caplog.text
+
+
+def test_line_recognizer_load_falls_back_to_hub_with_a_warning_when_not_installed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    from transformers import AutoImageProcessor, AutoModelForTextRecognition
+
+    from omniscan.models import resolve as resolve_module
+
+    monkeypatch.setattr(resolve_module, "load_catalog", lambda: [])  # nothing installed
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(
+        AutoModelForTextRecognition, "from_pretrained", _recorder(seen, "model", FakeLoadModel)
+    )
+    monkeypatch.setattr(
+        AutoImageProcessor, "from_pretrained", _recorder(seen, "processor", lambda: FakeDetProcessor([]))
+    )
+
+    with caplog.at_level(logging.WARNING):
+        LineRecognizer.load(
+            OcrConfig(rec_repo="org/rec", rec_revision="def456"), torch.device("cpu"), tmp_path
+        )
+
+    assert seen == {
+        "model": ("org/rec", {"revision": "def456"}),
+        "processor": ("org/rec", {"revision": "def456"}),
+    }  # exactly today's hub behaviour, with the pinned revision
+    warnings = [r for r in caplog.records if r.name == "omniscan.ocr.model" and r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "omniscan models download --required" in warnings[0].message

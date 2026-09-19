@@ -7,13 +7,18 @@ fp32 (MIOpen's fp16/bf16 kernels fail on this stack) and never pull the strip or
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 import torch
 
 from omniscan.core.config import OcrConfig
+from omniscan.models.resolve import local_model_source
 from omniscan.ocr.lines import LineBox, polygon_box
+
+log = logging.getLogger(__name__)
 
 
 def _to_device(model: torch.nn.Module, device: torch.device) -> torch.nn.Module:
@@ -48,17 +53,31 @@ class LineDetector:
         return self._device
 
     @classmethod
-    def load(cls, cfg: OcrConfig, device: torch.device) -> LineDetector:
+    def load(cls, cfg: OcrConfig, device: torch.device, models_dir: Path | None = None) -> LineDetector:
         """Download (first use) and load the line detector, fp32 everywhere (no `.half()` on this stack)."""
         from transformers import AutoImageProcessor, AutoModelForObjectDetection
 
         if device.type == "cuda":
             # MIOpen launches kernels against the current device (the iGPU here), not the tensors' device
             torch.cuda.set_device(device)
-        extra: dict[str, Any] = {"revision": cfg.det_revision} if cfg.det_revision else {}
-        model = AutoModelForObjectDetection.from_pretrained(cfg.det_repo, **extra)
+        source = local_model_source(cfg.det_repo, models_dir) if models_dir is not None else None
+        if source is not None:
+            log.info("loading %s from %s", cfg.det_repo, source)
+            extra: dict[str, Any] = {"local_files_only": True}
+            repo = source
+        else:
+            if models_dir is not None:
+                log.warning(
+                    "model %s is not installed in %s; using the Hugging Face hub/cache. "
+                    'Run "omniscan models download --required" to install it.',
+                    cfg.det_repo,
+                    models_dir,
+                )
+            extra = {"revision": cfg.det_revision} if cfg.det_revision else {}
+            repo = cfg.det_repo
+        model = AutoModelForObjectDetection.from_pretrained(repo, **extra)
         model = _to_device(model, device).eval()
-        processor = AutoImageProcessor.from_pretrained(cfg.det_repo, **extra)
+        processor = AutoImageProcessor.from_pretrained(repo, **extra)
         return cls(
             model,
             processor,
@@ -120,17 +139,31 @@ class LineRecognizer:
         return self._device
 
     @classmethod
-    def load(cls, cfg: OcrConfig, device: torch.device) -> LineRecognizer:
+    def load(cls, cfg: OcrConfig, device: torch.device, models_dir: Path | None = None) -> LineRecognizer:
         """Download (first use) and load the recognition model, fp32 everywhere (no `.half()` on this stack)."""
         from transformers import AutoImageProcessor, AutoModelForTextRecognition
 
         if device.type == "cuda":
             # MIOpen launches kernels against the current device (the iGPU here), not the tensors' device
             torch.cuda.set_device(device)
-        extra: dict[str, Any] = {"revision": cfg.rec_revision} if cfg.rec_revision else {}
-        model = AutoModelForTextRecognition.from_pretrained(cfg.rec_repo, **extra)
+        source = local_model_source(cfg.rec_repo, models_dir) if models_dir is not None else None
+        if source is not None:
+            log.info("loading %s from %s", cfg.rec_repo, source)
+            extra: dict[str, Any] = {"local_files_only": True}
+            repo = source
+        else:
+            if models_dir is not None:
+                log.warning(
+                    "model %s is not installed in %s; using the Hugging Face hub/cache. "
+                    'Run "omniscan models download --required" to install it.',
+                    cfg.rec_repo,
+                    models_dir,
+                )
+            extra = {"revision": cfg.rec_revision} if cfg.rec_revision else {}
+            repo = cfg.rec_repo
+        model = AutoModelForTextRecognition.from_pretrained(repo, **extra)
         model = _to_device(model, device).eval()
-        processor = AutoImageProcessor.from_pretrained(cfg.rec_repo, **extra)
+        processor = AutoImageProcessor.from_pretrained(repo, **extra)
         return cls(model, processor, device, batch_size=cfg.rec_batch_size)
 
     def read(self, crops: Sequence[torch.Tensor]) -> list[tuple[str, float]]:
