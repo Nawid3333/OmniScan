@@ -10,13 +10,14 @@ Usage (from the repo root or a worktree root):
       [--only 3,5-9] [--timeout 120]
 
 `-t` accepts a test file or `file::test_name`. Mutants run one after the other (they edit the real files) and each file is
-restored in a `finally` block, so an interrupted run leaves the tree clean; `git diff --stat -- src` must still be empty afterwards.
+restored in a `finally` block, and a run that is killed hard is undone by the next `check`/`run` (backup in `.mutate_backup/`); `git diff --stat -- src` must still be empty afterwards.
 Exit code 0 when no mutant survived, 1 otherwise.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import runpy
 import subprocess
@@ -25,6 +26,9 @@ import time
 from pathlib import Path
 
 ROOT = Path.cwd().resolve()
+PENDING = (
+    ROOT / ".mutate_backup" / "pending.json"
+)  # the file being mutated right now, so a killed run can be undone
 
 Mutant = tuple[str, str, str, str]
 
@@ -80,6 +84,16 @@ def apply(mutant: Mutant) -> tuple[Path, str, str] | str:
     return path, original, mutated
 
 
+def recover() -> None:
+    """Restore the file of a previous run that was killed while a mutant was applied."""
+    if not PENDING.is_file():
+        return
+    pending = json.loads(PENDING.read_text(encoding="utf-8"))
+    (ROOT / pending["file"]).write_bytes(pending["original"].encode("utf-8"))
+    PENDING.unlink()
+    print(f"recovered {pending['file']} from an interrupted run (a mutant was still applied)")
+
+
 def line_of(mutant: Mutant) -> int:
     """1-based line of `old` in its file (0 when unknown)."""
     path = ROOT / mutant[0]
@@ -106,6 +120,7 @@ def run_tests(tests: list[str], timeout: int) -> tuple[bool, str]:
 
 def cmd_check(args: argparse.Namespace) -> int:
     """Validate a mutants file without running any test."""
+    recover()
     mutants = load_mutants(Path(args.mutants))
     bad = 0
     for i, m in enumerate(mutants):
@@ -119,6 +134,7 @@ def cmd_check(args: argparse.Namespace) -> int:
 
 def cmd_run(args: argparse.Namespace) -> int:
     """Run the selected mutants against the tests and print one line per mutant plus a summary."""
+    recover()
     mutants = load_mutants(Path(args.mutants))
     if not args.tests:
         sys.exit("give at least one -t TEST")
@@ -136,11 +152,14 @@ def cmd_run(args: argparse.Namespace) -> int:
             continue
         path, original, mutated = res
         started = time.monotonic()
+        PENDING.parent.mkdir(exist_ok=True)
+        PENDING.write_text(json.dumps({"file": m[0], "original": original}), encoding="utf-8")
         try:
             path.write_bytes(mutated.encode("utf-8"))
             passed, _ = run_tests(args.tests, args.timeout)
         finally:
             path.write_bytes(original.encode("utf-8"))
+            PENDING.unlink(missing_ok=True)
         state = "SURVIVED" if passed else "KILLED"
         killed += not passed
         survived += passed
@@ -152,6 +171,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 def main() -> None:
     """Parse arguments and dispatch."""
+    sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]  # labels may hold non-ASCII (Korean) snippets
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
