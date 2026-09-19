@@ -2,6 +2,7 @@
 
 import enum
 import json
+import os
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
@@ -28,6 +29,9 @@ from omniscan.queue.executor import stage_executor
 from omniscan.queue.notify import combine, log_notifier, webhook_notifier
 from omniscan.queue.store import KNOWN_STAGES, STATUSES, JobStatus, QueueStore, queue_db_path
 from omniscan.queue.worker import run_queue
+from omniscan.update.download import check_for_update, download_update
+from omniscan.update.github import DEFAULT_REPO, ReleaseInfo, UpdateError, platform_key, select_asset
+from omniscan.update.version import current_version
 from omniscan.watermark.store import WatermarkStore
 
 app = typer.Typer(help="OmniScan — manhwa/manga translator", no_args_is_help=True)
@@ -1267,3 +1271,109 @@ def models_verify(
 
 
 app.add_typer(models_app, name="models")
+
+
+update_app = typer.Typer(no_args_is_help=True, help="Check GitHub Releases for and stage a newer OmniScan.")
+
+
+class UpdateChannel(enum.StrEnum):
+    """Channel of `omniscan update` (typer cannot build a click option from list[Literal])."""
+
+    STABLE = "stable"
+    BETA = "beta"
+
+
+def _http_client() -> httpx.Client:
+    """HTTP client for the updater's GitHub requests (redirects on, 30 s timeout)."""
+    return httpx.Client(follow_redirects=True, timeout=30.0)
+
+
+def _update_token() -> str | None:
+    """The optional GitHub token from the environment (never printed)."""
+    return os.environ.get("GITHUB_TOKEN")
+
+
+def _newer_release(client: httpx.Client, channel: UpdateChannel, repo: str) -> ReleaseInfo | None:
+    """The newest app release for the channel, or None when the install is up to date."""
+    return check_for_update(
+        client, repo=repo, channel=channel.value, current=current_version(), token=_update_token()
+    )
+
+
+@update_app.command("check")
+def update_check(
+    channel: Annotated[
+        UpdateChannel, typer.Option("--channel", case_sensitive=False, help="stable or beta.")
+    ] = UpdateChannel.STABLE,
+    repo: Annotated[str, typer.Option("--repo", help="GitHub repository OWNER/NAME.")] = DEFAULT_REPO,
+    as_json: Annotated[bool, typer.Option("--json", help="Emit the machine-readable form.")] = False,
+) -> None:
+    """Report whether a newer OmniScan release is available on GitHub Releases."""
+    try:
+        with _http_client() as client:
+            current = current_version()
+            release = _newer_release(client, channel, repo)
+    except UpdateError as exc:
+        typer.echo(f"update: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    if as_json:
+        asset: str | None = None
+        if release is not None:
+            try:
+                asset = select_asset(release, platform_key()).name
+            except UpdateError:
+                asset = None
+        typer.echo(
+            json.dumps(
+                {
+                    "current": str(current),
+                    "latest": str(release.version) if release is not None else None,
+                    "update_available": release is not None,
+                    "tag": release.tag if release is not None else None,
+                    "notes": release.notes if release is not None else None,
+                    "asset": asset,
+                },
+                indent=2,
+            )
+        )
+        return
+    if release is None:
+        typer.echo(f"update: up to date (v{current})")
+        return
+    typer.echo(f"update: update available: v{release.version} (current v{current})")
+    for line in release.notes.splitlines()[:20]:
+        typer.echo(f"update:   {line}")
+
+
+@update_app.command("download")
+def update_download(
+    channel: Annotated[
+        UpdateChannel, typer.Option("--channel", case_sensitive=False, help="stable or beta.")
+    ] = UpdateChannel.STABLE,
+    repo: Annotated[str, typer.Option("--repo", help="GitHub repository OWNER/NAME.")] = DEFAULT_REPO,
+) -> None:
+    """Stage the newest release's verified build for this platform under <user data dir>/updates."""
+    updates_dir = get_config().paths.work_root.parent / "updates"
+    next_mark = 10
+
+    def on_progress(done: int, total: int | None) -> None:
+        """Print a line at every 10 % mark of the download."""
+        nonlocal next_mark
+        if total and done * 100 >= next_mark * total:
+            typer.echo(f"update:   {min(100, done * 100 // total)}%")
+            next_mark += 10
+
+    try:
+        with _http_client() as client:
+            release = _newer_release(client, channel, repo)
+            if release is None:
+                typer.echo("update: already up to date")
+                return
+            staged = download_update(client, release, updates_dir, on_progress=on_progress)
+    except UpdateError as exc:
+        typer.echo(f"update: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(f"update: staged {staged.path} ({staged.sha256})")
+
+
+app.add_typer(update_app, name="update")

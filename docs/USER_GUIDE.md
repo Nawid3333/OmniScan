@@ -690,6 +690,35 @@ job 1 done
 done=2 failed=0 retried=0
 ```
 
+### `omniscan update`
+
+OmniScan can update itself from the project's GitHub Releases: `check` asks GitHub which app release
+is newest (releases that are not app versions — like the `models-v1` model mirror — are ignored), and
+`download` fetches the build for this platform and verifies it against the release's `SHA256SUMS`
+before staging it. Nothing replaces the running program yet; the staged folder is what a
+platform-specific installer will consume.
+
+| Subcommand | Effect |
+|---|---|
+| `check [--channel stable\|beta] [--repo OWNER/NAME] [--json]` | print `update available: vA.B.C (current vX.Y.Z)` plus the release notes (first 20 lines), or `up to date (vX.Y.Z)`; `--json` prints the same facts as JSON (`current`, `latest`, `update_available`, `tag`, `notes`, `asset`) |
+| `download [--channel ...] [--repo ...]` | check, then download and verify into `updates/` next to the work root (`~/omniscan/updates` by default), under a folder per release tag, printing progress every 10 % and the staged path; prints `already up to date` (exit 0) when nothing is newer |
+
+Errors answer on stderr and exit 1. A build is only staged when its SHA-256 matches `SHA256SUMS`; a
+staged file with the matching checksum is reused. Set `GITHUB_TOKEN` in the environment to
+authenticate GitHub requests (needed while the repository is private); the token is never printed.
+
+```bash
+uv run omniscan update check
+uv run omniscan update check --channel beta --json
+uv run omniscan update download
+```
+
+```text
+update: update available: v1.2.3 (current v0.1.0)
+update:   Bugfixes for the slicer and a faster OCR pass.
+update: staged ~/omniscan/updates/v1.2.3/omniscan-windows-x64.zip (9c1b…)
+```
+
 ## Web viewer
 
 Start the API and the UI in two terminals:
