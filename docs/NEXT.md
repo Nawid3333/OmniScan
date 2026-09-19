@@ -54,7 +54,8 @@ the logic + the report's Questions; **T3** = also a live GPU/real-page check by 
 | 3 | **C7c** | Glyph renderer (`typeset/render.py`) + GPU compositing + `export` stage → `output/<Series>/<Chapter>/0001.jpg…` + `export.json` | C6a, C7b | T3 | ✔ merged (25/25 mutants killed; live export of KoreanDemo in 0.7 s) |
 | 3 | **C6b** | LaMa stage (`inpaint_lama`): fixed 512² windows, fp32, weights fetched with sha256 check → `patches_lama.npz` | C6a, `docs/benchmarks/lama-probe.md` | T3 | ✔ merged (21/21 mutants killed; live: LaMa removes free text on the gradient cleanly, 0.18 s after a ~25 s warm-up) |
 | 3 | **R1** | `omniscan run`: stage order, VRAM group sequencing (vision → local Ollama → torch), resumable, queue `STAGE_TABLE` gets every stage | C4a, C6a, C7b, C7c | T2 (director reviews the sequencing) | **running** (`docs/tasks/R1.md`) |
-| 3 | **E2E** | Golden test: synthetic Korean chapter → full pipeline with a fake LLM client → output images exist, text removed, English inside boxes | R1 | T1 | — |
+| 3 | **Q1, Q2** | Mutation reviews by builders: Q1 slicer + ingest layout, Q2 promo filter + glossary matcher + importer planner (find surviving mutants, add tests; no production changes) | — | T1 | **running** (`docs/tasks/Q1.md`, `Q2.md`) |
+| 3 | **E2E** | Golden GPU test: synthetic Korean chapter → `run_pipeline` with the REAL vision/LaMa models and a fake LLM client (dictionary translations) → exported page i matches `page.clean` i outside the English boxes (this catches page-mixing bugs like the codec race), English present in every bubble | R1 | T2 | write card after R1 merges |
 | 3 | **C5c** | Story memory (per-chapter summaries in `series.db`) + glossary proposals from OCR text | C5b patterns | T2 | write card |
 | 3 | **B11'** | Web views: raw \| mask \| clean slider and a layout overlay (Svelte/TS) | C6a, C7b | T2 | — |
 | later | **C4b/c** | PaddleOCR-VL second opinion; zh/ja model packs (config + tests) | C4a, real data | T3 | — |
