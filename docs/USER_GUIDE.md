@@ -602,7 +602,7 @@ stage names is accepted (`ingest`, `slice`, `detect`, `ocr`, `translate`, `judge
 
 | Subcommand | Effect |
 |---|---|
-| `add <series>` | queue a job. Options: `--stage`, `-s <name>` (repeatable, default `slice`; any of the ten stage names), `--chapter`, `-c <name>` (repeatable, default all), `--priority`, `-p <int>` (higher runs first, default 0), `--max-attempts <int>` (default 2), `--force` |
+| `add <series>` | queue a job. Options: `--stage`, `-s <name>` (repeatable, default `ingest` + `slice`; any of the ten stage names, run exactly as listed), `--chapter`, `-c <name>` (repeatable, default all), `--priority`, `-p <int>` (higher runs first, default 0), `--max-attempts <int>` (default 2), `--force` |
 | `list [--status <status>]` | print the jobs, one line each; filter by `queued` / `running` / `paused` / `done` / `failed` / `cancelled` |
 | `run [--webhook <url>] [--max-jobs <n>]` | drain the queue as the worker. `--webhook` POSTs every event as JSON (also settable with the `OMNISCAN_NOTIFY_WEBHOOK` env var); `--max-jobs` stops after n jobs |
 | `pause <id>` / `resume <id>` | pause a queued job / put a paused job back into the queue |

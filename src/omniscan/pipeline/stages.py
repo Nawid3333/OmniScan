@@ -59,8 +59,8 @@ def _series_entries(series: SeriesPaths) -> list[GlossaryEntry]:
 
 
 def _needs_local_gpu(endpoint: str, model: str) -> bool:
-    """True when a model occupies local VRAM: local endpoint and not an Ollama cloud model."""
-    return endpoint == "local" and not model.endswith(":cloud")
+    """True when a model occupies local VRAM: local endpoint and not an Ollama cloud model (`x:cloud`, `x:31b-cloud`)."""
+    return endpoint == "local" and not model.endswith((":cloud", "-cloud"))
 
 
 class TranslateStage:

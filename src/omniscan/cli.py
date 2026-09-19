@@ -830,7 +830,8 @@ def _queue_job_action(action: str, job_id: int) -> None:
 def queue_add(
     series: Annotated[str, typer.Argument()],
     stage: Annotated[
-        list[str] | None, typer.Option("--stage", "-s", help="Stage name; repeatable. Default: slice.")
+        list[str] | None,
+        typer.Option("--stage", "-s", help="Stage name; repeatable. Default: ingest, slice."),
     ] = None,
     chapter: Annotated[
         list[str] | None,
@@ -843,7 +844,7 @@ def queue_add(
     force: Annotated[bool, typer.Option("--force", help="Re-run stages even if up to date.")] = False,
 ) -> None:
     """Queue pipeline stages over a series' chapters (executed later by `queue run`)."""
-    stages = list(stage) if stage else ["slice"]
+    stages = list(stage) if stage else ["ingest", "slice"]
     unknown = next((name for name in stages if name not in KNOWN_STAGES), None)
     if unknown is not None:
         typer.echo(f"queue: unknown stage {unknown!r} (known: {', '.join(KNOWN_STAGES)})", err=True)

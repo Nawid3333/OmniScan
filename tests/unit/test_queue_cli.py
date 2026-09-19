@@ -63,6 +63,12 @@ def write_slicables(cfg: Config, series: str = SERIES) -> None:
 # ---------------------------------------------------------------- add / list
 
 
+def test_add_without_stages_queues_ingest_and_slice(patched_cfg: Config) -> None:
+    result = runner.invoke(app, ["queue", "add", SERIES])
+    assert result.exit_code == 0
+    assert f"queued job 1: {SERIES} stages=ingest,slice chapters=all priority=0" in result.output
+
+
 def test_add_then_list(patched_cfg: Config) -> None:
     result = runner.invoke(
         app, ["queue", "add", SERIES, "--stage", "ingest", "--stage", "slice", "-c", CHAPTER, "-p", "3"]

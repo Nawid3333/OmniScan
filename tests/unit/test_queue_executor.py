@@ -11,8 +11,9 @@ import pytest
 import omniscan.queue.executor as executor_module
 from omniscan.core.config import Config, GpuConfig, PathsConfig
 from omniscan.pipeline.runner import PipelineResult, run_pipeline
+from omniscan.pipeline.stages import STAGE_ORDER
 from omniscan.queue.executor import stage_executor
-from omniscan.queue.store import Job
+from omniscan.queue.store import KNOWN_STAGES, Job
 from omniscan.queue.worker import PermanentJobError
 
 SERIES = "S"
@@ -169,19 +170,8 @@ def test_named_chapters_skip_the_chapter_check(cfg: Config, monkeypatch: pytest.
     assert record.calls[0]["chapters"] == ("Chapter 9",)
 
 
-def test_stage_table_covers_all_ten_stages() -> None:
-    assert set(executor_module.STAGE_TABLE) == {
-        "ingest",
-        "slice",
-        "detect",
-        "ocr",
-        "translate",
-        "judge",
-        "inpaint",
-        "inpaint_lama",
-        "typeset",
-        "export",
-    }
+def test_queue_knows_exactly_the_pipeline_stages_in_order() -> None:
+    assert KNOWN_STAGES == STAGE_ORDER
 
 
 def test_run_pipeline_is_the_module_level_import() -> None:

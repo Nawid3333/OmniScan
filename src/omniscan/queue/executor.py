@@ -10,10 +10,6 @@ from omniscan.pipeline.stages import PASS_OF, STAGE_ORDER
 from omniscan.queue.store import Job
 from omniscan.queue.worker import Executor, PermanentJobError
 
-# Kept importable for older callers: every stage name the executor can run. The pipeline's STAGE_ORDER
-# is the source of truth; the execution path below goes through run_pipeline.
-STAGE_TABLE: dict[str, str] = {name: name for name in STAGE_ORDER}
-
 
 def stage_executor(cfg: Config) -> Executor:
     """Run a queued job's stages over its series via run_pipeline; unknown stages never retry."""

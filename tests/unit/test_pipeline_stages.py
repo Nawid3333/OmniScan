@@ -16,10 +16,12 @@ from omniscan.core.schemas import (
     Candidate,
     CandidateRun,
     FinalArtifact,
+    GlossaryEntry,
     Region,
     RegionsArtifact,
 )
 from omniscan.core.stage import ChapterContext, StageOutcome, make_context, run_stage
+from omniscan.glossary.store import GlossaryStore
 from omniscan.gpu.vram import OLLAMA_GROUP
 from omniscan.llm.ollama import ChatResponse
 from omniscan.pipeline.stages import PASS_OF, STAGE_ORDER, JudgeStage, TranslateStage, build_stage
@@ -90,6 +92,7 @@ class FakeClient:
     def __init__(self, replies: list[str | Exception]) -> None:
         self.replies = list(replies)
         self.calls = 0
+        self.messages: list[list[dict[str, Any]]] = []
 
     def chat(
         self,
@@ -104,6 +107,7 @@ class FakeClient:
         max_retries: int = 5,
     ) -> ChatResponse:
         self.calls += 1
+        self.messages.append(messages)
         reply = self.replies.pop(0)
         if isinstance(reply, Exception):
             raise reply
@@ -237,9 +241,8 @@ def test_translate_stage_gpu_group_needs_a_local_model(cfg: Config) -> None:
         == OLLAMA_GROUP
     )
     assert TranslateStage(client, []).gpu_group is None
-    # the shipped gemma4-31b-cloud profile is a local-endpoint "-cloud" model: per the rule it still
-    # declares OLLAMA_GROUP (harmless — it runs on the cloud through the local Ollama proxy)
-    assert TranslateStage(client, [profile(model="gemma4:31b-cloud")]).gpu_group == OLLAMA_GROUP
+    # the shipped gemma4-31b-cloud profile is a local-endpoint "-cloud" model: it runs on Ollama's cloud
+    assert TranslateStage(client, [profile(model="gemma4:31b-cloud")]).gpu_group is None
 
 
 def test_translate_stage_run_writes_runs_and_metrics(cfg: Config) -> None:
@@ -311,9 +314,8 @@ def test_judge_stage_gpu_group_needs_a_local_model(cfg: Config) -> None:
     assert JudgeStage(client, JudgeConfig(model="judge-model")).gpu_group == OLLAMA_GROUP
     assert JudgeStage(client, JudgeConfig(model="m:cloud")).gpu_group is None
     assert JudgeStage(client, JudgeConfig(model="m", endpoint="cloud")).gpu_group is None
-    # the shipped judge model is a local-endpoint "-cloud" model: per the rule it still declares
-    # OLLAMA_GROUP (it runs on the cloud through the local Ollama proxy)
-    assert JudgeStage(client, JudgeConfig()).gpu_group == OLLAMA_GROUP
+    # the shipped judge model is a local-endpoint "-cloud" model: it runs on Ollama's cloud
+    assert JudgeStage(client, JudgeConfig()).gpu_group is None
 
 
 def test_judge_stage_run_writes_final_metrics_and_is_resumable(cfg: Config) -> None:
@@ -341,3 +343,65 @@ def test_judge_stage_run_writes_final_metrics_and_is_resumable(cfg: Config) -> N
     assert manifest.stages["judge"].status == "done"
     assert run_adapter(stage, ctx).status == "skipped"  # same inputs, config and outputs
     assert client.calls == 1
+
+
+# ---------------------------------------------------------------- glossary, requests and re-runs (mutation gaps)
+
+
+def add_locked_term(ctx: ChapterContext, source: str, target: str) -> None:
+    ctx.series.db.parent.mkdir(parents=True, exist_ok=True)
+    with GlossaryStore(ctx.series.db) as store:
+        store.add(GlossaryEntry(source=source, target=target, status="locked"))
+
+
+def test_translate_stage_sends_the_series_glossary_to_the_model(cfg: Config) -> None:
+    ctx = make_context(cfg, SERIES, CHAPTER)
+    write_ocr(ctx.paths, ("r0001", "성진아 안녕"))
+    add_locked_term(ctx, "성진", "Sungjin")
+    client = FakeClient([json_reply({"r0001": "Hello Sungjin"})])
+    run_adapter(TranslateStage(client, [cloud_profile()]), ctx, force=True)
+    assert "Sungjin" in json.dumps(client.messages[0], ensure_ascii=False)
+
+
+def test_judge_stage_reports_locked_term_violations_from_the_series_glossary(cfg: Config) -> None:
+    ctx = make_context(cfg, SERIES, CHAPTER)
+    write_ocr(ctx.paths, ("r0001", "성진아 안녕"))
+    write_run(ctx.paths, "run1", {"r0001": "Hello there"})
+    add_locked_term(ctx, "성진", "Sungjin")
+    client = FakeClient([judgements_reply({"id": "r0001", "decision": "pick", "pick": "A"})] * 3)
+    outcome = run_adapter(JudgeStage(client, JudgeConfig(model=f"{MODEL}:cloud")), ctx)
+    assert outcome.status == "done"
+    assert outcome.metrics["violations_left"] == 1.0
+
+
+def test_judge_stage_counts_requests_apart_from_judged_regions(cfg: Config) -> None:
+    ctx = make_context(cfg, SERIES, CHAPTER)
+    write_ocr(ctx.paths, ("r0001", "안녕"), ("r0002", "반가워"))
+    write_run(ctx.paths, "run1", {"r0001": "Hello", "r0002": "Hi"})
+    write_run(ctx.paths, "run2", {"r0001": "Goodbye", "r0002": "Bye"})
+    client = FakeClient(
+        [
+            judgements_reply(
+                {"id": "r0001", "decision": "pick", "pick": "A"},
+                {"id": "r0002", "decision": "pick", "pick": "B"},
+            )
+        ]
+    )
+    outcome = run_adapter(JudgeStage(client, JudgeConfig(model=f"{MODEL}:cloud")), ctx)
+    assert outcome.metrics["judged"] == 2.0
+    assert outcome.metrics["requests"] == 1.0
+
+
+def test_judge_stage_rejudges_when_a_candidate_run_changed(cfg: Config) -> None:
+    ctx = make_context(cfg, SERIES, CHAPTER)
+    write_ocr(ctx.paths, ("r0001", "안녕"))
+    write_run(ctx.paths, "run1", {"r0001": "Hello"})
+    write_run(ctx.paths, "run2", {"r0001": "Goodbye"})
+    pick_a = judgements_reply({"id": "r0001", "decision": "pick", "pick": "A"})
+    client = FakeClient([pick_a, pick_a])
+    stage = JudgeStage(client, JudgeConfig(model=f"{MODEL}:cloud"))
+    assert run_adapter(stage, ctx).status == "done"
+    write_run(ctx.paths, "run1", {"r0001": "Howdy"})  # changes an input: the runner must re-run the stage
+    assert run_adapter(stage, ctx).status == "done"
+    assert FinalArtifact.load(ctx.paths.artifact("final.json")).lines[0].text == "Howdy"
+    assert client.calls == 2
