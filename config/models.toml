@@ -1,0 +1,136 @@
+# Model catalog for OmniScan: every model the app can download, with purpose, size and licence.
+# The shipped app is small and the user decides what to download (owner decision 2026-09-19):
+# `omniscan models list` shows these entries with their status, `models download <id>` fetches one.
+#
+# The three Hugging Face vision models and the LaMa file are mirrored UNCHANGED as assets of the
+# GitHub release `models-v1` of Nawid3333/OmniScan (all Apache-2.0). The mirror repo is private
+# today, so a 404 there makes the manager fall back to the upstream source automatically.
+# Large language models come from Ollama (local pull or Ollama Cloud through the local daemon).
+#
+# Override per machine in ~/.config/omniscan/models.toml — an entry there replaces the same-id
+# entry here and may add new ones (same rule as the translation profiles).
+#
+# Fields per [[model]]: id, name, kind (vision|ocr|inpaint|llm), required (the pipeline cannot run
+# without it), format (zip|file|ollama|cloud), size_mb (approximate download size), license,
+# description (one sentence), used_by (config keys / profile names that use it). Per format:
+# zip   -> mirror_url, sha256, bytes, upstream_repo, upstream_revision
+#          (the zip holds only files under a top-level <id>/ folder and is extracted into
+#          paths.models_dir, so the model lives at <models_dir>/<id>/)
+# file  -> mirror_url, sha256, bytes, upstream_url, install_path (relative to paths.models_dir)
+# ollama-> ollama_name (the tag to pull)
+# cloud -> ollama_name (runs on Ollama Cloud through the local daemon; nothing to download,
+#          needs an Ollama account)
+
+[[model]]
+id = "detector-comic-text-bubble"
+name = "Text and bubble detector"
+kind = "vision"
+required = true
+format = "zip"
+size_mb = 159
+license = "Apache-2.0"
+description = "RT-DETR-v2 that finds speech bubbles and free text."
+used_by = ["detect.repo"]
+mirror_url = "https://github.com/Nawid3333/OmniScan/releases/download/models-v1/detector-comic-text-bubble.zip"
+sha256 = "cccc8a235d90839428327394cc466851961dfc13bf3a6a0658739a8d08224268"
+bytes = 158938404
+upstream_repo = "ogkalu/comic-text-and-bubble-detector"
+upstream_revision = "16e8a622f91fabc6b5b65c96d32d1183f8843546"
+
+[[model]]
+id = "ocr-det-ppocrv5-server"
+name = "Text-line detector (PP-OCRv5 server)"
+kind = "ocr"
+required = true
+format = "zip"
+size_mb = 80
+license = "Apache-2.0"
+description = "Finds the lines of text inside a region."
+used_by = ["ocr.det_repo"]
+mirror_url = "https://github.com/Nawid3333/OmniScan/releases/download/models-v1/ocr-det-ppocrv5-server.zip"
+sha256 = "a08b334d8b8d6e835c696cfa2530ac1be1548a7e76920489ca18bf27ff4d23a9"
+bytes = 79265655
+upstream_repo = "PaddlePaddle/PP-OCRv5_server_det_safetensors"
+upstream_revision = "cbea9f3c3254c6ff7b0016cfbf90549e1ad4c5bb"
+
+[[model]]
+# required for Korean sources (the only source language the OCR stage supports today)
+id = "ocr-rec-korean-ppocrv5-mobile"
+name = "Korean text recognition (PP-OCRv5 mobile)"
+kind = "ocr"
+required = true
+format = "zip"
+size_mb = 23
+license = "Apache-2.0"
+description = "Reads Korean text lines."
+used_by = ["ocr.rec_repo"]
+mirror_url = "https://github.com/Nawid3333/OmniScan/releases/download/models-v1/ocr-rec-korean-ppocrv5-mobile.zip"
+sha256 = "addc407093d7537ae0fcc6b60274d014ec6a8ed70956a701bd2dcb5994aa948b"
+bytes = 22069043
+upstream_repo = "PaddlePaddle/korean_PP-OCRv5_mobile_rec_safetensors"
+upstream_revision = "6ef525a357645ce46495c7ed1fef622c4e009e7a"
+
+[[model]]
+# not required: the flat fill cleans bubble text without it
+id = "inpaint-big-lama"
+name = "LaMa inpainting (big-lama)"
+kind = "inpaint"
+required = false
+format = "file"
+size_mb = 206
+license = "Apache-2.0"
+description = "Removes text from artwork so the English can be lettered."
+used_by = ["inpaint.lama_file"]
+mirror_url = "https://github.com/Nawid3333/OmniScan/releases/download/models-v1/big-lama.pt"
+sha256 = "344c77bbcb158f17dd143070d1e789f38a66c04202311ae3a258ef66667a9ea9"
+bytes = 205669692
+upstream_url = "https://github.com/Sanster/models/releases/download/add_big_lama/big-lama.pt"
+install_path = "lama/big-lama.pt"
+
+[[model]]
+id = "llm-translategemma-12b"
+name = "TranslateGemma 12B"
+kind = "llm"
+required = false
+format = "ollama"
+size_mb = 8110
+license = "Gemma terms"
+description = "Local translation model (one candidate of the ensemble)."
+used_by = ["translategemma-12b-local"]
+ollama_name = "translategemma:12b"
+
+[[model]]
+id = "llm-gemma4-12b"
+name = "Gemma 4 12B"
+kind = "llm"
+required = false
+format = "ollama"
+size_mb = 7560
+license = "Gemma terms"
+description = "Local general model used as a second translation candidate."
+used_by = ["gemma4-12b-local"]
+ollama_name = "gemma4:12b"
+
+[[model]]
+id = "llm-gemma4-31b"
+name = "Gemma 4 31B"
+kind = "llm"
+required = false
+format = "ollama"
+size_mb = 19870
+license = "Gemma terms"
+description = "Larger local model for machines with 24 GB or more of VRAM."
+used_by = []
+ollama_name = "gemma4:31b"
+
+[[model]]
+id = "llm-gemma4-31b-cloud"
+name = "Gemma 4 31B (Ollama Cloud)"
+kind = "llm"
+required = false
+format = "cloud"
+size_mb = 0
+license = "Gemma terms"
+description = "Runs on Ollama Cloud (no download; needs an Ollama account); default judge and third candidate."
+used_by = ["gemma4-31b-cloud", "judge"]
+ollama_name = "gemma4:31b-cloud"
