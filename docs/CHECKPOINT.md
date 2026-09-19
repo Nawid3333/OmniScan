@@ -25,7 +25,7 @@ Run everything with `uv run ...` from `V:\OmniScan`. Until R1 lands, drive the s
 - **Builders on Windows:** `scripts/omni_builder.py` (default 3 concurrent slots since 2026-09-19, `PYTHONPATH` pinned to the worktree) runs `claude` against the local Ollama with `glm-5.3-flash:cloud`.
 
 ## Next, in priority order
-The ordered queue, card states and review tiers are in **`docs/NEXT.md`**. In short: review/merge C4a, C6b, C7c as they finish → launch **R1** → E2E golden test → live judge check on the real Ollama (needs free request slots) → C5c (story memory + glossary proposals) → web views for the new stages →
+The ordered queue, card states and review tiers are in **`docs/NEXT.md`**. In short: review/merge **R1** (running) → E2E golden test → live judge check on the real Ollama (needs free request slots) → C5c (story memory + glossary proposals) → web views for the new stages →
 real Korean raws (A1) for tuning detection thresholds, OCR and typeset sizes → hybrid codec / portability (P1/P2) / desktop shell (M13) later.
 
 ## Waiting on you (the user)
