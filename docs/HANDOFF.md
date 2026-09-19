@@ -69,6 +69,7 @@ branch. Details and gotchas: `docs/CHECKPOINT.md`.
   unfinished. GitHub cannot receive the extract.pics webhook (no custom headers/secret), hence the Cloudflare Worker relay.
 - **Windows:** symlinks need Developer Mode; `uv.lock` needed a `triton` Linux-only override; npm blocks postinstall scripts unless allowed;
   pass long prompts to CLIs on stdin; the PowerShell tool resets its working directory on every call.
+- **Shared `.venv` between worktrees:** every `uv run` re-points the editable `omniscan` install at the worktree it ran in (`.venv/Lib/site-packages/_editable_impl_omniscan.pth`). Builders started by `omni_builder.py` now get `PYTHONPATH=<worktree>/src` so concurrent builders cannot import each other's code (since 2026-09-19); when you run `python`/`pytest` by hand from another worktree, use `uv run` there or set `PYTHONPATH` yourself.
 - **Ollama Cloud (Pro plan):** 3 concurrent requests, rolling ~5 h session limit, hard 429 when exhausted — the client fails fast on it.
 
 ## Environment (verified)

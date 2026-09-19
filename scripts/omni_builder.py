@@ -56,7 +56,12 @@ def say(message: str) -> None:
     print(f"omni-builder: {message}", file=sys.stderr, flush=True)
 
 
-def claude_env() -> dict[str, str]:
+def claude_env(workdir: Path | None = None) -> dict[str, str]:
+    """Environment for the builder; `workdir` pins `import omniscan` to that worktree's src.
+
+    Worktrees share one .venv whose editable install is re-pointed by every `uv run`, so concurrent builders could otherwise
+    import each other's code. PYTHONPATH entries precede the .pth entry.
+    """
     env = dict(os.environ)
     env.update(
         {
@@ -72,6 +77,8 @@ def claude_env() -> dict[str, str]:
             "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "200000",  # GLM has 1M; cap at 200k to keep token use low
         }
     )
+    if workdir is not None:
+        env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(workdir / "src"), env.get("PYTHONPATH", "")]))
     if sys.platform == "win32" and "CLAUDE_CODE_GIT_BASH_PATH" not in env:
         for candidate in (r"C:\Program Files\Git\bin\bash.exe", r"C:\Program Files (x86)\Git\bin\bash.exe"):
             if Path(candidate).is_file():
@@ -170,7 +177,7 @@ def run_claude(workdir: Path, log: Path, model: str, max_turns: int, prompt: str
     # Write straight to the log files (no pipe to another process while running).
     with log.open("ab") as out, log.with_suffix(".stderr").open("ab") as err:
         code = subprocess.run(
-            cmd, input=prompt.encode("utf-8"), cwd=workdir, stdout=out, stderr=err, env=claude_env()
+            cmd, input=prompt.encode("utf-8"), cwd=workdir, stdout=out, stderr=err, env=claude_env(workdir)
         ).returncode
     session = None
     with log.open("rb") as fh:
