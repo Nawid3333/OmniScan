@@ -20,7 +20,7 @@ packaged into CBZ/PDF.
 | ocr | not implemented |
 | translate | working — `omniscan translate` (candidate runs only; needs ocr.json, which no stage produces yet) |
 | judge | working — `omniscan judge` (final.json) |
-| inpaint | not implemented |
+| inpaint | working — `omniscan inpaint` (flat fill only; needs ocr.json) |
 | typeset | not implemented |
 | export | not implemented |
 | pack | working — `omniscan pack` (CBZ/PDF of finished output) |
@@ -34,7 +34,7 @@ pipeline stage consumes it yet.
 
 | Command | Behaviour |
 |---|---|
-| `acquire`, `ocr`, `inpaint`, `typeset`, `export`, `run`, `reference` | registered stubs; they print `not implemented yet` and exit 2 |
+| `acquire`, `ocr`, `typeset`, `export`, `run`, `reference` | registered stubs; they print `not implemented yet` and exit 2 |
 
 ## Requirements
 

@@ -18,6 +18,8 @@ OmniScan keeps three roots (see `[paths]` in [Configuration](#configuration)):
 | `work_root/<Series>/<Chapter N>/ingest.json` | `omniscan ingest` | strip layout: files, widths, y-ranges |
 | `work_root/<Series>/<Chapter N>/slices.json` | `omniscan slice` | bands and slices in strip space |
 | `work_root/<Series>/<Chapter N>/regions.json` | `omniscan detect` | bubble and text regions with ids and reading order |
+| `work_root/<Series>/<Chapter N>/inpaint.json` | `omniscan inpaint` | per-region clean record: method, fill colour, needs-lama flag |
+| `work_root/<Series>/<Chapter N>/patches.npz` | `omniscan inpaint` | cleaned crops and text masks per region (export applies them) |
 | `work_root/<Series>/<Chapter N>/filter.json` | `omniscan filter run` / `restore` | promo-filter decisions |
 | `work_root/<Series>/<Chapter N>/manifest.json` | the stage runner | per-stage status, inputs and config hashes |
 | `work_root/<Series>/<Chapter N>/converted/` | `omniscan ingest` | JPEG cache for raws that were not JPEG |
@@ -68,6 +70,10 @@ Every key in `config/default.toml`:
 | `detect.edge_penalty` | score penalty for boxes cut by an internal tile edge | yes |
 | `detect.merge_bubble_text` | several text boxes inside one bubble become one region | yes |
 | `detect.reading_direction` | order of regions within a row: `ltr`, or `rtl` for manga | yes |
+| `inpaint.pad_px` | patch = union of a region's line boxes grown by this, in px | yes |
+| `inpaint.mask_dilate_px` | line boxes are grown by this to form the text mask, in px | yes |
+| `inpaint.flat_tol` | 90th-percentile colour deviation of the ring under which a flat fill is accepted | yes |
+| `inpaint.min_ring_px` | fewer ring pixels than this → no flat fill | yes |
 | `ollama.local_url` | local Ollama base URL | yes (`doctor`) |
 | `ollama.cloud_url` | Ollama cloud base URL | yes (`doctor`) |
 | `ollama.request_timeout_s` | per-request timeout | used by the LLM client module (no pipeline stage yet) |
@@ -84,7 +90,7 @@ OMNISCAN_RELAY_CLIENT_TOKEN=...
 
 ## Commands
 
-Stubs (`acquire`, `ocr`, `inpaint`, `typeset`, `export`, `run`,
+Stubs (`acquire`, `ocr`, `typeset`, `export`, `run`,
 `reference`) are registered but not usable; each prints `not implemented yet` and exits 2. Every other
 command below is fully working. The examples assume you generated the demo chapter with
 `uv run python scripts/make_demo_chapter.py`.
@@ -184,6 +190,29 @@ chapter work dir. Exit codes as for `ingest`.
 
 ```bash
 uv run omniscan detect DemoSeries
+```
+
+### `omniscan inpaint`
+
+Remove the source text from every OCR region with a flat fill and record the result (`inpaint.json`
++ `patches.npz`). For every region with text lines a mask covers its text; where the surroundings of
+the text are one flat colour (a white or dark bubble interior) the masked pixels are replaced by
+exactly that colour. Regions on textured art cannot be cleaned this way — they are recorded with a
+`needs_lama` flag for a later model-based pass, and SFX regions always are. The pixels themselves
+stay out of the JSON: `patches.npz` holds one cleaned crop plus its mask per region, and the later
+export stage applies them. Like `translate`, this needs `ocr.json`, which no stage produces yet.
+
+| Argument/option | Meaning |
+|---|---|
+| `series` | series name (required) |
+| `--chapter`, `-c <str>` | chapter folder name; repeatable. Default: all |
+| `--force` | re-run even if up to date |
+
+Reads `ingest.json`, `slices.json`, `ocr.json` and the raw images; writes `inpaint.json` and
+`patches.npz` in the chapter work dir. Exit codes as for `ingest`.
+
+```bash
+uv run omniscan inpaint DemoSeries
 ```
 
 ### `omniscan filter run`
