@@ -227,3 +227,27 @@ def test_missed_is_limited_and_sorted_by_area() -> None:
     areas = [(r.bbox.x1 - r.bbox.x0) * (r.bbox.y1 - r.bbox.y0) for r in report.missed]
     assert areas == sorted(areas, reverse=True)
     assert all(isinstance(r, BoxResult) and not r.detected for r in report.missed)
+
+
+# ---------------------------------------------------------------- gaps found by the director's mutation run
+
+
+def test_precision_counts_every_region_assigned_to_a_box() -> None:
+    truth = [truth_box(1, 0, 0, 1000, 1000, "하나 둘")]
+    regions = RegionsArtifact(
+        regions=[region("r0001", 100, 100, 200, 160, "하나"), region("r0002", 400, 200, 500, 260, "둘")]
+    )
+    report = score(truth, regions)
+    assert report.detected_boxes == 1
+    assert report.assigned_regions == 2
+    assert report.precision == 1.0  # both regions lie in the one box; precision is about regions, not boxes
+
+
+def test_a_region_centred_on_the_page_end_belongs_to_the_next_page() -> None:
+    final = FinalArtifact(
+        judge_model="judge", lines=[FinalLine(region_id="r0001", text="hello", decision="pick")]
+    )
+    regions = RegionsArtifact(regions=[region("r0001", 0, 2990, 100, 3010, "안녕")])  # center row 3000 = y1
+    report = score_chapter("S", "C", s1_ingest(), regions, final, [], {1: "hello"}, STATS)
+    assert report.chrf_pages == 1
+    assert report.chrf_mean == 0.0  # the region is not part of page 1 (rows [0, 3000))
