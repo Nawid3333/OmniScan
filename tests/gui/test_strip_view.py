@@ -2,21 +2,21 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 import pytest
 
 pytest.importorskip("PySide6")
 
-from PIL import Image  # noqa: E402
-from PySide6.QtCore import QPoint, QPointF, Qt  # noqa: E402
-from PySide6.QtGui import QWheelEvent  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PIL import Image
+from PySide6.QtCore import QPoint, QPointF, Qt
+from PySide6.QtGui import QWheelEvent
+from PySide6.QtWidgets import QApplication
 
-from omniscan.gui import strip_view as strip_module  # noqa: E402
-from omniscan.gui.services.library import Tile  # noqa: E402
-from omniscan.gui.strip_view import StripView  # noqa: E402
+from omniscan.gui import strip_view as strip_module
+from omniscan.gui.services.library import Tile
+from omniscan.gui.strip_view import StripView
 
 RED = (255, 0, 0)
 GREEN = (0, 255, 0)
@@ -82,9 +82,7 @@ def _prepare(
 
 def _wheel(ctrl: bool, dy: int = 120) -> QWheelEvent:
     """A wheel event with the given angle delta (Ctrl for zoom)."""
-    modifiers = (
-        Qt.KeyboardModifier.ControlModifier if ctrl else Qt.KeyboardModifier.NoModifier
-    )
+    modifiers = Qt.KeyboardModifier.ControlModifier if ctrl else Qt.KeyboardModifier.NoModifier
     return QWheelEvent(
         QPointF(50.0, 50.0),
         QPointF(50.0, 50.0),

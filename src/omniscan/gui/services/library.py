@@ -70,27 +70,25 @@ def list_chapter_names(cfg: Config, series: str) -> list[str]:
 def _load_ingest(work_dir: Path) -> IngestArtifact | None:
     try:
         return IngestArtifact.load(work_dir / "ingest.json")
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return None
 
 
 def _load_slices(work_dir: Path) -> SlicesArtifact | None:
     try:
         return SlicesArtifact.load(work_dir / "slices.json")
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return None
 
 
 def _load_export(work_dir: Path) -> ExportArtifact | None:
     try:
         return ExportArtifact.load(work_dir / "export.json")
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return None
 
 
-def _image_tiles_from_dir(
-    directory: Path, strip_width: int
-) -> tuple[tuple[Tile, ...], int, int]:
+def _image_tiles_from_dir(directory: Path, strip_width: int) -> tuple[tuple[Tile, ...], int, int]:
     """Stack a folder's images from y=0, scaling each height to `strip_width` (or the first image's width).
 
     Returns (tiles, strip_width, strip_height); strip_width 0 when the folder has no images.

@@ -16,8 +16,8 @@ from PySide6.QtCore import QCoreApplication, QEvent, QObject, QRectF, Qt, Signal
 from PySide6.QtGui import (
     QBrush,
     QImage,
-    QPaintEvent,
     QPainter,
+    QPaintEvent,
     QPalette,
     QResizeEvent,
     QWheelEvent,
@@ -164,18 +164,18 @@ class StripView(QAbstractScrollArea):
             finally:
                 self._sync_guard = False
 
-    def resizeEvent(self, event: QResizeEvent) -> None:
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 (Qt handler name)
         """Refit the width (or keep the strip y) when the widget is resized."""
         super().resizeEvent(event)
         self._handle_viewport_resize()
 
-    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # noqa: N802 (Qt handler name)
         """Refit/keep alignment when the viewport resizes (e.g. a scrollbar appearing)."""
         if obj is self.viewport() and event.type() == QEvent.Type.Resize:
             self._handle_viewport_resize()
         return super().eventFilter(obj, event)
 
-    def wheelEvent(self, event: QWheelEvent) -> None:
+    def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802 (Qt handler name)
         """Ctrl + wheel zooms around the viewport top; a plain wheel scrolls the strip."""
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             factor = ZOOM_WHEEL_FACTOR if event.angleDelta().y() > 0 else 1.0 / ZOOM_WHEEL_FACTOR
@@ -218,7 +218,7 @@ class StripView(QAbstractScrollArea):
         painter.setPen(palette.color(QPalette.ColorRole.WindowText))
         painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, label)
 
-    def paintEvent(self, event: QPaintEvent) -> None:
+    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802 (Qt handler name)
         """Draw the tiles intersecting the viewport, centred when narrower than the viewport."""
         painter = QPainter(self.viewport())
         vp = self.viewport().rect()

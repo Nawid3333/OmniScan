@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -12,8 +15,8 @@ from omniscan.core.schemas import (
     ExportArtifact,
     ExportFile,
     IngestArtifact,
-    SlicesArtifact,
     Slice,
+    SlicesArtifact,
     SourceFile,
 )
 from omniscan.gui.services import library
@@ -96,12 +99,8 @@ def _full_artifact_chapter(cfg: Config) -> None:
         strip_height=3000,
         files=[
             SourceFile(index=0, name="page_000.png", sha256="a", width=800, height=1000, y0=0, y1=1000),
-            SourceFile(
-                index=1, name="page_001.png", sha256="b", width=800, height=1500, y0=1000, y1=2500
-            ),
-            SourceFile(
-                index=2, name="page_002.png", sha256="c", width=800, height=500, y0=2500, y1=3000
-            ),
+            SourceFile(index=1, name="page_001.png", sha256="b", width=800, height=1500, y0=1000, y1=2500),
+            SourceFile(index=2, name="page_002.png", sha256="c", width=800, height=500, y0=2500, y1=3000),
             SourceFile(
                 index=3,
                 name="page_003.png",
@@ -233,3 +232,44 @@ def test_corrupt_ingest_behaves_like_missing(cfg: Config, tmp_path: Path) -> Non
 def test_neither_dir_raises(cfg: Config) -> None:
     with pytest.raises(FileNotFoundError):
         library.load_chapter_view(cfg, "S", "Chapter 1")
+
+
+# ---------------------------------------------------------------------- demo script (test 15)
+
+
+def test_demo_script_screenshot_and_unknown_series(tmp_path: Path) -> None:
+    """gui_compare_demo.py renders a chapter headless and exits 1 on an unknown series."""
+    config = _config(tmp_path)
+    for sub in ("library", "work", "output"):
+        (tmp_path / sub).mkdir()
+    _full_artifact_chapter(config)
+
+    script = Path(__file__).resolve().parents[2] / "scripts" / "gui_compare_demo.py"
+    env = {
+        **os.environ,
+        "OMNISCAN_PATHS__LIBRARY_ROOT": str(tmp_path / "library"),
+        "OMNISCAN_PATHS__WORK_ROOT": str(tmp_path / "work"),
+        "OMNISCAN_PATHS__OUTPUT_ROOT": str(tmp_path / "output"),
+    }
+
+    out = tmp_path / "out.png"
+    result = subprocess.run(
+        [sys.executable, str(script), "S", "Chapter 1", "--screenshot", str(out), "--size", "900x600"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert result.returncode == 0, result.stderr
+    with Image.open(out) as img:
+        assert img.size == (900, 600)
+
+    bad = subprocess.run(
+        [sys.executable, str(script), "Nope", "Chapter 1", "--screenshot", str(tmp_path / "x.png")],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert bad.returncode == 1
+    assert "unknown series" in bad.stderr
