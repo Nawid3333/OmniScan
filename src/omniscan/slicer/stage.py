@@ -11,16 +11,14 @@ from omniscan.core.paths import list_images
 from omniscan.core.schemas import IngestArtifact
 from omniscan.core.stage import ChapterContext
 from omniscan.ingest.strip import load_strip
-from omniscan.slicer import slice_strip
+from omniscan.slicer import slice_with_strategy
 
 
 class SliceStage:
     """Cut the chapter strip into slices (satisfies core.stage.Stage); no GPU model group needed."""
 
     name: ClassVar[str] = "slice"
-    version: ClassVar[int] = (
-        2  # 2: strips decoded before the CUDA staging-buffer fix (2026-09-19) held duplicated pages
-    )
+    version: ClassVar[int] = 3  # 3: strategies
     gpu_group: ClassVar[str | None] = None
 
     def inputs(self, ctx: ChapterContext) -> list[Path]:
@@ -43,7 +41,7 @@ class SliceStage:
         ingest = IngestArtifact.load(ingest_path)
 
         strip = load_strip(ctx, ingest)
-        slices = slice_strip(strip, ctx.cfg.slicer, ingest.files)
+        slices = slice_with_strategy(strip, ctx.cfg.slicer, ingest.files)
 
         slices.save(ctx.paths.artifact("slices.json"))
         return {
