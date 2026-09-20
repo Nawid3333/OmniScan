@@ -247,6 +247,8 @@ def test_demo_script_screenshot_and_unknown_series(tmp_path: Path) -> None:
     script = Path(__file__).resolve().parents[2] / "scripts" / "gui_compare_demo.py"
     env = {
         **os.environ,
+        # the shared .venv's editable install may point at another worktree: pin the code under test
+        "PYTHONPATH": os.pathsep.join([str(script.parents[1] / "src"), os.environ.get("PYTHONPATH", "")]),
         "OMNISCAN_PATHS__LIBRARY_ROOT": str(tmp_path / "library"),
         "OMNISCAN_PATHS__WORK_ROOT": str(tmp_path / "work"),
         "OMNISCAN_PATHS__OUTPUT_ROOT": str(tmp_path / "output"),
