@@ -1,0 +1,71 @@
+{
+ "data": {
+  "Page": {
+   "media": [
+    {
+     "id": 105398,
+     "title": {
+      "romaji": "Na Honjaman Level Up",
+      "english": "Solo Leveling",
+      "native": "나 혼자만 레벨업"
+     },
+     "format": "MANGA",
+     "countryOfOrigin": "KR",
+     "startDate": {
+      "year": 2018
+     },
+     "chapters": 201,
+     "status": "FINISHED",
+     "coverImage": {
+      "extraLarge": "https://s4.anilist.co/file/anilistcdn/media/manga/cover/large/bx105398-b673Vt5ZSuz3.jpg",
+      "large": "https://s4.anilist.co/file/anilistcdn/media/manga/cover/medium/bx105398-b673Vt5ZSuz3.jpg",
+      "color": null
+     },
+     "siteUrl": "https://anilist.co/manga/105398"
+    },
+    {
+     "id": 201652,
+     "title": {
+      "romaji": "Insaeng 2-hoechaui Teukgwoneun Pokpung Rebereop",
+      "english": "The Privilege of the Second Life is Power Leveling",
+      "native": "인생 2회차의 특권은 폭풍 레벨업"
+     },
+     "format": "MANGA",
+     "countryOfOrigin": "KR",
+     "startDate": {
+      "year": 2024
+     },
+     "chapters": null,
+     "status": "RELEASING",
+     "coverImage": {
+      "extraLarge": "https://s4.anilist.co/file/anilistcdn/media/manga/cover/large/bx201652-Y5UtAmjHjAQL.jpg",
+      "large": "https://s4.anilist.co/file/anilistcdn/media/manga/cover/medium/bx201652-Y5UtAmjHjAQL.jpg",
+      "color": "#356be4"
+     },
+     "siteUrl": "https://anilist.co/manga/201652"
+    },
+    {
+     "id": 179445,
+     "title": {
+      "romaji": "Na Honjaman Level Up: Ragnarok",
+      "english": "Solo Leveling: Ragnarok",
+      "native": "나 혼자만 레벨업 : 라그나로크"
+     },
+     "format": "MANGA",
+     "countryOfOrigin": "KR",
+     "startDate": {
+      "year": 2024
+     },
+     "chapters": null,
+     "status": "RELEASING",
+     "coverImage": {
+      "extraLarge": "https://s4.anilist.co/file/anilistcdn/media/manga/cover/large/bx179445-ho0nb7baJ1a5.jpg",
+      "large": "https://s4.anilist.co/file/anilistcdn/media/manga/cover/medium/bx179445-ho0nb7baJ1a5.jpg",
+      "color": "#5d86f1"
+     },
+     "siteUrl": "https://anilist.co/manga/179445"
+    }
+   ]
+  }
+ }
+}

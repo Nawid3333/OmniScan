@@ -1,0 +1,99 @@
+{
+ "_note": "Hand-written from the documented Jikan v4 shape (the live API answered 504 while probing on 2026-09-20); only the fields the client reads.",
+ "data": [
+  {
+   "mal_id": 121496,
+   "url": "https://myanimelist.net/manga/121496/Na_Honjaman_Level-up",
+   "images": {
+    "jpg": {
+     "image_url": "https://cdn.myanimelist.net/images/manga/3/222295.jpg",
+     "small_image_url": "https://cdn.myanimelist.net/images/manga/3/222295t.jpg",
+     "large_image_url": "https://cdn.myanimelist.net/images/manga/3/222295l.jpg"
+    },
+    "webp": {
+     "image_url": "https://cdn.myanimelist.net/images/manga/3/222295.webp",
+     "small_image_url": "https://cdn.myanimelist.net/images/manga/3/222295t.webp",
+     "large_image_url": "https://cdn.myanimelist.net/images/manga/3/222295l.webp"
+    }
+   },
+   "title": "Na Honjaman Level-up",
+   "title_english": "Solo Leveling",
+   "title_japanese": "나 혼자만 레벨업",
+   "titles": [
+    {
+     "type": "Default",
+     "title": "Na Honjaman Level-up"
+    },
+    {
+     "type": "English",
+     "title": "Solo Leveling"
+    },
+    {
+     "type": "Japanese",
+     "title": "나 혼자만 레벨업"
+    }
+   ],
+   "type": "Manhwa",
+   "status": "Finished",
+   "published": {
+    "from": "2016-07-25T00:00:00+00:00",
+    "to": "2021-12-25T00:00:00+00:00",
+    "prop": {
+     "from": {
+      "day": 25,
+      "month": 7,
+      "year": 2016
+     },
+     "to": {
+      "day": 25,
+      "month": 12,
+      "year": 2021
+     }
+    }
+   }
+  },
+  {
+   "mal_id": 156239,
+   "url": "https://myanimelist.net/manga/156239/Solo_Leveling__Ragnarok",
+   "images": {
+    "jpg": {
+     "image_url": "https://cdn.myanimelist.net/images/manga/1/999999.jpg",
+     "small_image_url": null,
+     "large_image_url": null
+    },
+    "webp": {
+     "image_url": null,
+     "small_image_url": null,
+     "large_image_url": null
+    }
+   },
+   "title": "Solo Leveling: Ragnarok",
+   "title_english": "Solo Leveling: Ragnarok",
+   "title_japanese": null,
+   "titles": [
+    {
+     "type": "Default",
+     "title": "Solo Leveling: Ragnarok"
+    }
+   ],
+   "type": "Manhwa",
+   "status": "Publishing",
+   "published": {
+    "from": "2024-01-01T00:00:00+00:00",
+    "to": null,
+    "prop": {
+     "from": {
+      "day": 1,
+      "month": 1,
+      "year": 2024
+     },
+     "to": {
+      "day": null,
+      "month": null,
+      "year": null
+     }
+    }
+   }
+  }
+ ]
+}
