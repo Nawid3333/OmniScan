@@ -82,6 +82,8 @@ Each has the **default I will use until you answer**, so nothing is blocked unle
 | F7 | Builder cost policy: OK to use glm-5.3 (not flash) for genuinely hard cards, and when do you want the **big final verification pass**? | Token spend | Flash first; verification pass after the milestones are built |
 | F8 | More **legal test material**: OK to keep using CC-licensed comics (Pepper&Carrot etc.) for non-Korean checks, or do you know CC-licensed Korean webcomics? | Test coverage until real raws arrive | Pepper&Carrot only |
 | F9 | **Glyph rasterisation on the CPU.** Everything pixel-heavy stays on the GPU, but drawing English text needs FreeType (PIL), which is CPU-only: the plan renders each text block into a small RGBA patch on the CPU and composites it on the GPU. Measured cost is expected to be tiny (a few hundred patches per chapter) — OK to accept this exception to "GPU end-to-end" until a benchmark says otherwise? | The typeset renderer design (C7b) | Yes; benchmark in C7b and report the numbers |
+| F10 | **Korean OCR default.** Korean stays on PP-OCRv5 until a v6 model beats it on the qualification suite (card O1c). OK? | OCR default per language | Yes: per-language default, v6 only where measured better |
+| F11 | **Public repo or a separate `OmniScan-releases` repo?** Users must be able to pull the model mirror (`models-v1` release assets) and app updates (GitHub Releases) without a token; a private repo blocks that. | Model download, auto-update (B9/B12/B13) | Repo stays private; upstream Hugging Face is the fallback for models |
 
 ## Decisions (answered)
 
