@@ -147,7 +147,8 @@ def _run_preview(
             return False
         _record_pass_results(result, pass_results, report)
         if preview_chapter in result.failed:
-            result.aborted = "preview failed"
+            rate_limited = "OllamaRateLimitError" in result.failed[preview_chapter]
+            result.aborted = "rate limit" if rate_limited else "preview failed"
             return False
     return True
 

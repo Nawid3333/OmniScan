@@ -457,6 +457,32 @@ def test_step_mode_stops_when_the_gate_answers_no(cfg: Config, fake_stages: dict
     assert "C" not in result.outcomes
 
 
+def test_step_mode_reports_a_rate_limit_in_the_preview_as_such(
+    cfg: Config, fake_stages: dict[str, FakeStage]
+) -> None:
+    from omniscan.llm.ollama import OllamaRateLimitError
+
+    calls = wire_calls(fake_stages)
+    fake_stages["detect"] = FakeStage(
+        "detect",
+        gpu_group="vision",
+        fail_chapters=frozenset({"A"}),
+        error=OllamaRateLimitError("session cap"),
+        calls=calls,
+    )
+    result = run_pipeline(
+        cfg,
+        SERIES,
+        ["A", "B"],
+        client=FakeClient(),
+        gpu=FakeScheduler(),
+        mode="step",
+        gate=recording([]),
+    )
+    assert result.aborted == "rate limit"
+    assert "B" not in result.outcomes
+
+
 def test_step_mode_stops_after_a_failed_preview_stage(cfg: Config, fake_stages: dict[str, FakeStage]) -> None:
     calls = wire_calls(fake_stages)
     fake_stages["detect"] = FakeStage(
