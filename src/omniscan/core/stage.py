@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar, Literal, Protocol, runtime_checkable
 
-from omniscan.core.config import Config
+from omniscan.core.config import Config, series_config
 from omniscan.core.manifest import hash_inputs, hash_json, is_up_to_date, load_manifest
 from omniscan.core.paths import ChapterPaths, SeriesPaths
 from omniscan.core.schemas import Manifest, StageRecord, utcnow
@@ -93,10 +93,15 @@ class StageOutcome:
 
 
 def make_context(cfg: Config, series: str, chapter: str, gpu: GpuScheduler | None = None) -> ChapterContext:
+    """Context of one chapter; the series' `series.toml` overrides are already applied to `ctx.cfg`."""
     sp = SeriesPaths.from_config(cfg, series)
     cp = sp.chapter(chapter)
     return ChapterContext(
-        cfg=cfg, series=sp, paths=cp, manifest=load_manifest(cp.manifest, series, chapter), gpu=gpu
+        cfg=series_config(cfg, sp.library_dir),
+        series=sp,
+        paths=cp,
+        manifest=load_manifest(cp.manifest, series, chapter),
+        gpu=gpu,
     )
 
 

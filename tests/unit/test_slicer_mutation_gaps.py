@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+from typing import Any
 
 import pytest
 import torch
@@ -112,7 +113,7 @@ def test_forced_cut_lands_on_least_detail_row() -> None:
 
 # ---------------------------------------------------------------- cost penalties (SMALL config)
 
-SMALL_CFG = dict(  # all int so pyright accepts **SMALL_CFG into SlicerConfig
+SMALL_CFG: dict[str, Any] = dict(  # **-unpacked into SlicerConfig
     band_min_px=50,
     target_height=500,
     min_height=250,

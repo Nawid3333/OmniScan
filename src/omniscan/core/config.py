@@ -12,7 +12,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -44,6 +44,13 @@ class SlicerConfig(BaseModel):
     hard_max_height: int = 15000
     uniform_tol: int = 10
     max_drift: float = 2.0
+    strategy: Literal["smart", "page", "fixed", "simple_gutter"] = (
+        "smart"  # see docs/PRODUCT_SPEC.md section 3
+    )
+    gutter_variance: float = (
+        5.0  # simple_gutter: a row is a gutter when its per-channel variance is below this
+    )
+    gutter_min_rows: int = 8  # simple_gutter: gutters thinner than this many rows are ignored
 
 
 class DetectConfig(BaseModel):
@@ -181,6 +188,40 @@ def load_config(*extra_tomls: Path) -> Config:
     # pydantic-settings: init kwargs have the highest priority, so apply env on top explicitly.
     env_only = Config().model_dump(exclude_unset=True)
     return Config(**_deep_merge(data, env_only))
+
+
+SERIES_SECTIONS = (
+    "slicer",
+    "detect",
+    "ocr",
+    "inpaint",
+    "typeset",
+    "export",
+)  # machine-level sections are not per series
+
+
+class SeriesConfigError(ValueError):
+    """`<series>/series.toml` is unreadable, invalid or overrides a machine-level section."""
+
+
+def series_config(cfg: Config, series_dir: Path) -> Config:
+    """`cfg` with `<series_dir>/series.toml` merged on top (only SERIES_SECTIONS may be overridden)."""
+    path = series_dir / "series.toml"
+    if not path.is_file():
+        return cfg
+    try:
+        data = _read_toml(path)
+    except tomllib.TOMLDecodeError as exc:
+        raise SeriesConfigError(f"{path}: {exc}") from exc
+    unknown = sorted(set(data) - set(SERIES_SECTIONS))
+    if unknown:
+        raise SeriesConfigError(
+            f"{path}: sections not allowed per series: {', '.join(unknown)} (allowed: {', '.join(SERIES_SECTIONS)})"
+        )
+    try:
+        return Config(**_deep_merge(cfg.model_dump(), data))
+    except ValidationError as exc:
+        raise SeriesConfigError(f"{path}: {exc}") from exc
 
 
 @lru_cache(maxsize=1)

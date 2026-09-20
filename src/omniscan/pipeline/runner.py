@@ -12,6 +12,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from omniscan.core.config import series_config
 from omniscan.core.paths import SeriesPaths
 from omniscan.core.stage import GpuScheduler, StageOutcome, run_series
 from omniscan.pipeline.stages import PASS_OF, STAGE_ORDER, build_stage
@@ -70,6 +71,7 @@ def run_pipeline(
     The caller owns `client` and `gpu`: the runner never builds either. `report` is called once per
     outcome after its pass finished (in chapter order, then stage order).
     """
+    cfg = series_config(cfg, SeriesPaths.from_config(cfg, series).library_dir)
     names = list(stages) if stages is not None else list(STAGE_ORDER)
     if not lama:
         names = [name for name in names if name != "inpaint_lama"]
