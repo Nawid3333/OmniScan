@@ -77,6 +77,9 @@ ignore = [
     "RUF001", "RUF002", "RUF003",    # CJK full-width punctuation is legitimate data in this project
 ]
 
+[tool.ruff.lint.per-file-ignores]
+"src/omniscan/gui/**" = ["N802"]  # Qt handler names (paintEvent, resizeEvent, …) are camelCase
+
 [tool.pyright]
 pythonVersion = "3.14"
 include = ["src", "tests"]
