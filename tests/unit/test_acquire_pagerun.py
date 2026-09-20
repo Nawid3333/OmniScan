@@ -42,7 +42,9 @@ def test_duplicates() -> None:
 
 
 def test_hashed_names_have_no_run() -> None:
-    urls = tuple(f"https://cdn.test/img/{name}" for name in ("3fa9c2.jpg", "91bb07.jpg", "c0de11.jpg", "ab12cd.jpg"))
+    urls = tuple(
+        f"https://cdn.test/img/{name}" for name in ("3fa9c2.jpg", "91bb07.jpg", "c0de11.jpg", "ab12cd.jpg")
+    )
 
     selection = select_pages(urls)
 
