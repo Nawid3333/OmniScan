@@ -8,7 +8,6 @@
       "Grep",
       "WebFetch",
       "Bash(uv run:*)",
-      "Bash(uv sync:*)",
       "Bash(uv lock:*)",
       "Bash(uv tree:*)",
       "Bash(git status:*)",
@@ -49,7 +48,10 @@
       "Edit(src/omniscan/core/**)",
       "Read(~/.config/omniscan/**)",
       "Read(**/.env*)",
-      "Read(**/secrets.env)"
+      "Read(**/secrets.env)",
+      "Bash(uv sync:*)",
+      "Bash(uv add:*)",
+      "Bash(uv remove:*)"
     ]
   },
   "env": {
