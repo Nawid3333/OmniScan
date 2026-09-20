@@ -52,6 +52,14 @@ README status table: keep both rows), read `docs/reports/<ID>.md` (the "Question
 + ruff + pyright (+ web checks), fix problems yourself, mutation-check test-only cards, `git merge --ff-only`, push, remove worktree and
 branch. Details and gotchas: `docs/CHECKPOINT.md`.
 
+## Looking things up with `ask`
+- Don't read big or generated files (logs, JSON artifacts, long reports, huge modules) into your own context — let GLM do it:
+  `uv run python scripts/omni_builder.py ask "QUESTION" [--file PATH ...] [--wait]` (also `--model`, `--max-turns`, `--cwd`).
+- It starts one short read-only `claude -p` session (`glm-5.3-flash:cloud`, 25 turns) in this repo and prints **only the answer** on stdout; progress and logs go to stderr / `.builder/logs/ask-*.jsonl`.
+- Exit codes: `0` answer on stdout · `1` session failed or no answer (see the log) · `3` all builders busy and no `--wait` (retry with `--wait` or read the file yourself).
+- It may read anything in the repo (data/, logs, model JSON on purpose) but cannot write, run Bash, or fetch the web; `.env`/secrets/`~/.config/omniscan` are deny-listed (`.builder/ask-settings.json`).
+- It uses a builder slot for the duration of the call; pass `--wait` to queue instead of failing with exit 3.
+
 ## Lessons that already cost time
 - **Vague specs make builders burn tokens** and hide contradictions. Numbered acceptance tests and exact definitions fixed that. Spec bugs the
   builders caught: dHash of solid colours is identical (B6), an unreachable check (B14), the `forced_cut` boundary meaning (B5), bare page
