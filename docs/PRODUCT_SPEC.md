@@ -67,7 +67,7 @@ Run modes: full run; any subset of stages (`omniscan run -s ...` exists); **step
 Actions: CPU tests on push (P2), app release builds (U4), `model-watch` (§2), `relay-deploy` (exists). Repository visibility (private today) decides whether end users can pull the model mirror and app updates anonymously (owner decision pending).
 
 ## 10. Working method
-Builders (`glm-5.3-flash:cloud`) implement, test and mutation-review; the director writes cards and checks real output. `.claudeignore` and `.claude/settings.json` (deny rules) keep lockfiles, `data/`, `models/`, caches and binaries out of context. When a big or generated file must be inspected, a builder does it (card G1: `omni_builder.py ask`).
+Builders (`glm-5.3-flash:cloud`) implement, test and mutation-review; the director writes cards and checks real output. `.claude/settings.json` deny rules (the owner removed `.claudeignore`, which Claude Code does not read) keep lockfiles, `data/`, `models/`, caches and binaries out of context. When a big or generated file must be inspected, a builder does it (card G1: `omni_builder.py ask`).
 
 ## 11. Card queue for this spec (see `docs/NEXT.md` for states)
 H1 hardware + compatibility · O1a catalog of all OCR models/sizes · O1b OCR engines (ppocr sizes, manga-ocr, PaddleOCR-VL) · O1c qualification suite + model-watch Action · F2 filter tiers + batch · S2 slicer strategies + compare · P1 runner gates and previews · B11' debugger/side-by-side views · R1' reader · L1 library covers/metadata · B33b extract.pics client + chapter selection + completeness checks · G1 `ask` helper · then the PySide6 shell (U3) on top of the JSON interfaces.
