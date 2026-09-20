@@ -104,6 +104,18 @@ class OcrConfig(BaseModel):
         0.5  # regions with an OCR confidence below this (or without any text) are dropped from ocr.json
     )
     lang: Literal["ko", "zh", "ja", "en"] = "ko"  # language written into regions
+    engine: Literal["ppocr", "manga_ocr", "paddleocr_vl"] = (
+        "ppocr"  # ppocr = line detector + recogniser; the others read region crops
+    )
+    det_model: str | None = None  # catalog id of the text-line detector (ppocr); None = det_repo
+    rec_model: str | None = (
+        None  # catalog id of the recogniser / crop reader; None = rec_repo (ppocr) or the engine's default
+    )
+    crop_pad_px: int = (
+        6  # padding around a region before a crop-reading engine (manga_ocr, paddleocr_vl) reads it
+    )
+    crop_batch_size: int = 16  # region crops per forward pass of a crop-reading engine
+    vl_max_new_tokens: int = 192  # paddleocr_vl: longest text it may generate for one region
 
 
 class InpaintConfig(BaseModel):
