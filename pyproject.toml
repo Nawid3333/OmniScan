@@ -35,6 +35,11 @@ dev = [
 [project.scripts]
 omniscan = "omniscan.cli:app"
 
+[project.optional-dependencies]
+gui = [
+    "pyside6-essentials>=6.10,<7",
+]
+
 [build-system]
 requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
