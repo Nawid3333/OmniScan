@@ -1,0 +1,85 @@
+# .claudeignore — keeps generated, binary and bulky files out of Claude's context (the request of 2026-09-19).
+# NOTE: the Claude Code settings docs do not list a `.claudeignore` file. The rules that Claude Code
+# certainly enforces are the `permissions.deny` "Read(...)" rules in `.claude/settings.json`, which
+# mirror this file. Keep both in sync.
+
+# ==========================================
+# 1. LOCKFILES (biggest token eaters)
+# ==========================================
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+Cargo.lock
+poetry.lock
+Gemfile.lock
+uv.lock
+
+# ==========================================
+# 2. DEPENDENCIES & PACKAGES
+# ==========================================
+node_modules/
+.venv/
+venv/
+vendor/
+.pnpm-store/
+
+# ==========================================
+# 3. BUILD & COMPILE OUTPUTS
+# ==========================================
+dist/
+build/
+.next/
+out/
+target/
+*.min.js
+*.min.css
+*.map
+
+# ==========================================
+# 4. MEDIA & BINARY FILES
+# ==========================================
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.ico
+*.pdf
+*.zip
+*.tar.gz
+*.mp4
+
+# ==========================================
+# 5. LOGS, CACHES & TESTS
+# ==========================================
+*.log
+.cache/
+.turbo/
+coverage/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+__pycache__/
+tmp/
+
+# ==========================================
+# 6. IDE & GIT INTERNAL
+# ==========================================
+.git/
+.vscode/
+.idea/
+
+# ==========================================
+# 7. OMNISCAN-SPECIFIC (data, models, builder scratch)
+# ==========================================
+data/
+models/
+.builder/logs/
+.builder/*.jsonl
+.builder/*.err
+*.npz
+*.pt
+*.safetensors
+*.onnx
+*.ttf
+*.otf
