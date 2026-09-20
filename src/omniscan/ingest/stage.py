@@ -9,6 +9,8 @@ from typing import Any, ClassVar
 from omniscan.core.config import Config
 from omniscan.core.paths import list_images
 from omniscan.core.stage import ChapterContext
+from omniscan.filter.apply import example_files, examples_fingerprint, load_overrides
+from omniscan.filter.decide import load_examples
 from omniscan.ingest import ingest_chapter
 
 
@@ -16,12 +18,26 @@ class IngestStage:
     """Resumable wrapper around `ingest_chapter` (satisfies core.stage.Stage)."""
 
     name: ClassVar[str] = "ingest"
-    version: ClassVar[int] = 1
+    version: ClassVar[int] = 2  # 2: file-level promo filter
     gpu_group: ClassVar[str | None] = None
+
+    def __init__(self) -> None:
+        self._fingerprint = ""  # of the examples loaded in inputs() (config_subset has no ctx)
 
     def inputs(self, ctx: ChapterContext) -> list[Path]:
         """Files whose content determines this stage's output (raw images and/or upstream artifacts)."""
-        return list_images(ctx.paths.raw_dir)
+        inputs = list_images(ctx.paths.raw_dir)
+        filter_json = ctx.paths.artifact("filter.json")
+        if filter_json.is_file():
+            inputs.append(filter_json)
+        if ctx.cfg.filter.enabled:  # disabled: no automatic match counts, examples are irrelevant
+            self._fingerprint = examples_fingerprint(
+                load_examples(ctx.cfg.paths.promo_examples, ctx.paths.series)
+            )
+            inputs.extend(example_files(ctx.cfg.paths.promo_examples, ctx.paths.series))
+        else:
+            self._fingerprint = examples_fingerprint([])
+        return inputs
 
     def outputs(self, ctx: ChapterContext) -> list[str]:
         """Artifact names (relative to the chapter work dir) this stage writes."""
@@ -29,7 +45,7 @@ class IngestStage:
 
     def config_subset(self, cfg: Config) -> Mapping[str, Any]:
         """Only the config values that affect this stage's output (hashed for invalidation)."""
-        return {"quality": 95}
+        return {"quality": 95, "filter": cfg.filter.model_dump(), "examples": self._fingerprint}
 
     def run(self, ctx: ChapterContext, models: Mapping[str, Any]) -> Mapping[str, float]:
         """Do the work, write outputs, return metrics (seconds are added by the runner)."""
@@ -39,6 +55,12 @@ class IngestStage:
             ctx.paths.chapter,
             ctx.paths.work_dir / "converted",
             quality=95,
+            examples=load_examples(ctx.cfg.paths.promo_examples, ctx.paths.series)
+            if ctx.cfg.filter.enabled
+            else [],
+            threshold=ctx.cfg.filter.threshold,
+            overrides=load_overrides(ctx.paths.artifact("filter.json")),
+            filtered_dir=ctx.paths.filtered_dir,
         )
         result.artifact.save(ctx.paths.artifact("ingest.json"))
         files = result.artifact.files
@@ -46,4 +68,5 @@ class IngestStage:
             "files": float(len(files)),
             "converted": float(sum(1 for f in files if f.converted_from is not None)),
             "strip_height": float(result.artifact.strip_height),
+            "filtered_files": float(len(result.artifact.filtered_files)),
         }

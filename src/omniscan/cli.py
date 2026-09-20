@@ -3,6 +3,7 @@
 import enum
 import json
 import os
+import shutil
 from collections.abc import Callable, Sequence
 from dataclasses import asdict
 from pathlib import Path
@@ -17,9 +18,10 @@ from rich.table import Table
 from omniscan.acquire.cli import acquire_app
 from omniscan.core.config import Config, get_config, get_secrets
 from omniscan.core.paths import ChapterPaths, SeriesPaths, chapter_number, list_chapters, list_images
-from omniscan.core.schemas import FilterArtifact, GlossaryEntry, IngestArtifact, SlicesArtifact
+from omniscan.core.schemas import GlossaryEntry, IngestArtifact, SlicesArtifact
 from omniscan.doctor import run_all_checks
-from omniscan.filter.decide import decide_files, decide_slices, load_examples, restore
+from omniscan.filter.apply import record_override
+from omniscan.filter.decide import EXAMPLE_SUFFIXES
 from omniscan.glossary.store import GlossaryStore
 from omniscan.glossary.yaml_io import export_yaml, import_yaml
 from omniscan.importer.execute import execute_import
@@ -862,49 +864,78 @@ def _chapter_paths(cfg: Config, series: str, chapter: str) -> ChapterPaths:
     return SeriesPaths.from_config(cfg, series).chapter(chapter)
 
 
-def _assemble_strip(paths: ChapterPaths, ingest: IngestArtifact) -> Image.Image:
-    """Paste each raw file (resized to its strip-space y-range) into one canvas for hashing."""
-    strip = Image.new("RGB", (ingest.strip_width, ingest.strip_height), (255, 255, 255))
-    for source_file in ingest.files:
-        with Image.open(paths.raw_dir / source_file.name) as img:
-            img = img.convert("RGB").resize((ingest.strip_width, source_file.y1 - source_file.y0))
-            strip.paste(img, (0, source_file.y0))
-    return strip
-
-
 filter_app = typer.Typer(no_args_is_help=True, help="Promo filter: pHash match against example images.")
 
 
 @filter_app.command("run")
 def filter_run(
     series: Annotated[str, typer.Argument()],
-    chapter: Annotated[str, typer.Argument()],
-    threshold: Annotated[float, typer.Option(help="Similarity threshold for a filtered verdict.")] = 0.90,
+    chapter: Annotated[
+        list[str] | None,
+        typer.Option("--chapter", "-c", help="Chapter folder name; repeatable. Default: all."),
+    ] = None,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Emit one JSON object instead of text lines.")
+    ] = False,
 ) -> None:
-    """Filter promo files/slices of a chapter against the user's promo examples."""
-    cfg = get_config()
-    paths = _chapter_paths(cfg, series, chapter)
-    ingest_path = paths.artifact("ingest.json")
-    if not ingest_path.is_file():
-        typer.echo(f"filter: no ingest.json for {series}/{chapter} — run ingest first", err=True)
-        raise typer.Exit(2)
-    slices_path = paths.artifact("slices.json")
-    if not slices_path.is_file():
-        typer.echo(f"filter: no slices.json for {series}/{chapter} — run slice first", err=True)
-        raise typer.Exit(2)
+    """Run ingest and slice with the promo filter over a series and report what was filtered."""
+    from omniscan.ingest.stage import IngestStage
+    from omniscan.slicer.stage import SliceStage
 
-    ingest = IngestArtifact.load(ingest_path)
-    slices = SlicesArtifact.load(slices_path)
-    strip = _assemble_strip(paths, ingest)
-    examples = load_examples(cfg.paths.promo_examples, series)
-    decisions = decide_files(paths, ingest, examples, threshold) + decide_slices(
-        paths, chapter, strip, slices, examples, threshold
+    _run_stages("filter", [IngestStage(), SliceStage()], series, chapter, force=False)
+    sp = SeriesPaths.from_config(get_config(), series)
+    chapters = list(chapter) if chapter is not None else sp.chapters()
+    per_chapter: list[tuple[str, list[str], list[int]]] = []
+    total_files = total_slices = 0
+    for name in chapters:
+        paths = sp.chapter(name)
+        ingest_path = paths.artifact("ingest.json")
+        slices_path = paths.artifact("slices.json")
+        files = IngestArtifact.load(ingest_path).filtered_files if ingest_path.is_file() else []
+        slice_indices = (
+            [s.index for s in SlicesArtifact.load(slices_path).slices if s.filtered]
+            if slices_path.is_file()
+            else []
+        )
+        total_files += len(files)
+        total_slices += len(slice_indices)
+        per_chapter.append((name, list(files), slice_indices))
+    if as_json:
+        typer.echo(
+            json.dumps(
+                {
+                    "series": series,
+                    "chapters": [
+                        {"chapter": name, "files": files, "slices": slices}
+                        for name, files, slices in per_chapter
+                    ],
+                    "totals": {"files": total_files, "slices": total_slices, "chapters": len(chapters)},
+                },
+                indent=2,
+            )
+        )
+        return
+    for name, files, slice_indices in per_chapter:
+        typer.echo(f"{series}/{name}: filtered files: {len(files)}, filtered slices: {len(slice_indices)}")
+    typer.echo(
+        f"filter: {total_files} file(s), {total_slices} slice(s) filtered in {len(chapters)} chapter(s)"
     )
-    FilterArtifact(decisions=decisions).save(paths.artifact("filter.json"))
-    n_keep = sum(1 for d in decisions if d.decision == "keep")
-    n_file = sum(1 for d in decisions if d.decision == "filtered" and d.target == "file")
-    n_slice = sum(1 for d in decisions if d.decision == "filtered" and d.target == "slice")
-    typer.echo(f"filter: kept {n_keep}, filtered {n_file} file(s), {n_slice} slice(s)")
+
+
+def _record_override(series: str, chapter: str, target: str, index: int, decision: str) -> None:
+    """Validate (target, index) and append the manual decision to the chapter's filter.json."""
+    if target not in ("file", "slice"):
+        raise typer.BadParameter("target must be 'file' or 'slice'")
+    paths = _chapter_paths(get_config(), series, chapter)
+    record_override(
+        paths,
+        cast("Literal['file', 'slice']", target),
+        index,
+        cast("Literal['filtered', 'restored']", decision),
+    )
+    typer.echo(
+        f"filter: {decision} {target} {index} of {series}/{chapter} (method manual); will apply on the next run"
+    )
 
 
 @filter_app.command("restore")
@@ -914,15 +945,54 @@ def filter_restore(
     target: Annotated[str, typer.Argument()],
     index: Annotated[int, typer.Argument()],
 ) -> None:
-    """Restore a previously filtered file or slice (metadata override; nothing is deleted)."""
-    if target not in ("file", "slice"):
-        raise typer.BadParameter("target must be 'file' or 'slice'")
-    paths = _chapter_paths(get_config(), series, chapter)
-    decision = restore(paths, target, index)  # type: ignore[arg-type]
-    typer.echo(
-        f"filter: {decision.decision} {decision.target} {decision.index} "
-        f"(score {decision.score}, method {decision.method})"
-    )
+    """Restore a filtered file or slice (manual override; applied on the next run)."""
+    _record_override(series, chapter, target, index, "restored")
+
+
+@filter_app.command("force")
+def filter_force(
+    series: Annotated[str, typer.Argument()],
+    chapter: Annotated[str, typer.Argument()],
+    target: Annotated[str, typer.Argument()],
+    index: Annotated[int, typer.Argument()],
+) -> None:
+    """Force-filter a file or slice (manual override; applied even without examples)."""
+    _record_override(series, chapter, target, index, "filtered")
+
+
+@filter_app.command("add")
+def filter_add(
+    series: Annotated[str, typer.Argument()],
+    path: Annotated[Path, typer.Argument(exists=True, dir_okay=False)],
+    global_: Annotated[
+        bool,
+        typer.Option("--global", help="Add to the shared global examples instead of this series'."),
+    ] = False,
+    name: Annotated[
+        str | None, typer.Option("--name", help="Destination file name. Default: the source's name.")
+    ] = None,
+) -> None:
+    """Copy a promo example image (JPEG/PNG) into the examples folder for `filter run` to use."""
+    if name is not None and Path(name).name != name:
+        typer.echo(f"filter: --name must be a plain file name, got {name!r}", err=True)
+        raise typer.Exit(2)
+    dest = get_config().paths.promo_examples / ("global" if global_ else series) / (name or path.name)
+    if dest.suffix.lower() not in EXAMPLE_SUFFIXES:
+        typer.echo(f"filter: {dest.name} is not a JPEG/PNG example (allowed: .jpg, .jpeg, .png)", err=True)
+        raise typer.Exit(2)
+    if dest.exists():
+        typer.echo(f"filter: refusing to overwrite {dest}", err=True)
+        raise typer.Exit(2)
+    try:
+        with Image.open(path):
+            pass
+    except Exception as exc:
+        typer.echo(f"filter: {path} is not a readable image: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(path, dest)
+    typer.echo(f"filter: added example {dest}")
+    typer.echo(f"filter: run 'omniscan filter run {series}' to apply it")
 
 
 app.add_typer(filter_app, name="filter")

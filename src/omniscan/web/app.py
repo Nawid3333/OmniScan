@@ -225,18 +225,15 @@ def create_app(cfg: Config, *, cors_origins: Sequence[str] = ("http://localhost:
 
     @app.get("/api/series/{series}/chapters/{chapter}/pages/{index}")
     def get_page(series: str, chapter: str, index: int) -> FileResponse:
-        """Raw image bytes of the SourceFile at `index` in the chapter's ingest.json."""
+        """Raw image bytes of the SourceFile whose index is `index` (kept files may have gaps)."""
         paths = chapter_paths(series, chapter)
         ingest_path = paths.artifact("ingest.json")
         if not ingest_path.is_file():
             raise HTTPException(status_code=404, detail="ingest.json not found")
         ingest = IngestArtifact.load(ingest_path)
-        if not 0 <= index < len(ingest.files):
-            raise HTTPException(
-                status_code=404,
-                detail=f"page index {index} out of range (0..{len(ingest.files) - 1})",
-            )
-        source_file = ingest.files[index]
+        source_file = next((f for f in ingest.files if f.index == index), None)
+        if source_file is None:
+            raise HTTPException(status_code=404, detail=f"no page with index {index} in ingest.json")
         image_path = paths.raw_dir / source_file.name
         if not image_path.is_file():
             raise HTTPException(status_code=404, detail=f"raw file {source_file.name} not found")
