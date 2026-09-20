@@ -224,3 +224,91 @@ def test_run_rate_limit_exits_3(patched_cfg: Config, fake_pipeline: dict[str, An
     assert "chapter(s) ok" not in result.output
     assert fake_pipeline["managers"][0].released == 1  # released even on abort
     assert not any(call.startswith("translate(") for call in fake_pipeline["calls"])
+
+
+# ---------------------------------------------------------------- step mode
+
+
+def test_run_step_answers_y_and_finishes_normally(patched_cfg: Config, fake_pipeline: dict[str, Any]) -> None:
+    make_chapter(patched_cfg)
+    result = runner.invoke(app, ["run", SERIES, "--step"], input="y\n" * 10)
+    assert result.exit_code == 0
+    assert f"Preview [1/10] {CHAPTER} ingest: done" in result.output
+    assert result.output.count("Preview [") == 10
+    assert result.output.count("Continue?") == 10
+    assert "1 chapter(s) ok, 0 failed" in result.output
+    assert len(fake_pipeline["calls"]) == 10
+
+
+def test_run_step_n_stops_after_the_stage(patched_cfg: Config, fake_pipeline: dict[str, Any]) -> None:
+    make_chapter(patched_cfg)
+    result = runner.invoke(app, ["run", SERIES, "--step"], input="y\nn\n")
+    assert result.exit_code == 4
+    assert f"run: stopped after slice of {CHAPTER}" in result.output
+    assert "chapter(s) ok" not in result.output
+    assert fake_pipeline["calls"] == [f"ingest({CHAPTER})", f"slice({CHAPTER})"]
+
+
+def test_run_step_all_answer_runs_the_rest_without_asking(
+    patched_cfg: Config, fake_pipeline: dict[str, Any]
+) -> None:
+    make_chapter(patched_cfg)
+    result = runner.invoke(app, ["run", SERIES, "--step"], input="a\n")
+    assert result.exit_code == 0
+    assert result.output.count("Continue?") == 1
+    assert result.output.count("Preview [") == 1  # later gates pass without even printing
+    assert len(fake_pipeline["calls"]) == 10
+    assert "1 chapter(s) ok, 0 failed" in result.output
+
+
+def test_run_step_eof_at_the_prompt_stops(patched_cfg: Config, fake_pipeline: dict[str, Any]) -> None:
+    make_chapter(patched_cfg)
+    result = runner.invoke(app, ["run", SERIES, "--step"], input="")
+    assert result.exit_code == 4
+    assert f"run: stopped after ingest of {CHAPTER}" in result.output
+    assert fake_pipeline["calls"] == [f"ingest({CHAPTER})"]
+
+
+def test_run_step_three_invalid_answers_count_as_no(
+    patched_cfg: Config, fake_pipeline: dict[str, Any]
+) -> None:
+    make_chapter(patched_cfg)
+    result = runner.invoke(app, ["run", SERIES, "--step"], input="x\nx\nx\n")
+    assert result.exit_code == 4
+    assert result.output.count("Continue?") == 3
+    assert f"run: stopped after ingest of {CHAPTER}" in result.output
+
+
+def test_run_step_failing_preview_stage_exits_1(patched_cfg: Config, fake_pipeline: dict[str, Any]) -> None:
+    make_chapter(patched_cfg)
+    fake_pipeline["stages"]["slice"].error = RuntimeError("slice boom")
+    result = runner.invoke(app, ["run", SERIES, "--step", "-s", "ingest", "-s", "slice"], input="y\ny\n")
+    assert result.exit_code == 1
+    assert "run: the preview chapter failed — nothing else was run" in result.output
+    assert "    RuntimeError: slice boom" in result.output
+    assert fake_pipeline["calls"] == [f"ingest({CHAPTER})", f"slice({CHAPTER})"]
+
+
+def test_run_step_honours_preview_chapter(patched_cfg: Config, fake_pipeline: dict[str, Any]) -> None:
+    make_chapter(patched_cfg)
+    make_chapter(patched_cfg, "Chapter 2")
+    result = runner.invoke(app, ["run", SERIES, "--step", "--preview-chapter", "Chapter 2"], input="y\n" * 10)
+    assert result.exit_code == 0
+    assert fake_pipeline["calls"][0] == "ingest(Chapter 2)"
+    assert "Preview [1/10] Chapter 2 ingest: done" in result.output
+    assert "2 chapter(s) ok, 0 failed" in result.output
+
+
+def test_run_preview_chapter_without_step_exits_2(patched_cfg: Config, fake_pipeline: dict[str, Any]) -> None:
+    make_chapter(patched_cfg)
+    result = runner.invoke(app, ["run", SERIES, "--preview-chapter", "Chapter 2"])
+    assert result.exit_code == 2
+    assert "run: --preview-chapter needs --step" in result.output
+
+
+def test_run_without_step_never_prompts(patched_cfg: Config, fake_pipeline: dict[str, Any]) -> None:
+    make_chapter(patched_cfg)
+    result = runner.invoke(app, ["run", SERIES])
+    assert result.exit_code == 0
+    assert "Continue?" not in result.output
+    assert "Preview [" not in result.output

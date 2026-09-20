@@ -179,9 +179,7 @@ def run_pipeline(
     if not lama:
         names = [name for name in names if name != "inpaint_lama"]
     passes = plan_passes(names)  # validates the names and puts them in STAGE_ORDER
-    all_chapters = (
-        list(chapters) if chapters is not None else SeriesPaths.from_config(cfg, series).chapters()
-    )
+    all_chapters = list(chapters) if chapters is not None else SeriesPaths.from_config(cfg, series).chapters()
     if not all_chapters:
         raise ValueError(f"no chapters found for series {series!r}")
     preview: str | None = None

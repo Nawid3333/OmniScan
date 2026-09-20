@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypeVar
 
 from omniscan.core.config import Config
 from omniscan.core.paths import ChapterPaths
@@ -17,16 +16,14 @@ from omniscan.core.schemas import (
     CandidateRun,
     ExportArtifact,
     FinalArtifact,
-    InpaintArtifact,
     IngestArtifact,
+    InpaintArtifact,
     LayoutArtifact,
     RegionsArtifact,
     SlicesArtifact,
 )
 
 _REGION_KINDS = ("bubble_text", "free_text", "sfx", "watermark")
-
-_T = TypeVar("_T", bound=Artifact)
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,11 +40,11 @@ def _clip(text: str, limit: int = 60) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
-def _load(cls: type[_T], path: Path) -> _T | None:
+def _load[ArtifactT: Artifact](cls: type[ArtifactT], path: Path) -> ArtifactT | None:
     """The artifact saved at `path`, or None when the file is missing or does not validate."""
     try:
         return cls.load(path)
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return None
 
 

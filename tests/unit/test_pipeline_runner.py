@@ -355,9 +355,7 @@ def recording(events: list[GateEvent]) -> Gate:
     return gate
 
 
-def test_auto_mode_ignores_gate_and_preview_chapter(
-    cfg: Config, fake_stages: dict[str, FakeStage]
-) -> None:
+def test_auto_mode_ignores_gate_and_preview_chapter(cfg: Config, fake_stages: dict[str, FakeStage]) -> None:
     calls = wire_calls(fake_stages)
     events: list[GateEvent] = []
     result = run_pipeline(
@@ -397,15 +395,18 @@ def test_step_mode_runs_the_preview_chapter_through_all_passes_first(
         gate=recording(events),
     )
     assert result.ok
-    assert calls == [
-        *[f"{name}(A)" for name in STAGE_ORDER],  # phase A: all passes of A first
-        *[f"{name}(B)" for name in list(STAGE_ORDER)[:4]],
-        *[f"{name}(C)" for name in list(STAGE_ORDER)[:4]],
-        *[f"{name}(B)" for name in list(STAGE_ORDER)[4:6]],
-        *[f"{name}(C)" for name in list(STAGE_ORDER)[4:6]],
-        *[f"{name}(B)" for name in list(STAGE_ORDER)[6:]],
-        *[f"{name}(C)" for name in list(STAGE_ORDER)[6:]],
-    ]
+    assert (
+        calls
+        == [
+            *[f"{name}(A)" for name in STAGE_ORDER],  # phase A: all passes of A first
+            *[f"{name}(B)" for name in list(STAGE_ORDER)[:4]],
+            *[f"{name}(C)" for name in list(STAGE_ORDER)[:4]],
+            *[f"{name}(B)" for name in list(STAGE_ORDER)[4:6]],
+            *[f"{name}(C)" for name in list(STAGE_ORDER)[4:6]],
+            *[f"{name}(B)" for name in list(STAGE_ORDER)[6:]],
+            *[f"{name}(C)" for name in list(STAGE_ORDER)[6:]],
+        ]
+    )
     assert [(event.chapter, event.stage, event.position, event.total) for event in events] == [
         ("A", name, index, len(STAGE_ORDER)) for index, name in enumerate(STAGE_ORDER, 1)
     ]
@@ -456,9 +457,7 @@ def test_step_mode_stops_when_the_gate_answers_no(cfg: Config, fake_stages: dict
     assert "C" not in result.outcomes
 
 
-def test_step_mode_stops_after_a_failed_preview_stage(
-    cfg: Config, fake_stages: dict[str, FakeStage]
-) -> None:
+def test_step_mode_stops_after_a_failed_preview_stage(cfg: Config, fake_stages: dict[str, FakeStage]) -> None:
     calls = wire_calls(fake_stages)
     fake_stages["detect"] = FakeStage(
         "detect",
@@ -495,7 +494,9 @@ def test_step_mode_rejects_unknown_preview_chapter(cfg: Config, fake_stages: dic
         run_pipeline(cfg, SERIES, ["A", "B"], mode="step", preview_chapter="Z", gate=always)
 
 
-def test_step_mode_selected_preview_chapter_runs_first(cfg: Config, fake_stages: dict[str, FakeStage]) -> None:
+def test_step_mode_selected_preview_chapter_runs_first(
+    cfg: Config, fake_stages: dict[str, FakeStage]
+) -> None:
     calls = wire_calls(fake_stages)
     result = run_pipeline(
         cfg,

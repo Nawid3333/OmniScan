@@ -484,17 +484,43 @@ is resumable through the chapter manifests, so a re-run only executes what chang
 | `--stage`, `-s <name>` | stage name; repeatable. Default: all ten (`ingest`, `slice`, `detect`, `ocr`, `translate`, `judge`, `inpaint`, `inpaint_lama`, `typeset`, `export`) |
 | `--no-lama` | skip the LaMa inpaint stage (`inpaint_lama`) |
 | `--force` | re-run stages even if up to date |
+| `--step` | step-by-step mode: preview one chapter after every stage and decide before continuing |
+| `--preview-chapter <name>` | which chapter step mode previews. Default: the first chapter. Needs `--step` |
 
 The text pass talks to Ollama (local or cloud models); the vision and LaMa models are loaded through
 the VRAM manager, which frees the previous group first, so the three passes never fight over 16 GB.
 One line is printed per stage outcome, then a summary line. Exit 2 for an unknown series or stage
-name; exit 1 when any chapter failed; exit 3 on an Ollama rate limit (partial results are kept —
-re-run later).
+name (or `--preview-chapter` without `--step`); exit 1 when any chapter failed — including a failed
+preview chapter in step mode (nothing else runs then); exit 3 on an Ollama rate limit (partial
+results are kept — re-run later); exit 4 when you answered `n` at a step-mode prompt.
 
 ```bash
 uv run omniscan run DemoSeries
 uv run omniscan run DemoSeries -c "Chapter 1" -s ingest -s slice
 uv run omniscan run DemoSeries --no-lama --force
+```
+
+With `--step` the pipeline spends the preview effort on one chapter before hours of GPU and LLM time
+go into a whole series: the preview chapter first runs through all three passes, pausing after every
+stage. Each pause prints a `Preview` block — the stage's position in the run, its status, and what it
+produced for that one chapter (file and slice counts, detected regions, the OCR text, translation
+candidates, final lines, exported files — a missing artifact is shown as such) plus the error when
+the stage failed — and then asks `Continue? [y]es / [n]o stop / [a]ll (finish without asking)`:
+`y` (or just enter) runs the next stage, `n` stops the run right there (exit 4), and `a` answers
+every remaining question silently. Once the preview chapter has been through every stage, the
+remaining chapters run automatically without prompts. Up-to-date (skipped) stages still pause.
+
+```bash
+uv run omniscan run DemoSeries --step
+uv run omniscan run DemoSeries --step --preview-chapter "Chapter 3" --no-lama
+```
+
+```text
+Preview [5/10] Chapter 3 ocr: done
+    12 region(s) with text, 2 low-confidence (< 0.85)
+    "그럼 우리는 어떻게…"
+    "당신이 정말로 그럴 생각이…"
+Continue? [y]es / [n]o stop / [a]ll (finish without asking) [y]:
 ```
 
 ### `omniscan filter run`
