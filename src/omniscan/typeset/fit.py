@@ -24,6 +24,66 @@ class Measurable(Protocol):
 
 FontFactory = Callable[[Path, int], Measurable]
 
+# Process-wide caches for the bundled-font loader (`font_factory is load_font`): fonts per (resolved
+# path, size) and measurements per (resolved path, size, text), cleared when full so they stay
+# bounded. Any other factory (test fakes) never touches them — it only gets the per-call memo.
+_FONT_CACHE_MAX = 512
+_MEASURE_CACHE_MAX = 200_000
+_font_cache: dict[tuple[str, int], Measurable] = {}
+_measure_cache: dict[tuple[str, int, str], float] = {}
+
+
+class _MeasuredFont:
+    """A Measurable that memoises getlength for one font within a single fit_text call, so the same
+    string measured by wrap_words is not measured again for the widest-line computation."""
+
+    __slots__ = ("_cache", "_font")
+
+    def __init__(self, font: Measurable) -> None:
+        self._font = font
+        self._cache: dict[str, float] = {}
+
+    def getlength(self, text: str) -> float:
+        value = self._cache.get(text)
+        if value is None:
+            value = self._font.getlength(text)
+            self._cache[text] = value
+        return value
+
+
+class _CachedFont:
+    """A Measurable backed by the process-wide measurement cache for one (resolved path, size)."""
+
+    __slots__ = ("_font", "_path", "_size")
+
+    def __init__(self, font: Measurable, path: str, size: int) -> None:
+        self._font = font
+        self._path = path
+        self._size = size
+
+    def getlength(self, text: str) -> float:
+        key = (self._path, self._size, text)
+        value = _measure_cache.get(key)
+        if value is None:
+            value = self._font.getlength(text)
+            if len(_measure_cache) >= _MEASURE_CACHE_MAX:
+                _measure_cache.clear()
+            _measure_cache[key] = value
+        return value
+
+
+def _default_font(path: Path, size: int) -> Measurable:
+    """load_font with the process-wide font cache; its measurements go through _CachedFont."""
+    resolved = str(path.resolve())
+    key = (resolved, size)
+    font = _font_cache.get(key)
+    if font is None:
+        font = load_font(path, size)
+        if len(_font_cache) >= _FONT_CACHE_MAX:
+            _font_cache.clear()
+        _font_cache[key] = font
+    return _CachedFont(font, resolved, size)
+
 
 def wrap_words(text: str, font: Measurable, max_width: float) -> tuple[list[str], bool]:
     """Greedily word-wrap `text` to lines of advance width <= max_width; returns (lines, too_wide)
@@ -96,9 +156,25 @@ def fit_text(
     normalized = " ".join(text.split())
     if not normalized:
         return Fit(size_px=max_px, lines=[], width=0, height=0, overflow=False)
+    factory = _default_font if font_factory is load_font else font_factory
+    words = normalized.split()
     fallback: Fit | None = None
     for size in range(max_px, min_px - 1, -1):
-        font = font_factory(font_path, size)
+        font = _MeasuredFont(factory(font_path, size))
+        if size > min_px:
+            # Sizes above min_px can be rejected before wrapping: a word wider than max_w makes the
+            # size too_wide, and however the words are packed over lines of at most max_w each, at
+            # least ceil(sum of word widths / max_w) lines are needed — a taller minimum cannot fit.
+            sum_words = 0.0
+            rejected = False
+            for word in words:
+                width = font.getlength(word)
+                sum_words += width
+                if width > max_w:
+                    rejected = True
+                    break
+            if rejected or math.ceil(sum_words / max_w) * line_height(size, line_spacing) > max_h:
+                continue
         lines, too_wide = wrap_words(normalized, font, max_w)
         height = len(lines) * line_height(size, line_spacing)
         width = math.ceil(max((font.getlength(line) for line in lines), default=0.0))
