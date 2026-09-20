@@ -116,3 +116,9 @@ whose estimated union box falls completely outside its page (clamped to zero are
    truth (`cer > 2`); with the smallest-containing-box rule they swallow neighbouring regions. The
    E2 review accepted that rule; just confirming macro-CER distortion by oversize reads is still
    accepted.
+## Review addendum (director)
+- Rebased onto `main` (no conflicts); ruff, pyright and the eval + docs tests are green.
+- **Real baseline with the extended tool (all 33 Korean episodes; every episode now has truth boxes; 1 287 of them approximate `<text>` boxes):** pooled box recall 0.39, precision 0.84, mean character-weighted recall (`chars`) 0.54, CER micro mean 0.51 (median 0.43), page-level OCR chrF mean 0.21.
+- **Reading the low numbers:** episodes 25 and 30 (and several others) are almost wordless — both the Korean and the English SVGs are empty (2 KB) for most pages; the truth there is only the long credit/licence strips and patron lists on the last page, which our OCR reads badly (Latin names, dense columns). Their page chrF (≈0.02) is therefore a credits problem, not a dialogue problem. For tuning, steer by the dialogue-heavy episodes (e.g. 6–9, 11) and add a page filter — follow-up **E2c** (`--pages`, and a `--skip-credits` shortcut for the last page).
+- **Answers:** (1) accepted; `chars` is the steering recall. (2) the smallest-containing-box rule stays; oversize reads distort macro CER only.
+- Mutation review of `eval/*` after E2b: to be included in a later Q card.
