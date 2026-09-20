@@ -41,10 +41,12 @@ def test_dispatcher_follows_cfg_and_explicit_strategy() -> None:
     strip, _ = random_strip(0)
     assert slice_with_strategy(strip, SlicerConfig(strategy="fixed")).params["strategy"] == "fixed"
     assert (
-        slice_with_strategy(strip, SlicerConfig(strategy="smart"), strategy="fixed").params["strategy"] == "fixed"
+        slice_with_strategy(strip, SlicerConfig(strategy="smart"), strategy="fixed").params["strategy"]
+        == "fixed"
     )
     assert (
-        slice_with_strategy(strip, SlicerConfig(strategy="fixed"), strategy="smart").params["strategy"] == "smart"
+        slice_with_strategy(strip, SlicerConfig(strategy="fixed"), strategy="smart").params["strategy"]
+        == "smart"
     )
 
 
@@ -52,7 +54,10 @@ def test_dispatcher_unknown_name_message() -> None:
     strip, _ = random_strip(0)
     with pytest.raises(ValueError) as excinfo:
         slice_with_strategy(strip, SlicerConfig(), strategy="nope")
-    assert str(excinfo.value) == "unknown slicer strategy 'nope'; choose one of smart, page, fixed, simple_gutter"
+    assert (
+        str(excinfo.value)
+        == "unknown slicer strategy 'nope'; choose one of smart, page, fixed, simple_gutter"
+    )
 
 
 def test_smart_matches_slice_strip_apart_from_params() -> None:
@@ -277,7 +282,9 @@ def test_stage_uses_configured_strategy(tmp_path: Path) -> None:
 def test_series_toml_strategy_reaches_stage(tmp_path: Path) -> None:
     cfg = _cpu_cfg(tmp_path)
     _raw_chapter(cfg)
-    (cfg.paths.library_root / "S" / "series.toml").write_text('[slicer]\nstrategy = "fixed"\n', encoding="utf-8")
+    (cfg.paths.library_root / "S" / "series.toml").write_text(
+        '[slicer]\nstrategy = "fixed"\n', encoding="utf-8"
+    )
     ctx = make_context(cfg, "S", "Chapter 1")
     assert ctx.cfg.slicer.strategy == "fixed"
     assert run_chapter([IngestStage(), SliceStage()], ctx)[1].status == "done"

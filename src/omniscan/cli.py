@@ -279,6 +279,63 @@ app.command("ingest")(cmd_ingest)
 app.command("slice")(cmd_slice)
 
 
+def cmd_slice_compare(
+    series: Annotated[str, typer.Argument()],
+    chapter: Annotated[
+        str | None, typer.Option("--chapter", "-c", help="Chapter folder name. Default: the first chapter.")
+    ] = None,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Emit the per-strategy summaries as one JSON object.")
+    ] = False,
+) -> None:
+    """Compare every slicer strategy's cuts on one chapter's strip (nothing is written)."""
+    from omniscan.core.schemas import IngestArtifact
+    from omniscan.core.stage import make_context, run_stage
+    from omniscan.ingest.stage import IngestStage
+    from omniscan.ingest.strip import load_strip
+    from omniscan.slicer.compare import compare_strategies, summarize
+
+    cfg = get_config()
+    sp = SeriesPaths.from_config(cfg, series)
+    chapters = sp.chapters()
+    if chapter is None:
+        if not chapters:
+            typer.echo(f"slice-compare: no chapters found for series {series!r}", err=True)
+            raise typer.Exit(1)
+        chapter = chapters[0]
+    elif chapter not in chapters:
+        typer.echo(f"slice-compare: unknown chapter {chapter!r} for series {series!r}", err=True)
+        raise typer.Exit(1)
+
+    ctx = make_context(cfg, series, chapter)  # ctx.cfg carries the series.toml [slicer] overrides
+    ingest_path = ctx.paths.artifact("ingest.json")
+    if not ingest_path.is_file() and run_stage(IngestStage(), ctx).status != "done":
+        typer.echo(f"slice-compare: ingest failed for {series}/{chapter}", err=True)
+        raise typer.Exit(1)
+    ingest = IngestArtifact.load(ingest_path)
+    strip = load_strip(ctx, ingest)  # exactly the strip the slice stage builds
+    artifacts = compare_strategies(strip, ctx.cfg.slicer, ingest.files)
+    summaries = [summarize(name, artifact) for name, artifact in artifacts.items()]
+    if as_json:
+        payload = {
+            "series": series,
+            "chapter": chapter,
+            "strip_height": artifacts[next(iter(artifacts))].strip_height,
+            "strategies": [asdict(s) for s in summaries],
+        }
+        typer.echo(json.dumps(payload, indent=2))
+        return
+    typer.echo(f"{'strategy':<14}{'slices':>7}{'min':>7}{'median':>7}{'max':>7}{'forced':>7}{'blank':>7}")
+    for s in summaries:
+        typer.echo(
+            f"{s.strategy:<14}{s.slices:>7}{s.min_height:>7}{s.median_height:>7}"
+            f"{s.max_height:>7}{s.forced:>7}{s.blank:>7}"
+        )
+
+
+app.command("slice-compare")(cmd_slice_compare)
+
+
 def cmd_detect(
     series: Annotated[str, typer.Argument()],
     chapter: Annotated[

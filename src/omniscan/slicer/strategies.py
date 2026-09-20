@@ -69,7 +69,7 @@ def slice_fixed(
         boundaries.append((pos, height, False))
     if len(boundaries) > 1 and height - pos < cfg.min_height:
         y0, _, forced = boundaries[-2]
-        boundaries = boundaries[:-2] + [(y0, height, forced)]
+        boundaries = [*boundaries[:-2], (y0, height, forced)]
     return _finalize(strip, cfg, boundaries, source_files, "fixed")
 
 

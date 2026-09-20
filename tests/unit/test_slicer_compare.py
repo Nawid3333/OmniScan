@@ -54,7 +54,12 @@ def test_summarize_counts_and_heights() -> None:
 
 
 def test_summarize_median_even_count() -> None:
-    slices = [(0, 100, False, False), (100, 300, False, False), (300, 600, False, False), (600, 1000, False, False)]
+    slices = [
+        (0, 100, False, False),
+        (100, 300, False, False),
+        (300, 600, False, False),
+        (600, 1000, False, False),
+    ]
     assert summarize("fixed", _artifact(slices)).median_height == 250  # heights 100..400: (200 + 300) / 2
 
 

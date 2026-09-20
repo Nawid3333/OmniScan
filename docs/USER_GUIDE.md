@@ -231,6 +231,44 @@ dir. Exit codes as for `ingest`.
 uv run omniscan slice DemoSeries
 ```
 
+### `omniscan slice-compare`
+
+Run every slicer strategy over one chapter's strip and print where each would cut, so you can pick
+the strategy for a series ([Slicer strategies](#slicer-strategies)). The strip is built exactly as
+`omniscan slice` builds it (ingest runs first when its artifact is missing); nothing is written to
+the work directory.
+
+| Argument/option | Meaning |
+|---|---|
+| `series` | series name (required) |
+| `--chapter`, `-c <str>` | chapter folder name. Default: the first chapter |
+| `--json` | emit the per-strategy summaries as one JSON object |
+
+Prints one row per strategy (`strategy slices min median max forced blank`). With `--json` it
+prints `{"series", "chapter", "strip_height", "strategies": [...]}` with one summary object per
+strategy. An unknown series or chapter prints a message on stderr and exits 1.
+
+```bash
+uv run omniscan slice-compare DemoSeries
+uv run omniscan slice-compare DemoSeries -c "Chapter 1" --json
+```
+
+### Slicer strategies
+
+Four ways to cut a chapter strip, selected per series with `strategy` in the
+`library_root/<series>/series.toml` `[slicer]` section (default `smart`). All of them produce the
+same `slices.json` artifact (tiling the strip exactly, with blank and forced-cut flags):
+
+| Strategy | Behaviour |
+|---|---|
+| `smart` | detect uniform gutter bands (`slicer.uniform_tol`, `band_min_px`, `max_drift`), then plan cuts between `min_height` / `target_height` / `max_height` by dynamic programming; forced cuts land on the least-detailed row |
+| `page` | one slice per raw page, boundaries exactly at the file edges; falls back to `smart` (recorded as `params.fallback`) when the ingest has no page layout |
+| `fixed` | cut every `slicer.target_height` rows; a tail shorter than `slicer.min_height` merges into the previous slice |
+| `simple_gutter` | cut at the centre of each gutter run at least `slicer.gutter_min_rows` rows tall (`slicer.gutter_variance` decides what a gutter row is), the run nearest `target_height` inside every `[min_height, max_height]` window; a forced `target_height` cut when no gutter qualifies |
+
+`omniscan slice-compare` shows what each would do to one chapter before you commit the series to
+one of them in `series.toml`.
+
 ### `omniscan detect`
 
 Detect speech bubbles and text in chapter strips (`regions.json`). Runs `ingest` and `slice` first if
