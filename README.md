@@ -28,6 +28,7 @@ packaged into CBZ/PDF.
 | pack | working — `omniscan pack` (CBZ/PDF of finished output) |
 | job queue | working — `omniscan queue add` / `list` / `run` / `pause` / `resume` / `cancel` / `retry` / `clear` |
 | models | working — `omniscan models list` / `download` / `remove` / `verify` |
+| hardware | working — `omniscan hardware [--json]` |
 | web viewer | working — `omniscan serve` + `npm run dev` (Slicer, OCR, Translation, Reader and Filtered views — read-only except the Filtered view's Restore button; the OCR/Translation views need an `ocr.json`) |
 | update | working — `omniscan update check` / `download` |
 

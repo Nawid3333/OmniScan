@@ -152,6 +152,27 @@ hub/cache). Writes nothing.
 uv run omniscan doctor
 ```
 
+### `omniscan hardware`
+
+Report what this machine offers: OS and architecture, the CPU (name, physical/logical cores), RAM,
+the torch build (`cuda`/`rocm`/`mps`/`cpu`), the device `gpu.device = "auto"` would pick, one line
+per torch-visible GPU (best first: discrete before integrated, then more VRAM) with its backend and
+device string, the ONNX Runtime providers when onnxruntime is installed, and the free disk space at
+`paths.models_dir`. Integrated GPUs are marked `(integrated)`. The same snapshot as JSON is what the
+future settings screen reads, and `omniscan models list` assesses each catalog model against it.
+
+| Option | Meaning |
+|---|---|
+| `--json` | emit the hardware snapshot as one JSON object |
+
+Never fails when torch is missing or broken: it then reports no GPUs and `best device: cpu`. Writes
+nothing.
+
+```bash
+uv run omniscan hardware
+uv run omniscan hardware --json
+```
+
 ### `omniscan import`
 
 Import raw chapter images from a local folder into the library. The source folder can be one chapter
@@ -641,10 +662,20 @@ every download is sha256-verified. See [docs/MODELS.md](MODELS.md) for the per-m
 
 | Subcommand | Effect |
 |---|---|
-| `list [--json]` | print one row per model (`id`, `kind`, `size`, `required`/`optional`, `status`, `description`) plus a footer with the total size of the missing required models. `--json` emits a machine-readable object (the stable interface a future settings screen will use); the Ollama statuses show `unknown` when the daemon is unreachable |
-| `download <id>... [--required]` | download the named models; `--required` also downloads every required model that is not installed. Progress is printed at most once per 5 % step; a failing model is reported on stderr and the others are still tried (exit 1). Unknown ids exit 2 |
+| `list [--json]` | print one row per model (`id`, `kind`, `size`, `required`/`optional`, `status`, `description`) with a last column `fit` — how the model would run on this machine (`ok`/`slow`/`warn`/`incompatible`, see below) — plus a footer with the total size of the missing required models. Under the table, every non-`ok` model that is not installed gets one indented line with the reason. `--json` emits a machine-readable object (the stable interface a future settings screen will use) where each model carries a `compatibility` object (`level`, `device`, `messages`) and the top level carries the `hardware` snapshot of `omniscan hardware`; the Ollama statuses show `unknown` when the daemon is unreachable |
+| `download <id>... [--required] [--force]` | download the named models; `--required` also downloads every required model that is not installed. A non-`ok` model prints its compatibility messages as a warning first; an `incompatible` model is refused (exit 1, nothing downloaded) unless `--force` is given. Progress is printed at most once per 5 % step; a failing model is reported on stderr and the others are still tried (exit 1). Unknown ids exit 2 |
 | `remove <id>...` | delete installed models (their folder, the LaMa file, or the Ollama daemon's copy). Prints `removed` or `nothing to remove` per model; unknown ids exit 2 |
 | `verify [<id>...]` | recompute the statuses (missing/installed/corrupt/cloud/unknown); default: every non-llm model. Exit 1 when one is `corrupt` |
+
+Statuses: `installed` (present and verified), `missing`, `corrupt` (size or sha256 mismatch — delete
+and re-download), `cloud` (Ollama Cloud model, nothing on disk), `unknown` (Ollama unreachable).
+
+The `fit` column is the per-model compatibility against the hardware snapshot (`omniscan hardware`):
+`ok` (a GPU with enough VRAM, or fast on the CPU), `slow` (runs, but noticeably slower than on a
+GPU), `warn` (CPU only and slow), `incompatible` (no supported backend, or the RAM/VRAM it needs is
+not there). The reasons are the `messages` in the JSON and the indented lines under the table; the
+requirements themselves are the requirement fields in `config/models.toml`
+(see [docs/MODELS.md](MODELS.md)).
 
 Statuses: `installed` (present and verified), `missing`, `corrupt` (size or sha256 mismatch — delete
 and re-download), `cloud` (Ollama Cloud model, nothing on disk), `unknown` (Ollama unreachable).

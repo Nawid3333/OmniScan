@@ -5,6 +5,15 @@ size and licence. `omniscan models list` shows the entries with their install st
 models download <id>` installs one. The shipped app stays small — the user decides what to download
 (owner decision 2026-09-19).
 
+Every entry can carry hardware requirements (card H1): `min_vram_gb` (GPU memory needed to run
+comfortably), `min_ram_gb`, `backends` (which of `cuda`/`rocm`/`mps`/`xpu`/`cpu` the model supports;
+empty = all), `cpu_ok` (usable without a GPU) and `cpu_speed` (`fast`/`ok`/`slow`/`unusable` — how
+it feels on the CPU), plus free-text `notes`. `omniscan hardware` detects the machine and
+`omniscan models list` shows the resulting `fit` per model — `ok`, `slow`, `warn` or `incompatible`
+— with the reason (e.g. "needs 21 GB of GPU memory, your AMD Radeon RX 9070 XT has 16 GB") in its
+messages; `models download` warns for a non-`ok` fit and refuses `incompatible` models unless
+`--force` is given.
+
 The four vision/inpaint weights are mirrored **unchanged** as assets of the GitHub release
 [`models-v1`](https://github.com/Nawid3333/OmniScan/releases/tag/models-v1) of `Nawid3333/OmniScan`
 (the mirror repo is private today, so a failed download falls back to the upstream source
