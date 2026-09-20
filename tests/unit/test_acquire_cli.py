@@ -15,13 +15,13 @@ from omniscan.acquire.extractor import ExtractedImage, Extraction
 from omniscan.acquire.plan import write_accepted
 from omniscan.cli import app
 from omniscan.core.config import Config, PathsConfig
+from tests.unit.test_acquire_download import Server, noise_image
 from tests.unit.test_acquire_run import (
-    FakeExtractor,
     IMAGE_URL,
     PAGE_URL,
+    FakeExtractor,
     extraction,
 )
-from tests.unit.test_acquire_download import Server, noise_image
 
 runner = CliRunner()
 
@@ -51,9 +51,7 @@ def acquire_env(tmp_path: Path, cfg: Config, monkeypatch: pytest.MonkeyPatch):
     server = Server()
     extractor = FakeExtractor()
     keys: list[str] = []
-    monkeypatch.setattr(
-        acquire_cli, "make_extractor", lambda key: (keys.append(key), extractor)[1]
-    )
+    monkeypatch.setattr(acquire_cli, "make_extractor", lambda key: (keys.append(key), extractor)[1])
     monkeypatch.setattr(
         acquire_cli,
         "get_secrets",
@@ -131,8 +129,21 @@ def test_plan_json(cfg: Config) -> None:
 def test_plan_mode_advanced_costs_two_per_chapter(cfg: Config) -> None:
     result = runner.invoke(
         app,
-        ["acquire", "plan", "S", "--template", TEMPLATE, "--first", "1", "--last", "5",
-         "--select", "2-4", "--mode", "advanced"],
+        [
+            "acquire",
+            "plan",
+            "S",
+            "--template",
+            TEMPLATE,
+            "--first",
+            "1",
+            "--last",
+            "5",
+            "--select",
+            "2-4",
+            "--mode",
+            "advanced",
+        ],
     )
     assert result.exit_code == 0
     assert "3 chapter(s): 3 to do, 0 done — estimated credits: 6 (mode advanced)" in result.output
@@ -153,9 +164,7 @@ def test_plan_urls_file_with_comments_and_named_lines(tmp_path: Path, cfg: Confi
 
 
 def test_plan_urls_stdin(cfg: Config) -> None:
-    result = runner.invoke(
-        app, ["acquire", "plan", "S", "--urls", "-"], input="https://site.test/s/1\n"
-    )
+    result = runner.invoke(app, ["acquire", "plan", "S", "--urls", "-"], input="https://site.test/s/1\n")
     assert result.exit_code == 0
     assert "Chapter 1" in result.output
     assert "1 chapter(s): 1 to do, 0 done — estimated credits: 1 (mode basic)" in result.output
@@ -164,8 +173,17 @@ def test_plan_urls_stdin(cfg: Config) -> None:
 def test_plan_link_twice_and_first_number(cfg: Config) -> None:
     result = runner.invoke(
         app,
-        ["acquire", "plan", "S", "--link", "https://site.test/a/1", "--link", "https://site.test/a/2",
-         "--first-number", "5"],
+        [
+            "acquire",
+            "plan",
+            "S",
+            "--link",
+            "https://site.test/a/1",
+            "--link",
+            "https://site.test/a/2",
+            "--first-number",
+            "5",
+        ],
     )
     assert result.exit_code == 0
     assert "Chapter 5" in result.output and "Chapter 6" in result.output
@@ -210,8 +228,7 @@ def test_plan_drm_url_is_refused(cfg: Config) -> None:
 
 def test_plan_select_that_matches_nothing_exits_2(cfg: Config) -> None:
     result = runner.invoke(
-        app, ["acquire", "plan", "S", "--template", TEMPLATE, "--first", "1", "--last", "2",
-              "--select", "99"]
+        app, ["acquire", "plan", "S", "--template", TEMPLATE, "--first", "1", "--last", "2", "--select", "99"]
     )
     assert result.exit_code == 2
     assert "nothing matches '99'" in result.output
@@ -227,9 +244,7 @@ def test_run_happy_path_with_yes(cfg: Config, acquire_env) -> None:
         app, ["acquire", "run", "S", "--template", TEMPLATE, "--first", "1", "--last", "3", "--yes"]
     )
     assert result.exit_code == 0, result.output
-    assert (
-        "You are responsible for having the right to download and process this content." in result.output
-    )
+    assert "You are responsible for having the right to download and process this content." in result.output
     assert "3 chapter(s): 3 to do, 0 done — estimated credits: 3 (mode basic)" in result.output
     assert "✓ Chapter 1: 5 pages" in result.output
     assert "✓ Chapter 3: 5 pages" in result.output
@@ -244,7 +259,8 @@ def test_run_confirmation_declined(cfg: Config, acquire_env) -> None:
     server, extractor, keys = acquire_env
     script_chapters(server, extractor, 1, 3)
     result = runner.invoke(
-        app, ["acquire", "run", "S", "--template", TEMPLATE, "--first", "1", "--last", "3"],
+        app,
+        ["acquire", "run", "S", "--template", TEMPLATE, "--first", "1", "--last", "3"],
         input="n\n",
     )
     assert result.exit_code == 2
@@ -255,7 +271,7 @@ def test_run_confirmation_declined(cfg: Config, acquire_env) -> None:
 
 
 def test_run_confirmation_eof_is_an_abort(cfg: Config, acquire_env) -> None:
-    server, extractor, keys = acquire_env
+    _server, extractor, _keys = acquire_env
     result = runner.invoke(
         app, ["acquire", "run", "S", "--template", TEMPLATE, "--first", "1", "--last", "1"]
     )
@@ -265,10 +281,11 @@ def test_run_confirmation_eof_is_an_abort(cfg: Config, acquire_env) -> None:
 
 
 def test_run_confirmation_accepted(cfg: Config, acquire_env) -> None:
-    server, extractor, keys = acquire_env
+    server, extractor, _keys = acquire_env
     script_chapters(server, extractor, 1, 1)
     result = runner.invoke(
-        app, ["acquire", "run", "S", "--template", TEMPLATE, "--first", "1", "--last", "1"],
+        app,
+        ["acquire", "run", "S", "--template", TEMPLATE, "--first", "1", "--last", "1"],
         input="y\n",
     )
     assert result.exit_code == 0, result.output
@@ -276,7 +293,7 @@ def test_run_confirmation_accepted(cfg: Config, acquire_env) -> None:
 
 
 def test_run_missing_api_key_refuses(cfg: Config, acquire_env, monkeypatch: pytest.MonkeyPatch) -> None:
-    server, extractor, keys = acquire_env
+    _server, extractor, keys = acquire_env
     monkeypatch.setattr(acquire_cli, "get_secrets", lambda: SimpleNamespace(extractpics_api_key=None))
     result = runner.invoke(
         app, ["acquire", "run", "S", "--template", TEMPLATE, "--first", "1", "--last", "1", "--yes"]
@@ -288,7 +305,7 @@ def test_run_missing_api_key_refuses(cfg: Config, acquire_env, monkeypatch: pyte
 
 
 def test_run_failed_chapter_exits_1_with_the_summary(cfg: Config, acquire_env) -> None:
-    server, extractor, keys = acquire_env
+    server, extractor, _keys = acquire_env
     script_chapters(server, extractor, 1, 3)
     server.script(IMAGE_URL.format(n=2, i=2), 404)
     result = runner.invoke(
@@ -300,12 +317,24 @@ def test_run_failed_chapter_exits_1_with_the_summary(cfg: Config, acquire_env) -
 
 
 def test_run_max_credits_skips_the_rest(cfg: Config, acquire_env) -> None:
-    server, extractor, keys = acquire_env
+    server, extractor, _keys = acquire_env
     script_chapters(server, extractor, 1, 3)
     result = runner.invoke(
         app,
-        ["acquire", "run", "S", "--template", TEMPLATE, "--first", "1", "--last", "3",
-         "--yes", "--max-credits", "1"],
+        [
+            "acquire",
+            "run",
+            "S",
+            "--template",
+            TEMPLATE,
+            "--first",
+            "1",
+            "--last",
+            "3",
+            "--yes",
+            "--max-credits",
+            "1",
+        ],
     )
     assert result.exit_code == 0
     assert "- Chapter 2: skipped (credit budget reached)" in result.output
@@ -314,7 +343,7 @@ def test_run_max_credits_skips_the_rest(cfg: Config, acquire_env) -> None:
 
 
 def test_run_review_event_line(cfg: Config, acquire_env) -> None:
-    server, extractor, keys = acquire_env
+    server, extractor, _keys = acquire_env
     library = cfg.paths.library_root / "S"
     for n in (1, 3, 4):
         chapter = library / f"Chapter {n}"
@@ -323,8 +352,20 @@ def test_run_review_event_line(cfg: Config, acquire_env) -> None:
     script_pages(server, extractor, 2, 2)
     result = runner.invoke(
         app,
-        ["acquire", "run", "S", "--template", TEMPLATE, "--first", "1", "--last", "4", "--yes",
-         "--max-credits", "1"],
+        [
+            "acquire",
+            "run",
+            "S",
+            "--template",
+            TEMPLATE,
+            "--first",
+            "1",
+            "--last",
+            "4",
+            "--yes",
+            "--max-credits",
+            "1",
+        ],
     )
     assert result.exit_code == 0, result.output
     assert "? Chapter 2: 2 pages (review: few_pages)" in result.output
@@ -333,7 +374,7 @@ def test_run_review_event_line(cfg: Config, acquire_env) -> None:
 
 
 def test_run_json_prints_the_result_only_on_stdout(cfg: Config, acquire_env) -> None:
-    server, extractor, keys = acquire_env
+    server, extractor, _keys = acquire_env
     script_chapters(server, extractor, 1, 2)
     result = runner.invoke(
         app,
@@ -357,7 +398,7 @@ def test_run_json_prints_the_result_only_on_stdout(cfg: Config, acquire_env) -> 
 
 
 def test_run_nothing_to_do(cfg: Config, acquire_env) -> None:
-    server, extractor, keys = acquire_env
+    _server, extractor, _keys = acquire_env
     chapter = cfg.paths.library_root / "S" / "Chapter 1"
     chapter.mkdir(parents=True)
     write_accepted(chapter, "ok", [], 5, source_url="https://site.test/chapter-1")
@@ -370,7 +411,7 @@ def test_run_nothing_to_do(cfg: Config, acquire_env) -> None:
 
 
 def test_run_uses_sources_toml_when_no_source_options_are_given(cfg: Config, acquire_env) -> None:
-    server, extractor, keys = acquire_env
+    server, extractor, _keys = acquire_env
     write_sources(cfg, "S", [("Chapter 1", "https://site.test/chapter-1")])
     script_chapters(server, extractor, 1, 1)
     result = runner.invoke(app, ["acquire", "run", "S", "--yes"])
@@ -384,8 +425,12 @@ def test_run_uses_sources_toml_when_no_source_options_are_given(cfg: Config, acq
 
 def build_library(cfg: Config) -> None:
     """Chapters 1-3 with 20 pages each (3 also holding a text file named .jpg) and chapter 5 with 5."""
-    for name, pages, extra in (("Chapter 1", 20, False), ("Chapter 2", 20, False),
-                               ("Chapter 3", 20, True), ("Chapter 5", 5, False)):
+    for name, pages, extra in (
+        ("Chapter 1", 20, False),
+        ("Chapter 2", 20, False),
+        ("Chapter 3", 20, True),
+        ("Chapter 5", 5, False),
+    ):
         chapter_dir = cfg.paths.library_root / "S" / name
         chapter_dir.mkdir(parents=True)
         for i in range(1, pages + 1):
@@ -413,7 +458,10 @@ def test_check_json(cfg: Config) -> None:
     payload = json.loads(result.output)
     assert payload["series"] == "S"
     assert [chapter["name"] for chapter in payload["chapters"]] == [
-        "Chapter 1", "Chapter 2", "Chapter 3", "Chapter 5",
+        "Chapter 1",
+        "Chapter 2",
+        "Chapter 3",
+        "Chapter 5",
     ]
     assert payload["chapters"][0]["verdict"] == "ok"
     assert payload["chapters"][2]["verdict"] == "failed"

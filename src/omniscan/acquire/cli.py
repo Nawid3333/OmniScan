@@ -57,15 +57,15 @@ def make_image_client() -> httpx.Client:
 def acquire_plan(
     series: Annotated[str, typer.Argument()],
     select: Annotated[str | None, typer.Option("--select", help=_SELECT_HELP)] = None,
-    mode: Annotated[
-        Literal["basic", "advanced"], typer.Option("--mode", help=_MODE_HELP)
-    ] = "basic",
+    mode: Annotated[Literal["basic", "advanced"], typer.Option("--mode", help=_MODE_HELP)] = "basic",
     force: Annotated[bool, typer.Option("--force", help="Treat already-acquired chapters as to do.")] = False,
     urls: Annotated[Path | None, typer.Option("--urls", help=_URLS_HELP)] = None,
     link: Annotated[
         list[str] | None, typer.Option("--link", help="Chapter page URL; repeatable, numbered by position.")
     ] = None,
-    first_number: Annotated[int, typer.Option("--first-number", help="Number of the first --link chapter.")] = 1,
+    first_number: Annotated[
+        int, typer.Option("--first-number", help="Number of the first --link chapter.")
+    ] = 1,
     template: Annotated[
         str | None, typer.Option("--template", help="Chapter page URL template with '{n}'.")
     ] = None,
@@ -84,8 +84,14 @@ def acquire_plan(
 ) -> None:
     """Print the acquire plan of a series: which chapters are done and what the extraction costs."""
     sources = _resolve_sources(
-        series, urls=urls, link=link, first_number=first_number,
-        template=template, first=first, last=last, name=name,
+        series,
+        urls=urls,
+        link=link,
+        first_number=first_number,
+        template=template,
+        first=first,
+        last=last,
+        name=name,
     )
     sources = _selected(sources, select)
     _refuse_drm(sources)
@@ -101,15 +107,15 @@ def acquire_plan(
 def acquire_run(
     series: Annotated[str, typer.Argument()],
     select: Annotated[str | None, typer.Option("--select", help=_SELECT_HELP)] = None,
-    mode: Annotated[
-        Literal["basic", "advanced"], typer.Option("--mode", help=_MODE_HELP)
-    ] = "basic",
+    mode: Annotated[Literal["basic", "advanced"], typer.Option("--mode", help=_MODE_HELP)] = "basic",
     force: Annotated[bool, typer.Option("--force", help="Re-acquire chapters already marked done.")] = False,
     urls: Annotated[Path | None, typer.Option("--urls", help=_URLS_HELP)] = None,
     link: Annotated[
         list[str] | None, typer.Option("--link", help="Chapter page URL; repeatable, numbered by position.")
     ] = None,
-    first_number: Annotated[int, typer.Option("--first-number", help="Number of the first --link chapter.")] = 1,
+    first_number: Annotated[
+        int, typer.Option("--first-number", help="Number of the first --link chapter.")
+    ] = 1,
     template: Annotated[
         str | None, typer.Option("--template", help="Chapter page URL template with '{n}'.")
     ] = None,
@@ -138,8 +144,14 @@ def acquire_run(
 ) -> None:
     """Download every selected chapter completely and record its acceptance."""
     sources = _resolve_sources(
-        series, urls=urls, link=link, first_number=first_number,
-        template=template, first=first, last=last, name=name,
+        series,
+        urls=urls,
+        link=link,
+        first_number=first_number,
+        template=template,
+        first=first,
+        last=last,
+        name=name,
     )
     sources = _selected(sources, select)
     _refuse_drm(sources)
@@ -167,9 +179,7 @@ def acquire_run(
             raise typer.Exit(2) from None
     api_key = get_secrets().extractpics_api_key
     if api_key is None or not api_key.get_secret_value():
-        typer.echo(
-            "EXTRACTPICS_API_KEY is not set; put it in ~/.config/omniscan/secrets.env", err=True
-        )
+        typer.echo("EXTRACTPICS_API_KEY is not set; put it in ~/.config/omniscan/secrets.env", err=True)
         raise typer.Exit(2) from None
     extractor = make_extractor(api_key.get_secret_value())
     client = make_image_client()
@@ -232,7 +242,12 @@ def acquire_check(
         payload = {
             "series": series,
             "chapters": [
-                {"name": name, "pages": pages, "verdict": result, "findings": [_finding_json(f) for f in findings]}
+                {
+                    "name": name,
+                    "pages": pages,
+                    "verdict": result,
+                    "findings": [_finding_json(f) for f in findings],
+                }
                 for name, pages, result, findings in reports
             ],
             "series_findings": [_finding_json(finding) for finding in series_findings],
@@ -289,9 +304,7 @@ def _plan_lines(plan: AcquirePlan) -> list[str]:
     return lines
 
 
-def _echo_run_json(
-    series: str, mode: str, outcomes: Sequence[ChapterOutcome], credits_used: int
-) -> None:
+def _echo_run_json(series: str, mode: str, outcomes: Sequence[ChapterOutcome], credits_used: int) -> None:
     """Print the machine-readable run result on stdout."""
     payload = {
         "series": series,
@@ -343,7 +356,7 @@ def _resolve_sources(
     series: str,
     *,
     urls: Path | None,
-    link: Sequence[str],
+    link: Sequence[str] | None,
     first_number: int,
     template: str | None,
     first: int | None,
@@ -357,7 +370,9 @@ def _resolve_sources(
         if urls is not None:
             return read_url_list(_url_list_text(urls))
         if link:
-            return named_chapters([(f"Chapter {first_number + index}", url) for index, url in enumerate(link)])
+            return named_chapters(
+                [(f"Chapter {first_number + index}", url) for index, url in enumerate(link)]
+            )
         if template is not None:
             if first is None or last is None:
                 _fail("--template needs --first and --last")

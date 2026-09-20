@@ -9,7 +9,7 @@ packaged into CBZ/PDF.
 
 | Stage | Status |
 |---|---|
-| acquire | not implemented |
+| acquire | working — `omniscan acquire plan` / `run` / `check` (extract.pics; needs `EXTRACTPICS_API_KEY` for `run`) |
 | import | working — `omniscan import` |
 | ingest | working — `omniscan ingest` |
 | slice | working — `omniscan slice` |
@@ -39,7 +39,7 @@ pipeline stage consumes it yet.
 
 | Command | Behaviour |
 |---|---|
-| `acquire`, `reference` | registered stubs; they print `not implemented yet` and exit 2 |
+| `reference` | registered stub; prints `not implemented yet` and exits 2 |
 
 ## Requirements
 

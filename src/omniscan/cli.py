@@ -40,9 +40,7 @@ app = typer.Typer(help="OmniScan — manhwa/manga translator", no_args_is_help=T
 
 STATUS_STYLES = {"OK": "green", "WARN": "yellow", "FAIL": "red"}
 
-_STUB_COMMANDS = (
-    "reference",
-)
+_STUB_COMMANDS = ("reference",)
 
 
 @app.callback()

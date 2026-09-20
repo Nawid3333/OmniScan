@@ -9,7 +9,11 @@ OmniScan keeps three roots (see `[paths]` in [Configuration](#configuration)):
 
 | Path | Written by | Contents |
 |---|---|---|
-| `library_root/<Series>/<Chapter N>/` | `omniscan import` | raw chapter images (read-only for the pipeline) |
+| `library_root/<Series>/<Chapter N>/` | `omniscan import`, `omniscan acquire` | raw chapter images (read-only for the pipeline) |
+| `library_root/<Series>/<Chapter N>/acquire.json` | `omniscan acquire run` | the download record: every page URL, byte size and sha256 |
+| `library_root/<Series>/<Chapter N>/acquire_selection.json` | `omniscan acquire run` | the page-run selection: kept image URLs and the dropped ones with their reasons |
+| `library_root/<Series>/<Chapter N>/accepted.json` | `omniscan acquire run` | the acceptance record (status, findings, page count) that marks a chapter done |
+| `library_root/<Series>/sources.toml` | you (read by `omniscan acquire`) | `[[chapter]]` entries with `name` and `url` — the per-series chapter list |
 | `library_root/<Series>/_reference_en/` | reference mode (not implemented yet) | already-translated chapters used as style reference |
 | `work_root/<Series>/series.db` | glossary seeding (no command creates it yet) | SQLite glossary working copy |
 | `work_root/queue.db` | the job queue | every queued/running/finished job |
@@ -128,9 +132,9 @@ OMNISCAN_RELAY_CLIENT_TOKEN=...
 
 ## Commands
 
-Stubs (`acquire`,
-`reference`) are registered but not usable; each prints `not implemented yet` and exits 2. Every other
-command below is fully working. The examples assume you generated the demo chapter with
+The `reference`
+stub is registered but not usable; it prints `not implemented yet` and exits 2. Every other command
+below is fully working. The examples assume you generated the demo chapter with
 `uv run python scripts/make_demo_chapter.py`.
 
 ### `omniscan doctor`
@@ -194,6 +198,68 @@ planned unambiguously (empty folder, mixed subfolders and loose images, no parse
 ```bash
 uv run omniscan import ~/Downloads/DemoSeries --dry-run
 uv run omniscan import ~/Downloads/DemoSeries
+```
+
+### `omniscan acquire`
+
+Download chapters from supported webtoon/manhwa sites through the extract.pics API and land them in
+the library exactly as `omniscan import` would have. Three subcommands: `plan` (show what would
+happen and what it costs), `run` (do it, charging credits per chapter) and `check` (a completeness
+report over what the library already has). `plan` and `check` are offline; `run` needs
+`EXTRACTPICS_API_KEY` in `~/.config/omniscan/secrets.env`. DRM-platform URLs (Naver Webtoon and
+friends) are refused before anything is spent.
+
+Chapter sources, shared by `plan` and `run` (at most one source option per call; none reads
+`<library_root>/<series>/sources.toml` — a `[[chapter]]` entry per chapter with `name` and `url`):
+
+| Source option | Meaning |
+|---|---|
+| `--urls FILE` | text file with one `URL` or `NAME \| URL` line per chapter; `#` comments and blank lines are ignored; `-` reads stdin |
+| `--link URL` | one chapter page URL; repeat for more chapters (they are named `Chapter <n>` by position) |
+| `--first-number <int>` | number of the first `--link` chapter. Default: 1 |
+| `--template URL --first N --last M` | chapter-page URL template with `{n}` for a numbered run; `--name "Chapter {n}"` overrides the naming |
+
+Common options of `plan` and `run`: `--select SPEC` (subset of the chapters: `N`, `A-B`, `A-`, `-B`,
+comma-separated), `--mode basic\|advanced` (basic costs 1 credit per chapter, advanced 2), `--force`
+(treat done chapters as to do) and `--json` (machine-readable output).
+
+`acquire plan <series>` prints the chapter table (`#`, name, state, credits, url) and
+`N chapter(s): T to do, D done — estimated credits: C (mode M)`. Exit 2 for a DRM URL, a bad
+selection spec, more than one source option or no sources at all.
+
+`acquire run <series>` shows the plan, asks `Spend up to C credit(s)?` (`--yes` skips the question;
+a refusal or a closed stdin aborts with exit 2), then per selected chapter: extract the page images
+(charged), keep the page-run images, download them with the chapter page as referer, and write
+`acquire_selection.json`, then `accepted.json` when the chapter checks out. Every chapter prints one
+line — `✓ name: N pages`, `? name: N pages (review: codes)`, `✗ name: <error>` or
+`- name: skipped (why)` — and the run ends with
+`ok A, review R, failed F, skipped S — credits used C`; exit 1 when any chapter failed. Chapters
+already marked accepted are skipped as done (use `--force` to re-acquire them); a failed chapter
+keeps its partial files and no `accepted.json`, so a re-run resumes it without re-downloading
+already-fetched pages. `--max-credits C` skips every chapter that would push the spend past the
+budget.
+
+| `acquire run` option | Meaning |
+|---|---|
+| `--max-credits <int>` | refuse to spend more than this many credits |
+| `--yes` | skip the spend confirmation |
+| `--no-page-run` | keep every extracted image, not just the page run |
+| `--no-filter` | keep images the size/content filter would drop |
+| `--json` | print only the final result JSON on stdout; all progress goes to stderr |
+
+`acquire check <series>` needs no network: it inspects every chapter folder the series has and prints
+`name: N pages — ok|review|failed` with indented findings — `unreadable` for files named like images
+that do not decode, `no_pages`, and `few_pages` when the chapter has far fewer pages than the median
+of the other chapters (from their `accepted.json`, when at least three exist) or than the nearest
+earlier chapter. It also warns about numbering gaps (`chapter 4 is missing`). Exit 1 when any chapter
+failed or the series has no chapters.
+
+```bash
+uv run omniscan acquire plan DemoSeries --template "https://example.test/comic/demo/{n}" --first 1 --last 5
+uv run omniscan acquire run DemoSeries --template "https://example.test/comic/demo/{n}" --first 1 --last 5
+uv run omniscan acquire run DemoSeries --urls chapter-list.txt --yes --max-credits 10
+uv run omniscan acquire check DemoSeries
+uv run omniscan acquire check DemoSeries --json
 ```
 
 ### `omniscan ingest`

@@ -11,9 +11,9 @@ import httpx
 from omniscan.acquire.drm import DrmPlatformError
 from omniscan.acquire.extractor import (
     AuthError,
+    ExtractedImage,
     ExtractError,
     Extraction,
-    ExtractedImage,
     Mode,
     QuotaError,
     credit_cost,
@@ -60,9 +60,7 @@ def extraction(chapter: int, mode: Mode = "basic", extras: bool = True) -> Extra
     )
 
 
-def scripted_chapters(
-    count: int, *, mode: Mode = "basic"
-) -> tuple[Server, httpx.Client, FakeExtractor]:
+def scripted_chapters(count: int, *, mode: Mode = "basic") -> tuple[Server, httpx.Client, FakeExtractor]:
     """A mock server + client + fake extractor scripted for `count` chapters of 5 pages each."""
     server = Server()
     extractor = FakeExtractor()
@@ -172,7 +170,7 @@ def test_happy_path_downloads_pages_in_order_with_a_selection_record(tmp_path: P
 
 def test_done_chapters_are_skipped_and_never_extracted(tmp_path: Path) -> None:
     accepted_dir(tmp_path, "Chapter 1", 5)
-    server, client, extractor = scripted_chapters(3)
+    _server, client, extractor = scripted_chapters(3)
     sources = named_chapters([(f"Chapter {n}", PAGE_URL.format(n=n)) for n in range(1, 4)])
 
     outcomes = acquire(tmp_path, build_plan(sources, tmp_path), extractor, client)
@@ -184,7 +182,7 @@ def test_done_chapters_are_skipped_and_never_extracted(tmp_path: Path) -> None:
 
 def test_force_reruns_done_chapters(tmp_path: Path) -> None:
     accepted_dir(tmp_path, "Chapter 1", 5)  # status ok → done; a re-run without --force would skip it
-    server, client, extractor = scripted_chapters(3)
+    _server, client, extractor = scripted_chapters(3)
     sources = named_chapters([(f"Chapter {n}", PAGE_URL.format(n=n)) for n in range(1, 4)])
 
     outcomes = acquire(tmp_path, build_plan(sources, tmp_path, force=True), extractor, client)
@@ -197,7 +195,7 @@ def test_force_reruns_done_chapters(tmp_path: Path) -> None:
 
 
 def test_credit_budget_skips_the_rest_in_basic_mode(tmp_path: Path) -> None:
-    server, client, extractor = scripted_chapters(4)
+    _server, client, extractor = scripted_chapters(4)
     sources = named_chapters([(f"Chapter {n}", PAGE_URL.format(n=n)) for n in range(1, 5)])
     plan = build_plan(sources, tmp_path)
 
@@ -211,7 +209,7 @@ def test_credit_budget_skips_the_rest_in_basic_mode(tmp_path: Path) -> None:
 
 
 def test_credit_budget_in_advanced_mode_runs_one_chapter(tmp_path: Path) -> None:
-    server, client, extractor = scripted_chapters(4, mode="advanced")
+    _server, client, extractor = scripted_chapters(4, mode="advanced")
     sources = named_chapters([(f"Chapter {n}", PAGE_URL.format(n=n)) for n in range(1, 5)])
     plan = build_plan(sources, tmp_path, mode="advanced")
 
@@ -226,7 +224,7 @@ def test_credit_budget_in_advanced_mode_runs_one_chapter(tmp_path: Path) -> None
 
 
 def test_extract_error_fails_only_that_chapter(tmp_path: Path) -> None:
-    server, client, extractor = scripted_chapters(3)
+    _server, client, extractor = scripted_chapters(3)
     extractor.script(PAGE_URL.format(n=2), ExtractError("extraction ended with status 'failed'"))
     sources = named_chapters([(f"Chapter {n}", PAGE_URL.format(n=n)) for n in range(1, 4)])
     plan = build_plan(sources, tmp_path)
@@ -235,11 +233,11 @@ def test_extract_error_fails_only_that_chapter(tmp_path: Path) -> None:
 
     assert [outcome.status for outcome in outcomes] == ["ok", "failed", "ok"]
     assert outcomes[1].credits == 0
-    assert "failed" in outcomes[1].error
+    assert outcomes[1].error is not None and "failed" in outcomes[1].error
 
 
 def test_auth_error_stops_the_run(tmp_path: Path) -> None:
-    server, client, extractor = scripted_chapters(3)
+    _server, client, extractor = scripted_chapters(3)
     extractor.script(PAGE_URL.format(n=2), AuthError("extract.pics rejected the API key"))
     sources = named_chapters([(f"Chapter {n}", PAGE_URL.format(n=n)) for n in range(1, 4)])
     plan = build_plan(sources, tmp_path)
@@ -253,7 +251,7 @@ def test_auth_error_stops_the_run(tmp_path: Path) -> None:
 
 
 def test_quota_error_stops_the_run(tmp_path: Path) -> None:
-    server, client, extractor = scripted_chapters(3)
+    _server, client, extractor = scripted_chapters(3)
     extractor.script(PAGE_URL.format(n=2), QuotaError("extract.pics reports no credits left"))
     sources = named_chapters([(f"Chapter {n}", PAGE_URL.format(n=n)) for n in range(1, 4)])
     plan = build_plan(sources, tmp_path)
@@ -266,7 +264,7 @@ def test_quota_error_stops_the_run(tmp_path: Path) -> None:
 
 def test_drm_page_url_fails_only_that_chapter(tmp_path: Path) -> None:
     """The extract back-end refuses DRM pages (like ExtractPicsClient does); run records a failure."""
-    server, client, extractor = scripted_chapters(3)
+    _server, client, extractor = scripted_chapters(3)
     extractor.script(
         PAGE_URL.format(n=2),
         DrmPlatformError(
@@ -280,12 +278,12 @@ def test_drm_page_url_fails_only_that_chapter(tmp_path: Path) -> None:
     outcomes = acquire(tmp_path, plan, extractor, client)
 
     assert [outcome.status for outcome in outcomes] == ["ok", "failed", "ok"]
-    assert "Naver Webtoon" in outcomes[1].error
+    assert outcomes[1].error is not None and "Naver Webtoon" in outcomes[1].error
 
 
 def test_drm_image_url_is_caught_by_the_downloader(tmp_path: Path) -> None:
     """The safety net: pages whose image URLs sit on a DRM platform fail that chapter only."""
-    server, client, extractor = scripted_chapters(3)
+    _server, client, extractor = scripted_chapters(3)
     urls = [f"https://comic.naver.com/img/{i:03d}.jpg" for i in range(1, 6)]
     extractor.script(
         PAGE_URL.format(n=2),
@@ -302,7 +300,7 @@ def test_drm_image_url_is_caught_by_the_downloader(tmp_path: Path) -> None:
     outcomes = acquire(tmp_path, plan, extractor, client)
 
     assert [outcome.status for outcome in outcomes] == ["ok", "failed", "ok"]
-    assert "Naver Webtoon" in outcomes[1].error
+    assert outcomes[1].error is not None and "Naver Webtoon" in outcomes[1].error
 
 
 def test_page_list_filtered_to_nothing_fails_with_the_counts(tmp_path: Path) -> None:
@@ -340,7 +338,7 @@ def test_image_404_fails_the_chapter_and_keeps_partials(tmp_path: Path) -> None:
     outcomes = acquire(tmp_path, plan, extractor, client)
 
     assert [outcome.status for outcome in outcomes] == ["failed"]
-    assert "1 of 5 image(s) failed: #2 HTTP 404" in outcomes[0].error
+    assert outcomes[0].error is not None and "1 of 5 image(s) failed: #2 HTTP 404" in outcomes[0].error
     chapter_dir = tmp_path / "Chapter 1"
     assert (chapter_dir / "001.jpg").exists()
     assert (chapter_dir / "acquire.json").exists()
@@ -354,13 +352,12 @@ def test_image_404_fails_the_chapter_and_keeps_partials(tmp_path: Path) -> None:
     re_extractor = FakeExtractor()
     re_extractor.script(PAGE_URL.format(n=1), extraction(1))
 
-    re_outcomes = acquire(
-        tmp_path, build_plan(sources, tmp_path), re_extractor, re_server.client()
-    )
+    re_outcomes = acquire(tmp_path, build_plan(sources, tmp_path), re_extractor, re_server.client())
 
     assert [outcome.status for outcome in re_outcomes] == ["ok"]
     assert [str(request.url) for request in re_server.requests] == [IMAGE_URL.format(n=1, i=2)]
-    assert read_accepted(chapter_dir)["status"] == "ok"
+    re_accepted = read_accepted(chapter_dir)
+    assert re_accepted is not None and re_accepted["status"] == "ok"
 
 
 # ------------------------------------------------------------------ 5. completeness
@@ -375,7 +372,8 @@ def test_few_pages_when_three_accepted_chapters_have_more(tmp_path: Path) -> Non
 
     assert [outcome.status for outcome in outcomes] == ["review"]
     assert [finding.code for finding in outcomes[0].findings] == ["few_pages"]
-    assert read_accepted(tmp_path / "Chapter 4")["status"] == "review"
+    accepted = read_accepted(tmp_path / "Chapter 4")
+    assert accepted is not None and accepted["status"] == "review"
 
 
 def test_median_needs_three_accepted_chapters(tmp_path: Path) -> None:
@@ -428,7 +426,7 @@ def test_zero_valid_images_fails_the_chapter(tmp_path: Path) -> None:
 
 def test_chapter_source_type_is_accepted(tmp_path: Path) -> None:
     """ChapterSource objects built directly (not via named_chapters) run the same way."""
-    server, client, extractor = scripted_chapters(1)
+    _server, client, extractor = scripted_chapters(1)
     sources = [ChapterSource(name="Chapter 1", url=PAGE_URL.format(n=1))]
     plan = build_plan(sources, tmp_path)
 
