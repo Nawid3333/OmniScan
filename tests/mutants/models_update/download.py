@@ -46,8 +46,8 @@ MUTANTS = [
     ),
     (
         "src/omniscan/models/store.py",
-        'if not path.is_dir():\n            return "missing"',
-        'if path.is_dir():\n            return "missing"',
+        'if entry.format == "zip":\n        if not path.is_dir():\n            return "missing"',
+        'if entry.format == "zip":\n        if path.is_dir():\n            return "missing"',
         "store: flip is_dir check (zip)",
     ),
     (
@@ -100,9 +100,21 @@ MUTANTS = [
     ),
     (
         "src/omniscan/models/store.py",
-        "except OSError, ValueError:",
-        "except OSError:",
-        "store: narrow marker error catch",
+        'except OSError, ValueError:\n            return "corrupt"\n        return "installed" if data.get("sha256")',
+        'except OSError:\n            return "corrupt"\n        return "installed" if data.get("sha256")',
+        "store: narrow marker error catch (zip)",
+    ),
+    (
+        "src/omniscan/models/store.py",
+        'if entry.format == "hf":\n        if not path.is_dir():\n            return "missing"',
+        'if entry.format == "hf":\n        if path.is_dir():\n            return "missing"',
+        "store: flip is_dir check (hf)",
+    ),
+    (
+        "src/omniscan/models/store.py",
+        'except OSError, ValueError:\n            return "corrupt"\n        if data.get("revision")',
+        'except OSError:\n            return "corrupt"\n        if data.get("revision")',
+        "store: narrow marker error catch (hf)",
     ),
     # ---------------------------------------------------------------- models/download.py (15-34)
     (

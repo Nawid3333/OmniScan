@@ -66,8 +66,8 @@ MUTANTS = [
     # ---------------------------------------------------------------- resolve.py (8-14)
     (
         "src/omniscan/models/resolve.py",
-        'if entry.format != "zip" or entry.upstream_repo != repo:\n            continue',
-        'if entry.format != "zip" and entry.upstream_repo != repo:\n            continue',
+        'if entry.format not in ("zip", "hf") or entry.upstream_repo != repo:\n            continue',
+        'if entry.format not in ("zip", "hf") and entry.upstream_repo != repo:\n            continue',
         "resolve: or -> and in entry filter",
     ),
     (
@@ -102,8 +102,8 @@ MUTANTS = [
     ),
     (
         "src/omniscan/models/resolve.py",
-        'entry.format != "zip"',
-        'entry.format == "zip"',
+        'entry.format not in ("zip", "hf")',
+        'entry.format in ("zip", "hf")',
         "resolve: flip format filter",
     ),
     # ---------------------------------------------------------------- version.py (15-26)

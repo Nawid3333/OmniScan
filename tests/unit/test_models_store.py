@@ -170,6 +170,12 @@ def test_hf_other_revision_marker_is_corrupt(tmp_path: Path) -> None:
     assert model_status(hf_entry(), tmp_path, ollama_names=None) == "corrupt"
 
 
+def test_hf_unparsable_marker_is_corrupt(tmp_path: Path) -> None:
+    (tmp_path / "ocr-rec-x").mkdir()
+    (tmp_path / "ocr-rec-x" / MARKER_NAME).write_text("{not json", encoding="utf-8")
+    assert model_status(hf_entry(), tmp_path, ollama_names=None) == "corrupt"
+
+
 def test_hf_wrong_file_size_is_corrupt(tmp_path: Path) -> None:
     install_fake_hf(
         tmp_path, contents={"model.safetensors": "a much longer payload", "config.json": CONFIG_JSON}
