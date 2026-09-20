@@ -26,6 +26,8 @@ from omniscan.importer.execute import execute_import
 from omniscan.importer.plan import ImportPlanError, plan_import
 from omniscan.llm.ollama import OllamaClient, OllamaError, OllamaRateLimitError
 from omniscan.log import setup_logging
+from omniscan.models.rows import build_rows, row_to_json
+from omniscan.models.rows import ollama_model_names as _ollama_model_names
 from omniscan.packaging import pack_cbz, pack_pdf, safe_filename
 from omniscan.queue.executor import stage_executor
 from omniscan.queue.notify import combine, log_notifier, webhook_notifier
@@ -1211,16 +1213,6 @@ app.add_typer(queue_app, name="queue")
 models_app = typer.Typer(no_args_is_help=True, help="Model catalog: list, download, remove, verify models.")
 
 
-def _ollama_model_names(base_url: str, timeout_s: float = 2.0) -> set[str] | None:
-    """The daemon's pulled model tags, or None when Ollama is unreachable within `timeout_s`."""
-    try:
-        response = httpx.get(f"{base_url}/api/tags", timeout=timeout_s)
-        response.raise_for_status()
-        return {model["name"] for model in response.json().get("models", [])}
-    except httpx.HTTPError, ValueError, KeyError, TypeError:
-        return None
-
-
 def _models_progress(steps: dict[str, int]) -> Callable[[str, int, int | None], None]:
     """Progress printer: `id: 42% (66/158 MB)`, at most once per 5 % step per model."""
 
@@ -1243,75 +1235,30 @@ def models_list(
     lang: Annotated[str | None, typer.Option("--lang", help="Only models that list this language.")] = None,
 ) -> None:
     """List every catalog model with its size, purpose, install status and hardware fit."""
-    from omniscan.hw.assess import assess
-    from omniscan.hw.detect import detect_hardware
-    from omniscan.models.catalog import load_catalog
-    from omniscan.models.store import install_path, model_status
-
     cfg = get_config()
-    entries = load_catalog()
-    if role is not None:
-        entries = [entry for entry in entries if entry.role == role]
-    if lang is not None:
-        entries = [entry for entry in entries if lang in entry.langs]
-    ollama_names = _ollama_model_names(cfg.ollama.local_url)
-    statuses = {
-        entry.id: model_status(entry, cfg.paths.models_dir, ollama_names=ollama_names) for entry in entries
-    }
-    hw = detect_hardware(cfg.paths.models_dir)
-    compat = {entry.id: assess(entry, hw) for entry in entries}
+    rows, hw = build_rows(cfg, role=role, lang=lang, ollama_names=_ollama_model_names(cfg.ollama.local_url))
     if as_json:
         payload = {
             "models_dir": str(cfg.paths.models_dir),
-            "models": [
-                {
-                    "id": entry.id,
-                    "name": entry.name,
-                    "kind": entry.kind,
-                    "required": entry.required,
-                    "format": entry.format,
-                    "size_mb": entry.size_mb,
-                    "license": entry.license,
-                    "description": entry.description,
-                    "used_by": entry.used_by,
-                    "role": entry.role,
-                    "family": entry.family,
-                    "size_class": entry.size_class,
-                    "langs": entry.langs,
-                    "recommended_for": entry.recommended_for,
-                    "notes": entry.notes,
-                    "status": statuses[entry.id],
-                    "installed_path": str(path)
-                    if (path := install_path(entry, cfg.paths.models_dir))
-                    and statuses[entry.id] == "installed"
-                    else None,
-                    "compatibility": {
-                        "level": compat[entry.id].level,
-                        "device": compat[entry.id].device,
-                        "messages": list(compat[entry.id].messages),
-                    },
-                }
-                for entry in entries
-            ],
+            "models": [row_to_json(row) for row in rows],
             "hardware": asdict(hw),
         }
         typer.echo(json.dumps(payload, indent=2, ensure_ascii=False))
         return
-    for entry in entries:
+    for row in rows:
         typer.echo(
-            f"{entry.id}  {entry.kind}  {entry.role or '-'}  {entry.size_mb} MB  "
-            f"{'required' if entry.required else 'optional'}  {statuses[entry.id]}  "
-            f"{','.join(entry.langs) or '-'}  {entry.description}"
-            f"  {compat[entry.id].level}"
+            f"{row.id}  {row.kind}  {row.role or '-'}  {row.size_mb} MB  "
+            f"{'required' if row.required else 'optional'}  {row.status}  "
+            f"{','.join(row.langs) or '-'}  {row.description}"
+            f"  {row.fit_level}"
         )
-    for entry in entries:
-        fit = compat[entry.id]
-        if fit.level != "ok" and statuses[entry.id] != "installed" and fit.messages:
-            typer.echo(f"  {entry.id}: {'; '.join(fit.messages)}")
-    missing_required = [e for e in entries if e.required and statuses[e.id] in ("missing", "corrupt")]
+    for row in rows:
+        if row.fit_level != "ok" and row.status != "installed" and row.fit_messages:
+            typer.echo(f"  {row.id}: {'; '.join(row.fit_messages)}")
+    missing_required = [row for row in rows if row.required and row.status in ("missing", "corrupt")]
     if missing_required:
         typer.echo(
-            f"{len(missing_required)} required model(s) missing, {sum(e.size_mb for e in missing_required)} MB to download"
+            f"{len(missing_required)} required model(s) missing, {sum(r.size_mb for r in missing_required)} MB to download"
         )
     else:
         typer.echo("all required models installed")
