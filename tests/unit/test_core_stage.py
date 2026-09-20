@@ -6,7 +6,15 @@ import pytest
 
 from omniscan.core.config import Config, PathsConfig
 from omniscan.core.manifest import hash_inputs, load_manifest
-from omniscan.core.stage import ChapterContext, make_context, run_chapter, run_series, run_stage
+from omniscan.core.stage import (
+    ChapterContext,
+    RunAbortedError,
+    StageOutcome,
+    make_context,
+    run_chapter,
+    run_series,
+    run_stage,
+)
 
 
 class FakeGpu:
@@ -155,3 +163,53 @@ def test_run_series_discovers_chapters(cfg: Config, tmp_path: Path) -> None:
     (raw2 / "input.txt").write_text("two")
     results = run_series([CopyStage()], cfg, "S", force=True)
     assert list(results) == ["Chapter 1", "Chapter 2"]
+
+
+def test_after_stage_sees_every_outcome_and_can_abort(cfg: Config) -> None:
+    seen: list[tuple[str, str]] = []
+
+    def hook(ctx: ChapterContext, outcome: StageOutcome) -> bool:
+        seen.append((ctx.paths.chapter, outcome.stage))
+        assert ctx.lazy("text", lambda: "gone") == "hello"  # in-memory values are still alive
+        return outcome.stage != "gpu"
+
+    gpu = FakeGpu()
+    with pytest.raises(RunAbortedError) as info:
+        run_chapter(
+            [CopyStage(), GpuStage(), CopyStage()], make_context(cfg, "S", "Chapter 1", gpu), after_stage=hook
+        )
+    assert seen == [("Chapter 1", "copy"), ("Chapter 1", "gpu")]
+    assert (info.value.chapter, info.value.stage) == ("Chapter 1", "gpu")
+    assert [o.stage for o in info.value.outcomes] == ["copy", "gpu"]
+    manifest = load_manifest(make_context(cfg, "S", "Chapter 1").paths.manifest, "S", "Chapter 1")
+    assert manifest.stages["gpu"].status == "done"  # the aborting stage is recorded
+
+
+def test_run_series_abort_carries_finished_chapters(cfg: Config) -> None:
+    second = cfg.paths.library_root / "S" / "Chapter 2"
+    second.mkdir(parents=True)
+    (second / "input.txt").write_text("again")
+    calls = 0
+
+    def hook(ctx: ChapterContext, outcome: StageOutcome) -> bool:
+        nonlocal calls
+        calls += 1
+        return calls < 2  # the second stage run (chapter 2) aborts
+
+    with pytest.raises(RunAbortedError) as info:
+        run_series([CopyStage()], cfg, "S", ["Chapter 1", "Chapter 2"], after_stage=hook)
+    assert info.value.chapter == "Chapter 2"
+    assert list(info.value.results) == ["Chapter 1"]
+    assert info.value.results["Chapter 1"][0].status == "done"
+
+
+def test_after_stage_runs_for_failed_stages_too(cfg: Config) -> None:
+    seen: list[str] = []
+
+    def hook(ctx: ChapterContext, outcome: StageOutcome) -> bool:
+        seen.append(f"{outcome.stage}:{outcome.status}")
+        return True
+
+    outcomes = run_chapter([BoomStage(), CopyStage()], make_context(cfg, "S", "Chapter 1"), after_stage=hook)
+    assert seen == ["boom:failed"]
+    assert [o.stage for o in outcomes] == ["boom"]

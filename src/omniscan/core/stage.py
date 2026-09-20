@@ -164,15 +164,42 @@ def run_stage(stage: Stage, ctx: ChapterContext, *, force: bool = False) -> Stag
     return StageOutcome(stage.name, status, seconds, metrics, error)
 
 
+class RunAbortedError(Exception):
+    """An `after_stage` hook returned False: the run stops after the stage that was just recorded."""
+
+    def __init__(self, chapter: str, stage: str) -> None:
+        super().__init__(f"stopped after {stage} of {chapter}")
+        self.chapter = chapter
+        self.stage = stage
+        self.outcomes: list[StageOutcome] = []  # outcomes of the chapter that was being run
+        self.results: dict[str, list[StageOutcome]] = {}  # chapters finished before it (set by run_series)
+
+
+type AfterStage = Callable[[ChapterContext, StageOutcome], bool]
+
+
 def run_chapter(
-    stages: Sequence[Stage], ctx: ChapterContext, *, force: bool = False, stop_on_error: bool = True
+    stages: Sequence[Stage],
+    ctx: ChapterContext,
+    *,
+    force: bool = False,
+    stop_on_error: bool = True,
+    after_stage: AfterStage | None = None,
 ) -> list[StageOutcome]:
-    """Run stages in order for one chapter; later stages see earlier stages' in-memory values."""
+    """Run stages in order for one chapter; later stages see earlier stages' in-memory values.
+
+    `after_stage(ctx, outcome)` runs after every stage that finished (also skipped/failed ones) while the chapter's
+    in-memory values are still alive; returning False raises RunAbortedError (the manifest is already saved).
+    """
     outcomes: list[StageOutcome] = []
     try:
         for stage in stages:
             outcome = run_stage(stage, ctx, force=force)
             outcomes.append(outcome)
+            if after_stage is not None and not after_stage(ctx, outcome):
+                aborted = RunAbortedError(ctx.paths.chapter, stage.name)
+                aborted.outcomes = outcomes
+                raise aborted
             if outcome.status == "failed" and stop_on_error:
                 break
     finally:
@@ -188,11 +215,19 @@ def run_series(
     *,
     gpu: GpuScheduler | None = None,
     force: bool = False,
+    after_stage: AfterStage | None = None,
 ) -> dict[str, list[StageOutcome]]:
-    """Run a pass (ordered stages) over chapters in reading order. Model groups stay loaded across chapters."""
+    """Run a pass (ordered stages) over chapters in reading order. Model groups stay loaded across chapters.
+
+    Raises RunAbortedError (with `.results` = the chapters finished before it) when `after_stage` returns False.
+    """
     names = list(chapters) if chapters is not None else SeriesPaths.from_config(cfg, series).chapters()
     results: dict[str, list[StageOutcome]] = {}
     for chapter in names:
         ctx = make_context(cfg, series, chapter, gpu)
-        results[chapter] = run_chapter(stages, ctx, force=force)
+        try:
+            results[chapter] = run_chapter(stages, ctx, force=force, after_stage=after_stage)
+        except RunAbortedError as aborted:
+            aborted.results = results
+            raise
     return results
