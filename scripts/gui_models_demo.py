@@ -58,7 +58,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.role is not None:
         index = view.role_combo.findText(args.role)
         if index < 0:
-            print(f"unknown role {args.role!r} (the combo has: {', '.join(view.role_combo.itemTexts())})", file=sys.stderr)
+            print(
+                f"unknown role {args.role!r} (the combo has: {', '.join(view.role_combo.itemTexts())})",
+                file=sys.stderr,
+            )
             return 1
         view.role_combo.setCurrentIndex(index)
         app.processEvents()

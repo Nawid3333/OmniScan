@@ -8,6 +8,7 @@ crashes the thread.
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Callable
 from typing import Any
 
@@ -16,7 +17,7 @@ from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Signal
 Progress = Callable[[int, int | None], None]
 TaskFn = Callable[[Progress], Any]
 
-_alive: list["WorkerSignals"] = []  # anchors in-flight signals objects against the GC
+_alive: list[WorkerSignals] = []  # anchors in-flight signals objects against the GC
 
 
 class WorkerSignals(QObject):
@@ -69,10 +70,8 @@ def run_task(fn: TaskFn, *, pool: QThreadPool | None = None) -> WorkerSignals:
 
     def _release() -> None:
         """Drop the registry anchor; the task is done, its signals can be collected."""
-        try:
+        with contextlib.suppress(ValueError):  # already released (finished and failed never both fire)
             _alive.remove(signals)
-        except ValueError:  # already released (finished and failed never both fire)
-            pass
 
     signals.finished.connect(_release)
     signals.failed.connect(_release)

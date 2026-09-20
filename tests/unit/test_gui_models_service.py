@@ -70,7 +70,7 @@ def test_rows_returns_rows_and_injected_hardware(tmp_path: Path, monkeypatch: py
     cfg = make_cfg(tmp_path)
     entries = [entry(id="a", role="detector"), entry(id="b", role="recognizer", langs=["ko"])]
     patch_catalog(monkeypatch, entries)
-    rows, hw = ModelsService(cfg, ollama_names=lambda: None, hardware=lambda: FakeHW()).rows(lang="ko")
+    rows, hw = ModelsService(cfg, ollama_names=lambda: None, hardware=lambda: FakeHW()).rows(lang="ko")  # pyright: ignore[reportArgumentType]
     assert [row.id for row in rows] == ["b"]  # lang filter applied, catalog order kept
     assert isinstance(hw, FakeHW)
     assert rows[0].status == "missing"  # ollama_names None = unreachable, not a daemon query

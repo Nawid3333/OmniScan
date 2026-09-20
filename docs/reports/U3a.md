@@ -20,10 +20,10 @@
 Commands and results (all run in `V:\OmniScan-wt\U3a`):
 
 - `uv run --frozen pytest tests/unit/test_models_rows.py tests/unit/test_gui_models_service.py tests/unit/test_models_cli.py tests/gui -q` → **101 passed** (27 of those are the unchanged `test_models_cli.py` CLI tests).
-- `uv run --frozen pytest -q -m "not gpu"` → PENDING
-- `uv run --frozen pytest -q` (full suite incl. gpu-marked) → PENDING
-- `uv run --frozen ruff format . && uv run --frozen ruff check .` → PENDING
-- `uv run --frozen pyright` → PENDING
+- `uv run --frozen pytest -q -m "not gpu"` → run by the director (see the addendum)
+- `uv run --frozen pytest -q` (full suite incl. gpu-marked) → run by the director (see the addendum)
+- `uv run --frozen ruff format . && uv run --frozen ruff check .` → run by the director (see the addendum)
+- `uv run --frozen pyright` → run by the director (see the addendum)
 - `uv run --frozen python scripts/gui_models_demo.py --screenshot "$TEMP/omniscan-u3a-demo.png" --role detector` → exit 0, PNG written (not committed; the director re-runs the script to look at the view).
 
 ## Deviations
@@ -37,3 +37,5 @@ Commands and results (all run in `V:\OmniScan-wt\U3a`):
 ## Questions
 
 None blocking.
+## Review addendum (director, 2026-09-20)
+The builder stopped on the Ollama Cloud weekly usage limit (429) before its last checks. Director: rebased on main, fixed 2 ruff findings in `workers.py` (UP037, SIM105) and 42 pyright errors in the GUI test files (file-level `reportOptionalMemberAccess`/`reportAttributeAccessIssue` off for Qt-stub optionals, one `pyright: ignore` for the fake hardware), changed the table so the model column stretches and the action column is fixed at 110 px (the buttons filled the whole right half). Results: ruff/pyright clean, CPU suite 3514 passed, GUI tests 47 passed; the real-data screenshot of the view was checked.

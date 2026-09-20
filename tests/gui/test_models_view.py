@@ -1,4 +1,5 @@
 """ModelsView tests (offscreen): header, cells, filters, details, worker-backed download/remove."""
+# pyright: reportOptionalMemberAccess=false, reportAttributeAccessIssue=false
 
 from __future__ import annotations
 
@@ -337,7 +338,9 @@ def test_role_filter_changes_row_count(qapp: QApplication) -> None:
 def test_lang_filter_changes_row_count(qapp: QApplication) -> None:
     fake = make_fake()
     fake._rows[1] = row("ok-missing", "Ok Missing", langs=("ko",), size_mb=4096)
-    fake._rows[5] = row("cloud", "Cloud One", role="llm", fmt="cloud", status="cloud", size_mb=0, langs=("zh",))
+    fake._rows[5] = row(
+        "cloud", "Cloud One", role="llm", fmt="cloud", status="cloud", size_mb=0, langs=("zh",)
+    )
     view = view_of(qapp, fake)
     combo = view.lang_combo
     assert combo.itemText(0) == "All languages"
