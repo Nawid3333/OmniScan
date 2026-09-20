@@ -10,6 +10,8 @@ Usage (from the repo root):
   uv run python scripts/omni_builder.py run <CARD_ID> [--model MODEL] [--max-turns N]     # new run in its own worktree
   uv run python scripts/omni_builder.py resume <CARD_ID> <FEEDBACK_FILE> [--model MODEL]  # continue with review feedback
   uv run python scripts/omni_builder.py smoke [--model MODEL]                             # 3-turn connectivity test
+  uv run python scripts/omni_builder.py ask "QUESTION" [--file PATH ...] [--max-turns N] [--wait] [--cwd DIR]
+                                                                                          # read-only lookup, prints only the answer
 Model aliases: flash (default) | glm | deepseek | kimi — or any full Ollama model name.
 
 Env overrides: OMNI_REPO (default: this repo), OMNI_WT (default: "<repo>-wt" next to it), OMNI_SLOTS (default 3),
@@ -20,6 +22,7 @@ The card text is passed to `claude -p` on stdin (a multi-KB prompt through a Win
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -28,6 +31,7 @@ import sys
 import tempfile
 import time
 import urllib.request
+from collections.abc import Sequence
 from pathlib import Path
 from typing import IO, NoReturn
 
@@ -45,6 +49,41 @@ MODEL_ALIASES = {
     "kimi": "kimi-k2.7-code:cloud",  # TypeScript / web UI (has vision)
 }
 SESSION_RE = re.compile(rb'"session_id":"([^"]*)"')
+ASK_SYSTEM = (
+    "You are a read-only research assistant for the OmniScan repository. Answer the question using only the Read, "
+    "Grep and Glob tools. Be concise: at most 40 lines, plain text or short bullets, quote `path:line` for every "
+    "claim about code, give exact numbers when asked for numbers. If the answer is not in the files, say so instead "
+    "of guessing. Never print the content of secrets, API keys or `.env` files. Do not suggest changes unless asked."
+)
+
+
+def build_ask_prompt(question: str, files: Sequence[str]) -> str:
+    """The stdin prompt for an `ask` session: system rules, the question, optional starting files."""
+    prompt = ASK_SYSTEM + "\n\nQuestion: " + question
+    if files:
+        prompt += "\n\nStart with these files (relative to the repo root): " + ", ".join(files)
+    return prompt
+
+
+def extract_answer(stream: bytes) -> str | None:
+    """The stripped `result` text of the last stream-json result line; None on error results or when absent."""
+    result: dict[str, object] | None = None
+    for line in stream.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(obj, dict) and obj.get("type") == "result":
+            result = obj
+    if result is None or result.get("is_error"):
+        return None
+    text = result.get("result")
+    if isinstance(text, str) and text.strip():
+        return text.strip()
+    return None
 
 
 def die(message: str) -> NoReturn:
@@ -126,19 +165,27 @@ def try_lock(handle: IO[bytes]) -> bool:
     return True
 
 
+def try_acquire_slot() -> IO[bytes] | None:
+    """One non-blocking pass over the SLOTS lock files; the handle holds the slot until closed, None when all are busy."""
+    LOCK_DIR.mkdir(parents=True, exist_ok=True)
+    for index in range(1, SLOTS + 1):
+        handle = (LOCK_DIR / f"slot{index}.lock").open("a+b")
+        if handle.tell() == 0:
+            handle.write(b"\0")
+            handle.flush()
+        if try_lock(handle):
+            say(f"acquired slot {index}/{SLOTS}")
+            return handle
+        handle.close()
+    return None
+
+
 def acquire_slot() -> IO[bytes]:
     """Block until one of the SLOTS builder slots is free; the returned handle holds it until the process exits."""
-    LOCK_DIR.mkdir(parents=True, exist_ok=True)
     while True:
-        for index in range(1, SLOTS + 1):
-            handle = (LOCK_DIR / f"slot{index}.lock").open("a+b")
-            if handle.tell() == 0:
-                handle.write(b"\0")
-                handle.flush()
-            if try_lock(handle):
-                say(f"acquired slot {index}/{SLOTS}")
-                return handle
-            handle.close()
+        handle = try_acquire_slot()
+        if handle is not None:
+            return handle
         say(f"all {SLOTS} slots busy, waiting...")
         time.sleep(30)
 
@@ -154,7 +201,16 @@ def link_venv(worktree: Path) -> None:
         link.symlink_to(target, target_is_directory=True)
 
 
-def run_claude(workdir: Path, log: Path, model: str, max_turns: int, prompt: str, *extra: str) -> int:
+def run_claude(
+    workdir: Path,
+    log: Path,
+    model: str,
+    max_turns: int,
+    prompt: str,
+    *extra: str,
+    settings: Path | None = None,
+    permission_mode: str = "acceptEdits",
+) -> int:
     """Run `claude -p` in `workdir`, appending stream-json to `log`; returns its exit code."""
     log.parent.mkdir(parents=True, exist_ok=True)
     start = log.stat().st_size if log.exists() else 0
@@ -166,9 +222,9 @@ def run_claude(workdir: Path, log: Path, model: str, max_turns: int, prompt: str
         "--max-turns",
         str(max_turns),
         "--permission-mode",
-        "acceptEdits",
+        permission_mode,
         "--settings",
-        str(REPO / ".builder" / "settings.json"),
+        str(settings or REPO / ".builder" / "settings.json"),
         "--output-format",
         "stream-json",
         "--verbose",
@@ -206,14 +262,46 @@ def main() -> int:
             p.add_argument("feedback", type=Path)
         p.add_argument("--model", default=DEFAULT_MODEL, type=resolve_model)
         p.add_argument("--max-turns", type=int, default=150)
+    p = sub.add_parser("ask")
+    p.add_argument("question")
+    p.add_argument("--file", dest="files", action="append", default=[], metavar="PATH")
+    p.add_argument("--model", default=DEFAULT_MODEL, type=resolve_model)
+    p.add_argument("--max-turns", type=int, default=25)
+    p.add_argument("--wait", action="store_true")
+    p.add_argument("--cwd", type=Path, default=REPO)
     args = parser.parse_args()
 
     check_ollama()
     if args.command == "smoke":
         prompt = "Run: uv run python --version. Then reply with exactly one line: SMOKE OK <python version>."
         return run_claude(REPO, LOG_DIR / "smoke.jsonl", args.model, 3, prompt)
+    if args.command == "ask":
+        if args.wait:
+            slot = acquire_slot()  # held until the call ends
+        else:
+            slot = try_acquire_slot()  # held until the call ends
+            if slot is None:
+                say(f"no free slot (all {SLOTS} builders busy); use --wait or read the file yourself")
+                return 3
+        log = LOG_DIR / f"ask-{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}.jsonl"
+        say(f"asking {args.model} (log: {log})")
+        code = run_claude(
+            args.cwd,
+            log,
+            args.model,
+            args.max_turns,
+            build_ask_prompt(args.question, args.files),
+            settings=REPO / ".builder" / "ask-settings.json",
+            permission_mode="default",
+        )
+        answer = extract_answer(log.read_bytes()) if log.is_file() else None
+        if answer is None:
+            say(f"ask produced no answer (claude exit code {code}; log: {log})")
+            return 1
+        print(answer)
+        return 0
 
-    slot = acquire_slot()  # noqa: F841 — held until exit
+    slot = acquire_slot()  # held until the builder process exits
     log = LOG_DIR / f"{args.card}.jsonl"
     if args.command == "run":
         spec = REPO / "docs" / "tasks" / f"{args.card}.md"

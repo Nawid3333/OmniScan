@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": ["Read", "Glob", "Grep"],
+    "deny": [
+      "Bash",
+      "Edit",
+      "Write",
+      "NotebookEdit",
+      "WebFetch",
+      "Read(~/.config/omniscan/**)",
+      "Read(**/.env*)",
+      "Read(**/secrets.env)"
+    ]
+  },
+  "env": {
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
+  }
+}
