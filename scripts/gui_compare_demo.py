@@ -30,6 +30,10 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     if args.screenshot is not None:
         os.environ["QT_QPA_PLATFORM"] = "offscreen"  # must be set before importing Qt
+        if (
+            sys.platform == "win32"
+        ):  # the offscreen platform has no font database of its own: labels would be boxes
+            os.environ.setdefault("QT_QPA_FONTDIR", r"C:\Windows\Fonts")
     try:
         width, height = (int(part) for part in args.size.lower().split("x", 1))
     except ValueError:

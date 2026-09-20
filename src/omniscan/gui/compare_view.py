@@ -57,13 +57,13 @@ class CompareView(QWidget):
         left_layout = QVBoxLayout(left_pane)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.addWidget(self.left_caption)
-        left_layout.addWidget(self.left)
+        left_layout.addWidget(self.left, 1)
 
         right_pane = QWidget()
         right_layout = QVBoxLayout(right_pane)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.addWidget(self.right_caption)
-        right_layout.addWidget(self.right)
+        right_layout.addWidget(self.right, 1)
 
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.splitter.addWidget(left_pane)
@@ -74,7 +74,7 @@ class CompareView(QWidget):
 
         root = QVBoxLayout(self)
         root.addLayout(top)
-        root.addWidget(self.splitter)
+        root.addWidget(self.splitter, 1)  # the strips take all extra height
 
         self.sync_checkbox.toggled.connect(self._on_checkbox_toggled)
         self.fit_button.clicked.connect(self._on_fit_clicked)
