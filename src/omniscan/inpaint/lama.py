@@ -9,6 +9,7 @@ from typing import Any
 import torch
 
 from omniscan.core.config import InpaintConfig
+from omniscan.gpu.timeline import mark
 from omniscan.inpaint.lama_weights import ensure_lama_weights
 
 log = logging.getLogger(__name__)
@@ -31,12 +32,14 @@ class LamaInpainter:
     def load(cls, cfg: InpaintConfig, models_dir: Path, device: torch.device) -> LamaInpainter:
         """Download (first use) + load the fp32 weights and warm up the fixed window shape."""
         path = ensure_lama_weights(models_dir, cfg)
+        mark("lama weights verified")
         if device.type == "cuda":
             # MIOpen launches kernels against the current device (the iGPU here), not the tensors' device
             torch.cuda.set_device(device)
         model = torch.jit.load(
             str(path), map_location=device
         ).eval()  # fp32 only: fp16 fails in the interpreter
+        mark("lama jit loaded")
         window = cfg.lama_window
         image = torch.zeros((1, 3, window, window), device=device)
         mask = torch.zeros((1, 1, window, window), device=device)
@@ -44,6 +47,7 @@ class LamaInpainter:
         with torch.inference_mode():
             model(image, mask)
             model(image, mask)
+        mark("lama warmup forwards done")
         return cls(model, device, window=window)
 
     def inpaint(self, image: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:

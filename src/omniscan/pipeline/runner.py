@@ -11,7 +11,8 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal
 
 from omniscan.core.config import series_config
 from omniscan.core.paths import SeriesPaths
@@ -19,9 +20,11 @@ from omniscan.core.stage import (
     ChapterContext,
     GpuScheduler,
     RunAbortedError,
+    Stage,
     StageOutcome,
     run_series,
 )
+from omniscan.gpu.timeline import mark
 from omniscan.pipeline.stages import PASS_OF, STAGE_ORDER, build_stage
 
 if TYPE_CHECKING:
@@ -31,6 +34,47 @@ if TYPE_CHECKING:
 ReportFn = Callable[[str, StageOutcome], None]
 
 type RunMode = Literal["auto", "step"]
+
+
+class TimedStage:
+    """Stage proxy that brackets `run()` with timeline marks; everything else delegates."""
+
+    def __init__(self, stage: Stage) -> None:
+        self._stage = stage
+
+    @property
+    def name(self) -> str:
+        return self._stage.name
+
+    @property
+    def version(self) -> int:
+        return self._stage.version
+
+    @property
+    def gpu_group(self) -> str | None:
+        return self._stage.gpu_group
+
+    def inputs(self, ctx: ChapterContext) -> list[Path]:
+        return self._stage.inputs(ctx)
+
+    def outputs(self, ctx: ChapterContext) -> list[str]:
+        return self._stage.outputs(ctx)
+
+    def config_subset(self, cfg: Config) -> Mapping[str, Any]:
+        return self._stage.config_subset(cfg)
+
+    def run(self, ctx: ChapterContext, models: Mapping[str, Any]) -> Mapping[str, float]:
+        name = self._stage.name
+        mark(f"stage {name} begin")
+        try:
+            return self._stage.run(ctx, models)
+        finally:
+            mark(f"stage {name} end")
+
+
+def _timed(stages: Sequence[str], cfg: Config, client: ChatClient | None) -> list[Stage]:
+    """The pass's freshly built stages, each wrapped in a TimedStage."""
+    return [TimedStage(build_stage(name, cfg, client=client)) for name in stages]  # pyright: ignore[reportReturnType]
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,7 +177,7 @@ def _run_preview(
         )
 
     for _label, pass_stages in passes:
-        stage_objects = [build_stage(name, cfg, client=client) for name in pass_stages]
+        stage_objects = _timed(pass_stages, cfg, client)
         try:
             pass_results = run_series(
                 stage_objects, cfg, series, [preview_chapter], gpu=gpu, force=force, after_stage=hook
@@ -220,7 +264,7 @@ def run_pipeline(
     else:
         active = all_chapters
     for _label, pass_stages in passes:
-        stage_objects = [build_stage(name, cfg, client=client) for name in pass_stages]
+        stage_objects = _timed(pass_stages, cfg, client)
         pass_results = run_series(stage_objects, cfg, series, active, gpu=gpu, force=force)
         _record_pass_results(result, pass_results, report)
         if result.aborted is not None:

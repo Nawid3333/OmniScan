@@ -24,6 +24,7 @@ from omniscan.filter.apply import record_override
 from omniscan.filter.decide import EXAMPLE_SUFFIXES
 from omniscan.glossary.store import GlossaryStore
 from omniscan.glossary.yaml_io import export_yaml, import_yaml
+from omniscan.gpu.timeline import mark
 from omniscan.importer.execute import execute_import
 from omniscan.importer.plan import ImportPlanError, plan_import
 from omniscan.llm.ollama import OllamaClient, OllamaError, OllamaRateLimitError
@@ -765,6 +766,7 @@ def cmd_run(
         typer.echo("run: --preview-chapter needs --step", err=True)
         raise typer.Exit(2)
     cfg = get_config()
+    mark("run: config loaded")
     if chapter is None and not SeriesPaths.from_config(cfg, series).chapters():
         typer.echo(f"run: no chapters found for series {series!r}", err=True)
         raise typer.Exit(2)
@@ -779,6 +781,7 @@ def cmd_run(
     client = (
         OllamaClient(cfg.ollama, get_secrets()) if any(PASS_OF[name] == "text" for name in names) else None
     )
+    mark("run: stages checked")
     gpu = None
     hw_lock = None
     auto_continue = False  # set by an "all" answer: every later gate passes without asking
@@ -832,6 +835,7 @@ def cmd_run(
             from omniscan.gpu.groups import build_vram_manager
 
             gpu = build_vram_manager(cfg)
+        mark("run: vram manager built")
         result = run_pipeline(
             cfg,
             series,
@@ -858,6 +862,7 @@ def cmd_run(
             release_gpu_lock(hw_lock)
         if client is not None:
             client.close()
+        mark("run: vram released")
     if result.aborted == "stopped":
         stopped_chapter, stopped_outcomes = next(iter(result.outcomes.items()))
         typer.echo(f"run: stopped after {stopped_outcomes[-1].stage} of {stopped_chapter}", err=True)
@@ -1623,3 +1628,5 @@ def update_download(
 app.add_typer(update_app, name="update")
 
 app.add_typer(acquire_app, name="acquire")
+
+mark("cli imported")

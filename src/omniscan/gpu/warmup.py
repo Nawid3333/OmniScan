@@ -15,6 +15,8 @@ import time
 import torch
 import torch.nn.functional as F  # noqa: N812 — torch's standard alias
 
+from omniscan.gpu.timeline import mark
+
 log = logging.getLogger(__name__)
 
 
@@ -68,6 +70,7 @@ class GpuWarmup:
 
     def _run(self) -> None:
         started = time.perf_counter()
+        mark("gpu warmup thread begin")
         try:
             device = self._indexed()
             torch.cuda.set_device(device)  # MIOpen launches against the current device
@@ -77,6 +80,7 @@ class GpuWarmup:
             self._record("set_device", exc)
         self._seconds = time.perf_counter() - started
         log.info("GPU warm-up finished in %.1f s", self._seconds)
+        mark("gpu warmup thread end")
         self._done.set()  # after the log, so wait() returning implies the finish was logged
 
     def _run_steps(self, device: torch.device) -> None:

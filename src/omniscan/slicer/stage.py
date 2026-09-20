@@ -12,6 +12,7 @@ from omniscan.core.schemas import IngestArtifact
 from omniscan.core.stage import ChapterContext
 from omniscan.filter.apply import apply_slice_filter, example_files, examples_fingerprint, load_overrides
 from omniscan.filter.decide import load_examples
+from omniscan.gpu.timeline import mark
 from omniscan.ingest.strip import load_strip
 from omniscan.slicer import slice_with_strategy
 
@@ -61,6 +62,7 @@ class SliceStage:
         ingest = IngestArtifact.load(ingest_path)
 
         strip = load_strip(ctx, ingest)
+        mark("slice: strip decoded")
         slices = slice_with_strategy(strip, ctx.cfg.slicer, ingest.files)
 
         overrides = load_overrides(ctx.paths.artifact("filter.json"))

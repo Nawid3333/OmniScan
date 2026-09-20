@@ -18,6 +18,7 @@ import httpx
 import torch
 
 from omniscan.gpu.device import resolve_device
+from omniscan.gpu.timeline import mark
 
 log = logging.getLogger(__name__)
 
@@ -73,11 +74,14 @@ class VramManager:
             return self._models
         if group != OLLAMA_GROUP and group not in self._groups:
             raise KeyError(f"unknown model group {group!r}")
+        mark(f"acquire {group} begin")
         self.release()
+        mark(f"acquire {group}: previous group released")
         if group == OLLAMA_GROUP:
             self._resident = OLLAMA_GROUP
             return self._models
         self.evict_ollama()
+        mark(f"acquire {group}: ollama evicted")
         spec = self._groups[group]
         free = self.free_gib()
         if free is not None and free < spec.est_gib:
@@ -85,6 +89,7 @@ class VramManager:
         log.info("loading model group %s (~%.1f GiB)", group, spec.est_gib)
         self._models = spec.loader(self.device)
         self._resident = group
+        mark(f"acquire {group} end")
         return self._models
 
     def release(self) -> None:
@@ -97,6 +102,7 @@ class VramManager:
         if self.is_gpu:
             torch.cuda.synchronize(self.device)
             torch.cuda.empty_cache()
+        mark("release done")
 
     def evict_ollama(self) -> list[str]:
         """Unload local (VRAM-resident) Ollama models so torch can use the GPU; returns unloaded names."""
