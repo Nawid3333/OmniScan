@@ -34,6 +34,9 @@ class GpuConfig(BaseModel):
     device: str = "auto"  # auto | cpu | mps | cuda | cuda:N (auto = strongest discrete GPU)
     vram_budget_gib: float = 14.5
     codec: Literal["auto", "rocjpeg", "hybrid", "turbo"] = "auto"
+    warmup: bool = (
+        True  # initialise the GPU libraries (convolution, FFT, GEMM) on a background thread at start-up
+    )
 
 
 class SlicerConfig(BaseModel):
