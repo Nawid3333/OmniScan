@@ -61,7 +61,7 @@ The owner's long list (OCR engines/models on all hardware, model UI + updates + 
 | S3 | **O1b** | OCR engines: model ids for `ppocr` (v5/v6, any size), `manga_ocr` crop reader | ✔ merged (live: 91 JA regions in 3.8 s, page chrF 0.686) |
 | S3b | **O1d** | `paddleocr_vl` engine (fp32, ~3.6 s/region, more accurate on stylised lettering) | card written, launch next |
 | S4 | **O1c** | Qualification suite `scripts/qualify_ocr.py` (ko/cn/ja; page chrF primary — the box-level CER is untrustworthy for JA/ZH until the eval's truth assignment is checked) + `model-watch` Action | after O1d |
-| S5 | **F2** | Filter tiers: post-OCR text patterns, position/shape heuristics, batch over all chapters. Design first (the promo filter is a CLI, not a pipeline stage) | design by the director |
+| S5 | **F2a → F2b → F2c** | **The promo filter is not wired into the pipeline** (finding 2026-09-20): F2a integrates tier 2 (file-level in `ingest`, slice-level in `slice`, `filter.json` = user overrides, config `filter.*`); F2b = tier 1 post-OCR text patterns (Discord/Patreon/"translated by"/URLs, global + per series, restorable); F2c = tier 3 position/shape heuristics + batch over all chapters | F2a card next |
 | S6 | **S2** | Slicer strategies + `slice-compare` + per-series `series.toml` | ✔ merged (follow-up: `slice-compare` should mark a failing strategy instead of crashing) |
 | S7 | **P1** | Runner gates: `omniscan run --step` with one-chapter preview | ✔ merged (live-tested) |
 | S8 | **U3b → U3a → U3c** | Desktop app (PySide6, native widgets): **U3b** strip view + side-by-side viewer ✔ merged; **U3a** models view (card written); **U3c** main window, library, reader integration, `omniscan gui`, settings (needs a user-config writer, director) | in progress |

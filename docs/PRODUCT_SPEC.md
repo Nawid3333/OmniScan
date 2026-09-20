@@ -39,7 +39,7 @@ The published PP-OCRv6 models on Hugging Face (`PaddlePaddle/PP-OCRv6_{tiny,smal
 
 ## 4. Promo / credit / banner filtering
 Owner's 3-tier design, mapped on what exists:
-- **Tier 2 (pHash of repeated banners): exists** (promo filter, dHash + examples, `filter run|restore`, Filtered view).
+- **Tier 2 (pHash of repeated banners): exists as a standalone tool, but is NOT wired into `omniscan run`** (found 2026-09-20 while reading the code: `filter run` writes `filter.json` and copies matches to `_filtered/`, but nothing sets `SourceFile.filtered` / `Slice.filtered` from it, so promo and credit pages still go through OCR, translation and export). Integration is card F2a: the file-level check moves into `ingest` (matching files are left out of the strip), the slice-level check into `slice` (sets `Slice.filtered`), `filter.json` becomes the user-owned override file (`filter restore` writes it; the stages read it as an input, so a restore re-runs what depends on it).
 - **Tier 1 (post-OCR text patterns: Discord, Patreon, "translated by", URLs, ...): missing** → card F2: configurable regex list (global + per series), applied after OCR to drop boxes and mark slices, results visible in the debugger and restorable.
 - **Tier 3 (position and shape heuristics: first 5 % / last 10 % of the chapter, no bubbles + URL-like lines, very wide short slices): missing** → in F2; only the first/last slices are examined (cheap).
 - **Batch:** the filter runs across all chapters of a series in one pass before OCR; only first/last slices per chapter are hashed/OCR-probed.
