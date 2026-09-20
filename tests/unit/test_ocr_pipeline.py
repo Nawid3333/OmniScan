@@ -15,7 +15,7 @@ from omniscan.core.schemas import BBox, Region
 from omniscan.gpu.device import resolve_device
 from omniscan.ocr.lines import LineBox
 from omniscan.ocr.model import LineDetector, LineRecognizer
-from omniscan.ocr.pipeline import read_regions
+from omniscan.ocr.pipeline import read_region_crops, read_regions
 
 
 def region(rid: str, box: tuple[int, int, int, int]) -> Region:
@@ -167,6 +167,74 @@ def test_read_regions_without_regions_runs_no_model() -> None:
     assert out == []
     assert detector.shapes == [] and recognizer.shapes == []
     assert metrics["tiles"] == 0.0 and metrics["regions"] == 0.0
+
+
+# ---------------------------------------------------------------- read_region_crops (card O1b, test 6)
+
+
+class FakeCropReader:
+    """Scripted crop reader: records the crops (shape, storage offset) and hands out readings in order."""
+
+    def __init__(self, readings: list[tuple[str, float]]) -> None:
+        self.readings = readings
+        self.shapes: list[tuple[int, int]] = []
+        self.data_ptrs: list[int] = []
+
+    def read(self, crops: Sequence[torch.Tensor]) -> list[tuple[str, float]]:
+        for crop in crops:
+            self.shapes.append((int(crop.shape[-2]), int(crop.shape[-1])))
+            self.data_ptrs.append(crop.data_ptr())
+        assert len(self.readings) == len(crops)
+        return list(self.readings)
+
+
+CROP_CFG = OcrConfig(crop_pad_px=2)  # crop_batch_size only matters inside a real reader
+
+
+def test_read_region_crops_views_readings_and_metrics() -> None:
+    strip = torch.zeros(3, 100, 200, dtype=torch.uint8)
+    regions = [
+        region("r0001", (10, 20, 60, 80)),
+        region("r0002", (0, 0, 50, 50)),  # touches the top-left corner: clamped
+        region("r0003", (190, 95, 200, 100)),  # touches the bottom-right corner: clamped
+    ]
+    reader = FakeCropReader([("あいう", 0.9), ("", 0.8), ("、", 0.5)])
+
+    out, metrics = read_region_crops(strip, regions, reader, CROP_CFG, engine="ocr-rec-manga-ocr-2025")
+
+    # crops are the padded, clamped strip views: (8, 18, 62, 82), (0, 0, 52, 52), (188, 93, 200, 100)
+    assert reader.shapes == [(64, 54), (52, 52), (7, 12)]
+    base, end = strip.data_ptr(), strip.data_ptr() + strip.numel()
+    assert all(base <= ptr < end for ptr in reader.data_ptrs)  # views of the strip, never copies
+    assert [(r.text, r.confidence) for r in out] == [("あいう", 0.9), ("", 0.0), ("、", 0.5)]
+    assert out[0].lines[0].engine == "ocr-rec-manga-ocr-2025"
+    assert out[0].lines[0].bbox == BBox(x0=10, y0=20, x1=60, y1=80)  # the region's own bbox
+    assert out[1].lines == [] and out[1].text == ""  # an empty reading leaves nothing behind
+    assert metrics == {
+        "tiles": 0.0,
+        "lines": 3.0,
+        "orphan_lines": 0.0,
+        "regions": 3.0,
+        "regions_empty": 1.0,
+        "regions_low_conf": 1.0,  # r0003 at 0.5 < ocr.low_conf 0.85
+    }
+
+
+def test_read_region_crops_without_regions_never_reads() -> None:
+    strip = torch.zeros(3, 100, 200, dtype=torch.uint8)
+    reader = FakeCropReader([])
+
+    out, metrics = read_region_crops(strip, [], reader, CROP_CFG, engine="e")
+
+    assert out == [] and reader.shapes == []
+    assert metrics == {
+        "tiles": 0.0,
+        "lines": 0.0,
+        "orphan_lines": 0.0,
+        "regions": 0.0,
+        "regions_empty": 0.0,
+        "regions_low_conf": 0.0,
+    }
 
 
 # ---------------------------------------------------------------- real models (GPU; tests 15-16)

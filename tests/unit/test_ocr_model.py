@@ -12,7 +12,7 @@ import pytest
 import torch
 
 from omniscan.core.config import OcrConfig
-from omniscan.models.catalog import ModelEntry
+from omniscan.models.catalog import ModelEntry, ModelRole
 from omniscan.models.store import MARKER_NAME
 from omniscan.ocr.model import LineDetector, LineRecognizer
 
@@ -419,3 +419,129 @@ def test_line_recognizer_load_falls_back_to_hub_with_a_warning_when_not_installe
     warnings = [r for r in caplog.records if r.name == "omniscan.ocr.model" and r.levelno == logging.WARNING]
     assert len(warnings) == 1
     assert "omniscan models download --required" in warnings[0].message
+
+
+# ---------------------------------------------------------------- load by model id (card O1b, test 3)
+
+
+def _role_entry(model_id: str, repo: str, role: ModelRole | None) -> ModelEntry:
+    return ModelEntry(
+        id=model_id,
+        name="OCR",
+        kind="ocr",
+        format="hf",
+        size_mb=1,
+        license="Apache-2.0",
+        description="d",
+        role=role,
+        upstream_repo=repo,
+        upstream_revision=_CATALOG_SHA[:40],
+        files={"model.safetensors": "a" * 64},
+    )
+
+
+@pytest.fixture
+def id_catalog(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """A hand-made catalog with a detector and a recognizer id, the detector installed (card O1b)."""
+    from omniscan.ocr import engines as engines_module
+
+    det = _role_entry("ocr-det-x", "org/det", "text_line_detector")
+    rec = _role_entry("ocr-rec-x", "org/rec", "recognizer")
+    folder = tmp_path / det.id
+    folder.mkdir()
+    (folder / "model.safetensors").write_bytes(b"weights")
+    (folder / MARKER_NAME).write_text(
+        json.dumps(
+            {
+                "id": det.id,
+                "source": "upstream",
+                "revision": _CATALOG_SHA[:40],
+                "files_verified": 1,
+                "file_sizes": {"model.safetensors": 7},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(engines_module, "load_catalog", lambda: [det, rec])
+    return tmp_path
+
+
+def test_line_detector_load_by_model_id_uses_the_installed_folder(
+    monkeypatch: pytest.MonkeyPatch, id_catalog: Path
+) -> None:
+    from transformers import AutoImageProcessor, AutoModelForObjectDetection
+
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(
+        AutoModelForObjectDetection, "from_pretrained", _recorder(seen, "model", FakeLoadModel)
+    )
+    monkeypatch.setattr(
+        AutoImageProcessor, "from_pretrained", _recorder(seen, "processor", lambda: FakeDetProcessor([]))
+    )
+
+    LineDetector.load(
+        OcrConfig(det_model="ocr-det-x", det_repo="org/ignored", det_revision="abc123"),
+        torch.device("cpu"),
+        id_catalog,
+    )
+
+    assert seen == {
+        "model": (str(id_catalog / "ocr-det-x"), {"local_files_only": True}),
+        "processor": (str(id_catalog / "ocr-det-x"), {"local_files_only": True}),
+    }  # the catalog id decides, the repo config is ignored
+
+
+def test_line_recognizer_load_by_model_id_falls_back_to_the_pinned_hub(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, id_catalog: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    from transformers import AutoImageProcessor, AutoModelForTextRecognition
+
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(
+        AutoModelForTextRecognition, "from_pretrained", _recorder(seen, "model", FakeLoadModel)
+    )
+    monkeypatch.setattr(
+        AutoImageProcessor, "from_pretrained", _recorder(seen, "processor", lambda: FakeDetProcessor([]))
+    )
+
+    with caplog.at_level(logging.WARNING):
+        LineRecognizer.load(
+            OcrConfig(rec_model="ocr-rec-x", rec_repo="org/ignored", rec_revision="def456"),
+            torch.device("cpu"),
+            tmp_path,
+        )
+
+    assert seen == {
+        "model": ("org/rec", {"revision": _CATALOG_SHA[:40]}),
+        "processor": ("org/rec", {"revision": _CATALOG_SHA[:40]}),
+    }  # not installed: the catalog entry's pinned repo, not the config's repo
+    warnings = [r for r in caplog.records if r.name == "omniscan.ocr.engines"]
+    assert "omniscan models download ocr-rec-x" in warnings[0].message
+
+
+def test_load_rejects_a_model_of_the_wrong_role(monkeypatch: pytest.MonkeyPatch, id_catalog: Path) -> None:
+    with pytest.raises(ValueError, match=r"ocr-rec-x.*expected 'text_line_detector'"):
+        LineDetector.load(OcrConfig(det_model="ocr-rec-x"), torch.device("cpu"))
+    with pytest.raises(ValueError, match=r"ocr-det-x.*expected 'recognizer'"):
+        LineRecognizer.load(OcrConfig(rec_model="ocr-det-x"), torch.device("cpu"))
+
+
+def test_load_without_model_ids_keeps_todays_arguments(
+    monkeypatch: pytest.MonkeyPatch, id_catalog: Path
+) -> None:
+    from transformers import AutoImageProcessor, AutoModelForObjectDetection
+
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(
+        AutoModelForObjectDetection, "from_pretrained", _recorder(seen, "model", FakeLoadModel)
+    )
+    monkeypatch.setattr(
+        AutoImageProcessor, "from_pretrained", _recorder(seen, "processor", lambda: FakeDetProcessor([]))
+    )
+
+    LineDetector.load(OcrConfig(det_repo="org/det", det_revision="abc123"), torch.device("cpu"), id_catalog)
+
+    assert seen == {
+        "model": ("org/det", {"revision": "abc123"}),
+        "processor": ("org/det", {"revision": "abc123"}),
+    }  # det_model unset: exactly the pre-O1b hub behaviour

@@ -15,7 +15,7 @@ from typer.testing import CliRunner
 
 import omniscan.cli
 from omniscan.cli import app
-from omniscan.core.config import Config, GpuConfig, OllamaConfig, PathsConfig
+from omniscan.core.config import Config, GpuConfig, OcrConfig, OllamaConfig, PathsConfig
 from omniscan.core.schemas import BBox, OcrLine, Region, RegionsArtifact, Slice, SlicesArtifact
 from omniscan.detect.model import Detector, RawDet
 from omniscan.ocr.lines import LineBox
@@ -184,6 +184,51 @@ def test_build_vram_manager_registers_inpaint(monkeypatch: pytest.MonkeyPatch, t
     manager.release()
     assert manager.acquire(VISION_GROUP)["detector"] is fake_detector  # the vision group stays
     manager.release()
+
+
+# ---------------------------------------------------------------- engine dispatch (card O1b, test 8)
+
+
+def test_vision_group_for_manga_ocr_loads_the_reader_not_the_detector(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from omniscan.gpu.groups import VISION_GROUP, build_vram_manager
+    from omniscan.ocr.crop_readers import MangaOcrReader
+
+    fake_reader, fake_detector = object(), object()
+    seen: dict[str, Any] = {}
+
+    def fake_reader_load(cfg: Any, device: torch.device, models_dir: Path | None) -> object:
+        seen["reader"] = (cfg, device, models_dir)
+        return fake_reader
+
+    def fail_line_detector(cfg_: Any, device: torch.device, models_dir: Path | None = None) -> object:
+        raise AssertionError("LineDetector.load must not run for manga_ocr")
+
+    monkeypatch.setattr(MangaOcrReader, "load", fake_reader_load)
+    monkeypatch.setattr(Detector, "load", lambda cfg_, device, models_dir=None: fake_detector)
+    monkeypatch.setattr(LineDetector, "load", fail_line_detector)
+
+    cfg = cli_cfg(tmp_path).model_copy(update={"ocr": OcrConfig(engine="manga_ocr")})
+    manager = build_vram_manager(cfg)
+
+    models = manager.acquire(VISION_GROUP)
+
+    assert models == {"detector": fake_detector, "reader": fake_reader}
+    assert seen["reader"] == (cfg.ocr, manager.device, cfg.paths.models_dir)
+    manager.release()
+
+
+def test_vision_group_for_unknown_engine_raises(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from omniscan.gpu.groups import VISION_GROUP, build_vram_manager
+
+    monkeypatch.setattr(Detector, "load", lambda cfg_, device, models_dir=None: object())
+
+    cfg = cli_cfg(tmp_path).model_copy(update={"ocr": OcrConfig(engine="paddleocr_vl")})
+    manager = build_vram_manager(cfg)
+
+    with pytest.raises(ValueError, match="OCR engine 'paddleocr_vl' is not available yet"):
+        manager.acquire(VISION_GROUP)
 
 
 # ---------------------------------------------------------------- CLI (tests 19, 20)

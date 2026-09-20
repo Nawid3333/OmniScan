@@ -316,6 +316,34 @@ Reads `ingest.json`, `slices.json`, `regions.json` and the raw images; writes `o
 uv run omniscan ocr DemoSeries
 ```
 
+### OCR engines and models
+
+`ocr.engine` chooses how the regions are read. Every model comes from the catalog
+(`config/models.toml`, listed by `omniscan models list`) and is installed with
+`omniscan models download <id>`; an engine's model that is not installed is pulled from its pinned
+Hugging Face revision on first use.
+
+| Engine | Reads | Models (`[ocr]` in `series.toml` or `OMNISCAN_OCR__*`) | Status |
+|---|---|---|---|
+| `ppocr` (default) | detected text lines, as described above | `ocr.det_model` + `ocr.rec_model`, catalog ids (PP-OCRv5/v6, any size; unset = `ocr.det_repo`/`ocr.rec_repo`) | available |
+| `manga_ocr` | every region as one whole crop | `ocr.rec_model`, catalog id (default `ocr-rec-manga-ocr-2025`, Japanese) | available |
+| `paddleocr_vl` | every region as one whole crop | a PaddleOCR-VL catalog entry | not yet (card O1d) |
+
+With `ppocr`, `ocr.det_model` / `ocr.rec_model` name catalog entries and win over the plain
+`ocr.det_repo` / `ocr.rec_repo` (a wrong role — a recogniser id as `det_model` — is rejected); each
+line records the model id as its `engine`. With a crop-reading engine no line detection runs: every
+region is padded by `ocr.crop_pad_px`, read as one crop in batches of `ocr.crop_batch_size`, and the
+region's text is that one reading (the score is the model's confidence). Changing `ocr.engine`,
+`ocr.det_model` or `ocr.rec_model` re-runs the `ocr` stage.
+
+```bash
+OMNISCAN_OCR__ENGINE=manga_ocr uv run omniscan ocr DemoSeries
+OMNISCAN_OCR__DET_MODEL=ocr-det-ppocrv6-medium OMNISCAN_OCR__REC_MODEL=ocr-rec-ppocrv6-medium uv run omniscan ocr DemoSeries
+```
+
+Which engine and model is best per language is measured, not assumed — `recommended_for` in the
+catalog and the qualification suite (card O1c) are the source of truth.
+
 ### `omniscan inpaint`
 
 Remove the source text from every OCR region and record the result (`inpaint.json` + `patches.npz`).

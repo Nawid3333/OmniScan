@@ -216,3 +216,73 @@ def test_confident_regions_are_kept(cfg: Config) -> None:
 
     assert outcome.metrics["regions_dropped"] == 0.0
     assert len(RegionsArtifact.load(ctx.paths.artifact("ocr.json")).regions) == 1
+
+
+# ---------------------------------------------------------------- crop-reading engine (card O1b, test 7)
+
+
+class FakeReader:
+    """Scripted crop-reading engine: one reading for every region crop."""
+
+    def __init__(self, reading: tuple[str, float]) -> None:
+        self.reading = reading
+        self.n_crops = 0
+
+    def read(self, crops: list[torch.Tensor]) -> list[tuple[str, float]]:
+        self.n_crops = len(crops)
+        return [self.reading for _ in crops]
+
+
+MANGA_CFG = OcrConfig(tile_px=400, engine="manga_ocr")
+
+
+def test_manga_ocr_stage_reads_whole_region_crops(cfg: Config) -> None:
+    manga = cfg.model_copy(update={"ocr": MANGA_CFG})
+    ctx = prepared(manga)
+    ctx.gpu = FakeScheduler({"reader": FakeReader(("あいう、", 0.9))})
+
+    outcome = run_stage(OcrStage(), ctx)
+
+    assert outcome.status == "done"
+    assert outcome.metrics["tiles"] == 0.0 and outcome.metrics["lines"] == 1.0
+    assert outcome.metrics["regions_dropped"] == 0.0
+    built = RegionsArtifact.load(ctx.paths.artifact("ocr.json")).regions[0]
+    assert built.text == "あいう、" and built.confidence == 0.9
+    assert built.lines[0].engine == "ocr-rec-manga-ocr-2025"  # the engine's default rec model id
+    assert built.lines[0].bbox == BBox(x0=10, y0=50, x1=390, y1=200)  # one line per region: its bbox
+    assert run_stage(OcrStage(), make_context(manga, SERIES, CHAPTER, ctx.gpu)).status == "skipped"
+
+
+def test_manga_ocr_stage_drops_low_confidence_regions(cfg: Config) -> None:
+    strict = cfg.model_copy(update={"ocr": MANGA_CFG.model_copy(update={"drop_conf": 0.99})})
+    ctx = prepared(strict)
+    ctx.gpu = FakeScheduler({"reader": FakeReader(("あ", 0.9))})
+
+    assert run_stage(OcrStage(), ctx).metrics["regions_dropped"] == 1.0
+    assert RegionsArtifact.load(ctx.paths.artifact("ocr.json")).regions == []
+
+
+def test_manga_ocr_stage_drops_regions_without_text(cfg: Config) -> None:
+    ctx = prepared(cfg.model_copy(update={"ocr": MANGA_CFG}))
+    ctx.gpu = FakeScheduler({"reader": FakeReader(("", 0.8))})
+
+    outcome = run_stage(OcrStage(), ctx)
+
+    assert outcome.metrics["regions_empty"] == 1.0 and outcome.metrics["regions_dropped"] == 1.0
+    assert RegionsArtifact.load(ctx.paths.artifact("ocr.json")).regions == []
+
+
+def test_manga_ocr_stage_reruns_when_engine_or_rec_model_change(cfg: Config) -> None:
+    ctx = prepared(cfg)
+    ctx.gpu = FakeScheduler({"reader": FakeReader(("あ", 0.9))})
+    manga = cfg.model_copy(update={"ocr": MANGA_CFG})
+    assert run_stage(OcrStage(), make_context(manga, SERIES, CHAPTER, ctx.gpu)).status == "done"
+
+    rec_model = manga.model_copy(
+        update={"ocr": MANGA_CFG.model_copy(update={"rec_model": "ocr-rec-manga-ocr-base"})}
+    )
+    outcome = run_stage(OcrStage(), make_context(rec_model, SERIES, CHAPTER, ctx.gpu))
+
+    assert outcome.status == "done"  # engine and rec_model are part of the config hash
+    built = RegionsArtifact.load(rec_model.paths.work_root / SERIES / CHAPTER / "ocr.json").regions[0]
+    assert built.lines[0].engine == "ocr-rec-manga-ocr-base"  # the label follows the rec model id
