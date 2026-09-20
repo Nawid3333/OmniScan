@@ -1,4 +1,8 @@
-"""OCR pipeline: strip + regions -> tiles -> line boxes -> assignment -> crops -> readings -> regions."""
+"""OCR pipeline: strip + regions -> text, two ways (card O1b).
+
+`read_regions` (ppocr): tiles -> line boxes -> assignment -> line crops -> readings -> regions.
+`read_region_crops` (manga_ocr, paddleocr_vl): one padded crop per region -> readings -> regions.
+"""
 
 from __future__ import annotations
 
@@ -13,6 +17,7 @@ from omniscan.core.schemas import Region
 from omniscan.detect.postprocess import Box
 from omniscan.detect.tiles import keep_tiles, plan_tiles
 from omniscan.ocr.assemble import build_ocr_regions
+from omniscan.ocr.crop_readers import TextReader
 from omniscan.ocr.lines import LineBox, assign_lines, merge_lines
 from omniscan.ocr.model import LineDetector, LineRecognizer
 
@@ -71,6 +76,64 @@ def read_regions(
         "tiles": float(len(tiles)),
         "lines": float(len(lines)),
         "orphan_lines": float(len(orphans)),
+        "regions": float(len(regions)),
+        "regions_empty": float(sum(1 for region in out if not region.lines)),
+        "regions_low_conf": float(
+            sum(1 for region in out if region.lines and region.confidence < cfg.low_conf)
+        ),
+    }
+    return out, metrics
+
+
+def read_region_crops(
+    strip: torch.Tensor,
+    regions: Sequence[Region],
+    reader: TextReader,
+    cfg: OcrConfig,
+    *,
+    engine: str,
+) -> tuple[list[Region], dict[str, float]]:
+    """Read whole region crops (manga_ocr and friends): one padded crop per region, no line detection."""
+    height, width = int(strip.shape[-2]), int(strip.shape[-1])
+    crop_list: list[torch.Tensor] = []
+    for region in regions:
+        x0, y0, x1, y1 = _crop_box(
+            (float(region.bbox.x0), float(region.bbox.y0), float(region.bbox.x1), float(region.bbox.y1)),
+            cfg.crop_pad_px,
+            width,
+            height,
+        )
+        crop_list.append(strip[:, y0:y1, x0:x1])  # view, never a copy
+    readings = {
+        (region.id, 0): reading for region, reading in zip(regions, reader.read(crop_list), strict=True)
+    }
+    by_region = {
+        region.id: [
+            LineBox(
+                box=(
+                    float(region.bbox.x0),
+                    float(region.bbox.y0),
+                    float(region.bbox.x1),
+                    float(region.bbox.y1),
+                ),
+                score=1.0,
+            )
+        ]
+        for region in regions
+    }
+    out = build_ocr_regions(
+        regions,
+        by_region,
+        readings,
+        engine=engine,
+        lang=cfg.lang,
+        strip_width=width,
+        strip_height=height,
+    )
+    metrics = {
+        "tiles": 0.0,
+        "lines": float(len(regions)),
+        "orphan_lines": 0.0,
         "regions": float(len(regions)),
         "regions_empty": float(sum(1 for region in out if not region.lines)),
         "regions_low_conf": float(

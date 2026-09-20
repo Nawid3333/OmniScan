@@ -1,8 +1,9 @@
 """VRAM model groups for the pipeline stages: one manager per command, model groups registered here.
 
-The vision group holds the comic detector and the two OCR models (line detector + recognizer); they are
-always resident together. Loaders import their models lazily so importing this module — and
-`omniscan --help` — stays free of heavy model libraries.
+The vision group holds the comic detector plus the OCR models the configured engine needs (ppocr:
+line detector + recognizer; manga_ocr: the crop reader); they are always resident together. Loaders
+import their models lazily so importing this module — and `omniscan --help` — stays free of heavy
+model libraries.
 """
 
 from __future__ import annotations
@@ -27,11 +28,19 @@ def build_vram_manager(cfg: Config) -> VramManager:
         )  # deferred: importing this module must not pull transformers
         from omniscan.ocr.model import LineDetector, LineRecognizer  # deferred
 
-        return {
-            "detector": Detector.load(cfg.detect, device, models_dir=cfg.paths.models_dir),
-            "line_detector": LineDetector.load(cfg.ocr, device, models_dir=cfg.paths.models_dir),
-            "recognizer": LineRecognizer.load(cfg.ocr, device, models_dir=cfg.paths.models_dir),
-        }
+        engine = cfg.ocr.engine
+        if engine == "ppocr":
+            ocr: dict[str, Any] = {
+                "line_detector": LineDetector.load(cfg.ocr, device, models_dir=cfg.paths.models_dir),
+                "recognizer": LineRecognizer.load(cfg.ocr, device, models_dir=cfg.paths.models_dir),
+            }
+        elif engine == "manga_ocr":
+            from omniscan.ocr.crop_readers import MangaOcrReader  # deferred
+
+            ocr = {"reader": MangaOcrReader.load(cfg.ocr, device, models_dir=cfg.paths.models_dir)}
+        else:
+            raise ValueError(f"OCR engine {engine!r} is not available yet")
+        return {"detector": Detector.load(cfg.detect, device, models_dir=cfg.paths.models_dir), **ocr}
 
     def load_inpaint(device: torch.device) -> dict[str, Any]:
         from omniscan.inpaint.lama import (

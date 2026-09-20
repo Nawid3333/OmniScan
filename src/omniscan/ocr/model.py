@@ -16,6 +16,7 @@ import torch
 
 from omniscan.core.config import OcrConfig
 from omniscan.models.resolve import local_model_source
+from omniscan.ocr.engines import load_kwargs, model_entry, model_source
 from omniscan.ocr.lines import LineBox, polygon_box
 
 log = logging.getLogger(__name__)
@@ -24,6 +25,13 @@ log = logging.getLogger(__name__)
 def _to_device(model: torch.nn.Module, device: torch.device) -> torch.nn.Module:
     """`model.to(device)` via a Module-typed parameter: transformers' @wraps-wrapped `.to` rejects a device in pyright."""
     return model.to(device)
+
+
+def _check_model_role(model_id: str, expected_role: str) -> None:
+    """A `det_model`/`rec_model` catalog id must name a model of the role its loader expects."""
+    role = model_entry(model_id).role
+    if role != expected_role:
+        raise ValueError(f"OCR model {model_id!r} has role {role!r}, expected {expected_role!r}")
 
 
 class LineDetector:
@@ -60,21 +68,25 @@ class LineDetector:
         if device.type == "cuda":
             # MIOpen launches kernels against the current device (the iGPU here), not the tensors' device
             torch.cuda.set_device(device)
-        source = local_model_source(cfg.det_repo, models_dir) if models_dir is not None else None
-        if source is not None:
-            log.info("loading %s from %s", cfg.det_repo, source)
-            extra: dict[str, Any] = {"local_files_only": True}
-            repo = source
+        if cfg.det_model is not None:
+            _check_model_role(cfg.det_model, "text_line_detector")
+            repo, extra = load_kwargs(model_source(cfg.det_model, models_dir), models_dir=models_dir)
         else:
-            if models_dir is not None:
-                log.warning(
-                    "model %s is not installed in %s; using the Hugging Face hub/cache. "
-                    'Run "omniscan models download --required" to install it.',
-                    cfg.det_repo,
-                    models_dir,
-                )
-            extra = {"revision": cfg.det_revision} if cfg.det_revision else {}
-            repo = cfg.det_repo
+            source = local_model_source(cfg.det_repo, models_dir) if models_dir is not None else None
+            if source is not None:
+                log.info("loading %s from %s", cfg.det_repo, source)
+                extra: dict[str, Any] = {"local_files_only": True}
+                repo = source
+            else:
+                if models_dir is not None:
+                    log.warning(
+                        "model %s is not installed in %s; using the Hugging Face hub/cache. "
+                        'Run "omniscan models download --required" to install it.',
+                        cfg.det_repo,
+                        models_dir,
+                    )
+                extra = {"revision": cfg.det_revision} if cfg.det_revision else {}
+                repo = cfg.det_repo
         model = AutoModelForObjectDetection.from_pretrained(repo, **extra)
         model = _to_device(model, device).eval()
         processor = AutoImageProcessor.from_pretrained(repo, **extra)
@@ -146,21 +158,25 @@ class LineRecognizer:
         if device.type == "cuda":
             # MIOpen launches kernels against the current device (the iGPU here), not the tensors' device
             torch.cuda.set_device(device)
-        source = local_model_source(cfg.rec_repo, models_dir) if models_dir is not None else None
-        if source is not None:
-            log.info("loading %s from %s", cfg.rec_repo, source)
-            extra: dict[str, Any] = {"local_files_only": True}
-            repo = source
+        if cfg.rec_model is not None:
+            _check_model_role(cfg.rec_model, "recognizer")
+            repo, extra = load_kwargs(model_source(cfg.rec_model, models_dir), models_dir=models_dir)
         else:
-            if models_dir is not None:
-                log.warning(
-                    "model %s is not installed in %s; using the Hugging Face hub/cache. "
-                    'Run "omniscan models download --required" to install it.',
-                    cfg.rec_repo,
-                    models_dir,
-                )
-            extra = {"revision": cfg.rec_revision} if cfg.rec_revision else {}
-            repo = cfg.rec_repo
+            source = local_model_source(cfg.rec_repo, models_dir) if models_dir is not None else None
+            if source is not None:
+                log.info("loading %s from %s", cfg.rec_repo, source)
+                extra: dict[str, Any] = {"local_files_only": True}
+                repo = source
+            else:
+                if models_dir is not None:
+                    log.warning(
+                        "model %s is not installed in %s; using the Hugging Face hub/cache. "
+                        'Run "omniscan models download --required" to install it.',
+                        cfg.rec_repo,
+                        models_dir,
+                    )
+                extra = {"revision": cfg.rec_revision} if cfg.rec_revision else {}
+                repo = cfg.rec_repo
         model = AutoModelForTextRecognition.from_pretrained(repo, **extra)
         model = _to_device(model, device).eval()
         processor = AutoImageProcessor.from_pretrained(repo, **extra)
