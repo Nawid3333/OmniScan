@@ -126,3 +126,8 @@ loaded OK: 6903367 params, dtype torch.float32
    folders still count as `corrupt` (no `.installed.json`) — doctor warns and the loaders ignore
    them. Out of scope here per the card; the fix would be a `models verify --adopt` or marker
    writer for cache copies.
+## Review addendum (director)
+- Rebased onto `main` (no conflicts); ruff, pyright and the resolve/detect/ocr/gpu-groups/doctor/docs tests are green.
+- **Live check on the real machine:** `omniscan models download --required` (mirror is private → Hugging Face fallback) installed the three required models into `V:\OmniScan\models`; `omniscan models list` shows them `installed`; `omniscan doctor` shows `models OK — 3 required models installed`; `omniscan ocr KoreanDemo --force` logs `loading PaddlePaddle/PP-OCRv5_server_det_safetensors from V:\OmniScan\models\ocr-det-ppocrv5-server` and the same for the Korean recogniser, i.e. the pipeline really uses the manager's folders.
+- **Answers:** (1) two resolve helpers with different keys (catalog id vs upstream repo) are fine. (2) `unknown` cannot occur for required models today; revisit when a required LLM exists. (3) Adopting old Hugging Face cache copies stays out of scope; a fresh `models download` is 262 MB.
+- Mutation review of the models package is part of card **Q4**.
