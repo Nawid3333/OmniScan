@@ -54,20 +54,23 @@ Q1 (129 slicer/ingest mutants, 23 test gaps closed), Q2 (115 filter/glossary/imp
 
 ## Owner spec of 2026-09-20 → `docs/PRODUCT_SPEC.md` (read it), card queue
 The owner's long list (OCR engines/models on all hardware, model UI + updates + qualification, slicer strategies + compare, promo filter tiers, pipeline preview/gates, reader + side-by-side + manual tools, covers, downloader, GitHub automation) is captured with decisions and evidence in **`docs/PRODUCT_SPEC.md`**. Key evidence: **PP-OCRv6 is en+zh only and scores far below the v5 Korean model on Korean pages** (page chrF 0.105 vs 0.475 on episode 6), so "v6 biggest as default" applies per language where the qualification suite says it wins; the catalog will carry every size so the user can choose.
-| # | ID | What | State (2026-09-20, evening) |
+| # | ID | What | State (2026-09-20, late evening) |
 |---|---|---|---|
-| S1 | **H1** | Hardware detection (`omniscan hardware`) + per-model compatibility (ok/slow/warn/incompatible with reasons) | ✔ merged (3033 tests) |
-| S2 | **O1a** | Catalog of all OCR models/sizes (PP-OCRv6 tiny/small/medium, PP-OCRv5 family, PaddleOCR-VL, manga-ocr) with hashes, languages, requirements; format `hf`; `scripts/hf_catalog.py` | running |
-| S3 | **O1b** | OCR engines behind the recogniser protocol: `ppocr` (sizes), `manga_ocr`, `paddleocr_vl`; settings `ocr.engine`, model ids per role | card after O1a is merged (needs its catalog code; `OcrConfig` in `core/config.py` is edited by the director first) |
-| S4 | **O1c** | Qualification suite `scripts/qualify_ocr.py` (ko/cn/ja Pepper&Carrot; default per language must beat the current one) + `model-watch` GitHub Action | after O1b |
-| S5 | **F2** | Filter tiers: post-OCR text patterns, position/shape heuristics, batch over all chapters. Design first: the promo filter is a CLI (`filter run`), not a pipeline stage, and tier 1/3 need OCR text | design by the director, then card |
-| S6 | **S2** | Slicer strategies (`smart`, `page`, `fixed`, `simple_gutter`) + `slice-compare`; per-series override through `<series>/series.toml` (`core.config.series_config`, done) | card written |
-| S7 | **P1** | Runner gates: pause after each stage with a one-chapter preview / automatic mode | card to write |
-| S8 | **U3b → U3a → …** | Desktop app (PySide6, native widgets, decisions in `docs/DECISIONS.md`): **U3b** strip view + side-by-side compare view + library service; **U3a** main window, models view (uses `models`+`hw` services), settings; later: run/queue view, debugger overlays, manual tools, font picker | U3b card written; U3a after O1a merged |
-| S9 | **L1** | Library covers/metadata via AniList/MangaDex/Jikan (no LLM), user upload. API shapes measured 2026-09-20: AniList GraphQL (rate limit header 30/min), MangaDex `includes[]=cover_art` + `uploads.mangadex.org/covers/<id>/<file>` (HEAD not allowed), Jikan flaky (504) | card to write |
-| S10 | **B33b → B33c → B33d** | extract.pics client + page-run selection (B33b, running) · chapter selection, completeness, plan (B33c, card written) · `omniscan acquire plan|run|check` (B33d, card written, after B33b+B33c). API shapes: `docs/EXTRACTPICS_API.md` (measured live). **No site crawlers** | in progress |
-| S11 | **G1** | `omni_builder.py ask`: read-only GLM lookups of big/generated files | card written |
-| S12 | **Q5** | Mutation review of `hw/` and the O1a catalog code (`scripts/mutate.py`) | card after O1a is merged |
+| S1 | **H1** | Hardware detection (`omniscan hardware`) + per-model compatibility | ✔ merged |
+| S2 | **O1a** | Catalog of all OCR models/sizes (34 entries, format `hf`, `scripts/hf_catalog.py`) | ✔ merged (live: HF download + `verify --deep`) |
+| S3 | **O1b** | OCR engines: model ids for `ppocr` (v5/v6, any size), `manga_ocr` crop reader | ✔ merged (live: 91 JA regions in 3.8 s, page chrF 0.686) |
+| S3b | **O1d** | `paddleocr_vl` engine (fp32, ~3.6 s/region, more accurate on stylised lettering) | card written, launch next |
+| S4 | **O1c** | Qualification suite `scripts/qualify_ocr.py` (ko/cn/ja; page chrF primary — the box-level CER is untrustworthy for JA/ZH until the eval's truth assignment is checked) + `model-watch` Action | after O1d |
+| S5 | **F2** | Filter tiers: post-OCR text patterns, position/shape heuristics, batch over all chapters. Design first (the promo filter is a CLI, not a pipeline stage) | design by the director |
+| S6 | **S2** | Slicer strategies + `slice-compare` + per-series `series.toml` | ✔ merged (follow-up: `slice-compare` should mark a failing strategy instead of crashing) |
+| S7 | **P1** | Runner gates: `omniscan run --step` with one-chapter preview | ✔ merged (live-tested) |
+| S8 | **U3b → U3a → U3c** | Desktop app (PySide6, native widgets): **U3b** strip view + side-by-side viewer ✔ merged; **U3a** models view (card written); **U3c** main window, library, reader integration, `omniscan gui`, settings (needs a user-config writer, director) | in progress |
+| S9 | **L1** | Library covers/metadata via AniList/MangaDex/Jikan (no LLM), user upload. Shapes measured 2026-09-20: AniList GraphQL (30 req/min), MangaDex `includes[]=cover_art` + `uploads.mangadex.org/covers/<id>/<file>` (HEAD not allowed), Jikan flaky (504) | card to write |
+| S10 | **B33b/c/d** | extract.pics client, page-run selection, chapter selection, completeness, plan, `omniscan acquire plan|run|check` | ✔ merged, live-tested on a CC-BY page (4 of 100 free credits used) |
+| S11 | **G1** | `omni_builder.py ask` (read-only GLM lookups) | running |
+| S12 | **Q5 / Q6** | Mutation reviews: Q5 hw/hf/`series_config` (running), Q6 acquire + slicer strategies (card written) | Q5 running |
+| S13 | **G2** | **Steady GPU load (owner: coil whine):** background GPU warm-up thread (hides the 9–14 s first-conv stall), typeset fit loop 2.5× fewer measurements (identical layouts) | running |
+| S14 | **G3** | Detector/OCR one-batch look-ahead (queue batch i+1 before copying batch i to the host) | only if G2 leaves gaps (measure first) |
 
 ## Working rule (owner, 2026-09-19): use the GLM builders more, the director does less by hand
 The director writes cards (exact interfaces, golden values), launches builders, merges and looks at real output; **implementation, tests, docs and routine mutation reviews go to the builders** (keep 3 slots busy; write the next card while they run; when a slot frees, launch the next card at once). One-off work that needs this machine (packaging local model caches, GitHub uploads) is the exception.
