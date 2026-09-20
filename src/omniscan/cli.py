@@ -14,6 +14,7 @@ from PIL import Image
 from rich.console import Console
 from rich.table import Table
 
+from omniscan.acquire.cli import acquire_app
 from omniscan.core.config import Config, get_config, get_secrets
 from omniscan.core.paths import ChapterPaths, SeriesPaths, chapter_number, list_chapters, list_images
 from omniscan.core.schemas import FilterArtifact, GlossaryEntry, IngestArtifact, SlicesArtifact
@@ -40,7 +41,6 @@ app = typer.Typer(help="OmniScan — manhwa/manga translator", no_args_is_help=T
 STATUS_STYLES = {"OK": "green", "WARN": "yellow", "FAIL": "red"}
 
 _STUB_COMMANDS = (
-    "acquire",
     "reference",
 )
 
@@ -208,11 +208,6 @@ app.command("pack")(cmd_pack)
 def _stub(name: str, series: str | None) -> None:
     typer.echo(f"{name}: not implemented yet", err=True)
     raise typer.Exit(2)
-
-
-def cmd_acquire(series: Annotated[str | None, typer.Argument()] = None) -> None:
-    """Not implemented yet."""
-    _stub("acquire", series)
 
 
 def _run_stages(
@@ -1511,3 +1506,5 @@ def update_download(
 
 
 app.add_typer(update_app, name="update")
+
+app.add_typer(acquire_app, name="acquire")

@@ -25,7 +25,6 @@ from omniscan.doctor import CheckResult
 from tests.fixtures import images
 
 STUB_COMMANDS = (
-    "acquire",
     "ingest",
     "slice",
     "filter",
@@ -44,14 +43,8 @@ runner = CliRunner()
 def test_help_lists_all_commands() -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    for name in ("doctor", "version", "typeset", *STUB_COMMANDS):
+    for name in ("doctor", "version", "typeset", "acquire", *STUB_COMMANDS):
         assert name in result.output
-
-
-def test_stub_exits_2() -> None:
-    result = runner.invoke(app, ["acquire"])
-    assert result.exit_code == 2
-    assert "acquire: not implemented yet" in result.output
 
 
 def test_doctor_json_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
