@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tomllib
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -42,6 +43,23 @@ def load_sources(path: Path) -> list[ChapterSource]:
     template = data.get("template")
     if template:
         sources.extend(_template_sources(template, seen))
+    return sources
+
+
+def template_chapters(url: str, first: int, last: int, name: str = "Chapter {n}") -> list[ChapterSource]:
+    """Chapters generated from a `{n}` URL template; same rules and errors as the [template] table."""
+    return _template_sources({"url": url, "first": first, "last": last, "name": name}, set())
+
+
+def named_chapters(entries: Sequence[tuple[str, str]]) -> list[ChapterSource]:
+    """Validate (name, url) pairs like [[chapter]] entries: http(s) url, safe unique name; raises ValueError."""
+    seen: set[str] = set()
+    sources: list[ChapterSource] = []
+    for index, (name, url) in enumerate(entries, start=1):
+        url = _check_url(url, f"chapter #{index}")
+        name = _check_name(name)
+        _check_duplicate(name, seen)
+        sources.append(ChapterSource(name=name, url=url))
     return sources
 
 

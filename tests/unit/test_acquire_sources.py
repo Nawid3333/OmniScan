@@ -8,7 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from omniscan.acquire.sources import ChapterSource, load_sources, sources_path
+from omniscan.acquire.sources import (
+    ChapterSource,
+    load_sources,
+    named_chapters,
+    sources_path,
+    template_chapters,
+)
 
 
 def write(tmp_path: Path, text: str) -> Path:
@@ -173,3 +179,63 @@ def test_thousand_template_chapters_ok(tmp_path: Path) -> None:
     sources = load_sources(path)
     assert len(sources) == 1000
     assert sources[-1] == ChapterSource("Chapter 1000", "https://example.org/a/1000")
+
+
+# --- template_chapters / named_chapters (B33c) ---
+
+
+def test_template_chapters_generates_range() -> None:
+    assert template_chapters("https://x.test/c/{n}", 3, 5) == [
+        ChapterSource("Chapter 3", "https://x.test/c/3"),
+        ChapterSource("Chapter 4", "https://x.test/c/4"),
+        ChapterSource("Chapter 5", "https://x.test/c/5"),
+    ]
+
+
+def test_template_chapters_custom_name() -> None:
+    assert template_chapters("https://x.test/c/{n}", 1, 2, name="Ep {n}") == [
+        ChapterSource("Ep 1", "https://x.test/c/1"),
+        ChapterSource("Ep 2", "https://x.test/c/2"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("url", "first", "last", "name", "message"),
+    [
+        ("https://x.test/c/{n}", 5, 3, "Chapter {n}", "template: first (5) is greater than last (3)"),
+        ("https://x.test/c/{n}", 1, 1001, "Chapter {n}", "template: more than 1000 chapters"),
+        ("ftp://x/c/{n}", 1, 2, "Chapter {n}", "template: url must be http(s)"),
+        ("https://x.test/c/{n}", 1, 2, "x/{n}", "unsafe chapter name 'x/1'"),
+    ],
+)
+def test_template_chapters_errors(url: str, first: int, last: int, name: str, message: str) -> None:
+    with pytest.raises(ValueError, match=re.escape(message)):
+        template_chapters(url, first, last, name=name)
+
+
+def test_named_chapters_accepts_good_pairs() -> None:
+    assert named_chapters([("Chapter 1", "https://x.test/1"), ("Ep 2", "http://x.test/2")]) == [
+        ChapterSource("Chapter 1", "https://x.test/1"),
+        ChapterSource("Ep 2", "http://x.test/2"),
+    ]
+
+
+def test_named_chapters_empty() -> None:
+    assert named_chapters([]) == []
+
+
+@pytest.mark.parametrize(
+    ("entries", "message"),
+    [
+        ([("Chapter 1", "https://x.test/1"), ("Chapter 2", "ftp://x/2")], "chapter #2: url must be http(s)"),
+        ([("a/b", "https://x.test/1")], "unsafe chapter name 'a/b'"),
+        ([(".", "https://x.test/1")], "unsafe chapter name '.'"),
+        (
+            [("Chapter 1", "https://x.test/1"), ("Chapter 1", "https://x.test/2")],
+            "duplicate chapter name 'Chapter 1'",
+        ),
+    ],
+)
+def test_named_chapters_errors(entries: list[tuple[str, str]], message: str) -> None:
+    with pytest.raises(ValueError, match=re.escape(message)):
+        named_chapters(entries)
