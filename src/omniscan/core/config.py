@@ -7,7 +7,9 @@ Secrets come only from the environment or ~/.config/omniscan/secrets.env.
 
 from __future__ import annotations
 
+import json
 import tomllib
+from collections.abc import Mapping, Sequence
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
@@ -220,6 +222,7 @@ SERIES_SECTIONS = (
     "inpaint",
     "typeset",
     "export",
+    "filter",
 )  # machine-level sections are not per series
 
 
@@ -245,6 +248,85 @@ def series_config(cfg: Config, series_dir: Path) -> Config:
         return Config(**_deep_merge(cfg.model_dump(), data))
     except ValidationError as exc:
         raise SeriesConfigError(f"{path}: {exc}") from exc
+
+
+def dumps_toml(data: Mapping[str, Any]) -> str:
+    """Serialise a dict of scalars, lists of scalars and one level of tables to TOML (comments are not kept)."""
+
+    def scalar(value: Any) -> str:
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, (int, float)):
+            return repr(value)
+        if isinstance(value, (str, Path)):
+            return json.dumps(
+                str(value), ensure_ascii=False
+            )  # JSON string escapes are valid TOML basic strings
+        if isinstance(value, (list, tuple)):
+            return "[" + ", ".join(scalar(item) for item in value) + "]"
+        raise ValueError(f"cannot write {type(value).__name__} value {value!r} to TOML")
+
+    lines: list[str] = []
+    tables: list[tuple[str, Mapping[str, Any]]] = []
+    for key, value in data.items():
+        if isinstance(value, Mapping):
+            tables.append((key, value))
+        else:
+            lines.append(f"{key} = {scalar(value)}")
+    for name, table in tables:
+        if lines:
+            lines.append("")
+        lines.append(f"[{name}]")
+        for key, value in table.items():
+            if isinstance(value, Mapping):
+                raise ValueError(f"nested table {name}.{key} is not supported")
+            lines.append(f"{key} = {scalar(value)}")
+    return "\n".join(lines) + "\n"
+
+
+class SettingError(ValueError):
+    """A settings write was refused: unknown section/key, or a value the config model rejects."""
+
+
+def _check_setting(section: str, key: str, value: Any, *, allowed_sections: Sequence[str]) -> None:
+    """Refuse unknown sections/keys and values that do not validate against the config model."""
+    if section not in allowed_sections:
+        raise SettingError(
+            f"unknown or not allowed section {section!r} (allowed: {', '.join(allowed_sections)})"
+        )
+    model = Config.model_fields[section].annotation
+    fields = getattr(model, "model_fields", {})
+    if key not in fields:
+        raise SettingError(f"unknown key {section}.{key} (known: {', '.join(fields)})")
+    try:
+        Config.model_validate({section: {**Config().model_dump()[section], key: value}})
+    except ValidationError as exc:
+        raise SettingError(f"{section}.{key}: {exc.errors()[0]['msg']}") from exc
+
+
+def _write_setting(path: Path, section: str, key: str, value: Any) -> Path:
+    data = _read_toml(path)
+    data.setdefault(section, {})[key] = value
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(dumps_toml(data), encoding="utf-8", newline="\n")
+    tmp.replace(path)
+    return path
+
+
+def set_user_setting(section: str, key: str, value: Any, *, path: Path | None = None) -> Path:
+    """Write `[section] key = value` to the user config (default `~/.config/omniscan/config.toml`), validated first.
+
+    Only scalar and list values are supported; comments in an existing file are not kept. Returns the file path.
+    """
+    _check_setting(section, key, value, allowed_sections=tuple(Config.model_fields))
+    return _write_setting(path or USER_TOML, section, key, value)
+
+
+def set_series_setting(series_dir: Path, section: str, key: str, value: Any) -> Path:
+    """Write `[section] key = value` to `<series_dir>/series.toml` (only SERIES_SECTIONS), validated first."""
+    _check_setting(section, key, value, allowed_sections=SERIES_SECTIONS)
+    return _write_setting(series_dir / "series.toml", section, key, value)
 
 
 @lru_cache(maxsize=1)
