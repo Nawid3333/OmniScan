@@ -5,9 +5,10 @@ Usage (repo root, uses the machine config and the models in `paths.models_dir`):
   uv run python scripts/gpu_duty.py --ops                                  # time the first vs second call of the op families
 
 Why: a GPU that alternates between long idle gaps and bursts of tiny kernels whines (coil whine) and wastes time.
-`duty` = summed kernel time of `torch.profiler` / wall time of the stage. It is approximate (on this ROCm-Windows
-build the profiler also books some blocking runtime work as device time), so read the trend, not the last digit;
-the first-call table is exact wall time. Measured facts and the fixes are in docs/GPU_NOTES.md.
+`duty` = summed kernel time of `torch.profiler` / wall time of the stage. WARNING: the profiler perturbs the run on this
+ROCm-Windows build (inflated numbers, and one profiled render pass produced a corrupted export) — treat a profiled
+run as a diagnosis only, never keep its outputs, and prefer plain wall-clock timings. The `--ops` first-call table
+is exact wall time and safe. Measured facts and the fixes are in docs/GPU_NOTES.md.
 """
 
 from __future__ import annotations
