@@ -29,19 +29,23 @@ def file_sha256(path: Path) -> str:
 
 def install_path(entry: ModelEntry, models_dir: Path) -> Path | None:
     """Where the model lives on disk, or None for ollama/cloud models (the daemon stores them)."""
-    if entry.format == "zip":
+    if entry.format in ("zip", "hf"):
         return models_dir / entry.id
     if entry.format == "file" and entry.install_path is not None:
         return models_dir / entry.install_path
     return None
 
 
-def model_status(entry: ModelEntry, models_dir: Path, *, ollama_names: set[str] | None) -> Status:
+def model_status(
+    entry: ModelEntry, models_dir: Path, *, ollama_names: set[str] | None, deep: bool = False
+) -> Status:
     """`installed` / `missing` / `corrupt` / `cloud` / `unknown` (ollama tag check impossible).
 
     zip: the install marker's sha256 must equal the catalog's. file: the size and sha256 must both
-    match. ollama: checked against `ollama_names` (`None` = Ollama unreachable). cloud: nothing on
-    disk by definition.
+    match. hf: the marker's revision must equal the catalog's and every catalog file must exist with
+    the size recorded at install time — `deep=True` rehashes every file against the catalog instead.
+    ollama: checked against `ollama_names` (`None` = Ollama unreachable). cloud: nothing on disk by
+    definition.
     """
     if entry.format == "cloud":
         return "cloud"
@@ -53,6 +57,33 @@ def model_status(entry: ModelEntry, models_dir: Path, *, ollama_names: set[str] 
     path = install_path(entry, models_dir)
     if path is None:  # unreachable for a validated catalog entry
         return "corrupt"
+    if entry.format == "hf":
+        if not path.is_dir():
+            return "missing"
+        marker = path / MARKER_NAME
+        if not marker.is_file():
+            return "corrupt"
+        try:
+            data = json.loads(marker.read_text(encoding="utf-8"))
+        except OSError, ValueError:
+            return "corrupt"
+        if data.get("revision") != entry.upstream_revision:
+            return "corrupt"
+        sizes = data.get("file_sizes")
+        if not isinstance(sizes, dict):
+            return "corrupt"
+        for name, sha256 in entry.files.items():
+            file_path = path / name
+            recorded = sizes.get(name)
+            if (
+                not file_path.is_file()
+                or not isinstance(recorded, int)
+                or file_path.stat().st_size != recorded
+            ):
+                return "corrupt"
+            if deep and file_sha256(file_path) != sha256:
+                return "corrupt"
+        return "installed"
     if entry.format == "zip":
         if not path.is_dir():
             return "missing"

@@ -1,7 +1,8 @@
-"""Tests for omniscan.models.resolve (card U2b, part 1: a repo id -> the installed folder)."""
+"""Tests for omniscan.models.resolve (cards U2b and O1a: a repo id -> the installed folder)."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from omniscan.models.store import MARKER_NAME, file_sha256
 
 SHA = "b" * 64
 OTHER_SHA = "c" * 64
+HF_REVISION = "d" * 40
 
 
 def zip_entry(model_id: str, repo: str) -> ModelEntry:
@@ -70,6 +72,63 @@ def install_fake_zip(models_dir: Path, model_id: str, *, sha: str = SHA) -> None
     folder.mkdir(parents=True)
     (folder / "weights.bin").write_text("hello", encoding="utf-8")
     (folder / MARKER_NAME).write_text(json.dumps({"id": model_id, "sha256": sha}), encoding="utf-8")
+
+
+def hf_entry(model_id: str = "ocr-rec-x", repo: str = "org/rec") -> ModelEntry:
+    return ModelEntry(
+        id=model_id,
+        name="M",
+        kind="ocr",
+        format="hf",
+        size_mb=1,
+        license="Apache-2.0",
+        description="d",
+        upstream_repo=repo,
+        upstream_revision=HF_REVISION,
+        files={"model.safetensors": hashlib.sha256(b"weights").hexdigest()},
+    )
+
+
+def install_fake_hf(models_dir: Path, model_id: str = "ocr-rec-x", *, revision: str = HF_REVISION) -> None:
+    folder = models_dir / model_id
+    folder.mkdir(parents=True)
+    (folder / "model.safetensors").write_text("weights", encoding="utf-8")
+    marker = {
+        "id": model_id,
+        "source": "upstream",
+        "revision": revision,
+        "files_verified": 1,
+        "file_sizes": {"model.safetensors": 7},
+    }
+    (folder / MARKER_NAME).write_text(json.dumps(marker), encoding="utf-8")
+
+
+# ---------------------------------------------------------------- hf entries (card O1a)
+
+
+def test_installed_hf_repo_resolves_to_the_folder(tmp_path: Path) -> None:
+    models_dir = tmp_path / "models"
+    install_fake_hf(models_dir)
+    assert local_model_source("org/rec", models_dir, [hf_entry()]) == str(models_dir / "ocr-rec-x")
+
+
+def test_missing_hf_folder_returns_none(tmp_path: Path) -> None:
+    assert local_model_source("org/rec", tmp_path / "models", [hf_entry()]) is None
+
+
+def test_corrupt_hf_revision_returns_none(tmp_path: Path) -> None:
+    models_dir = tmp_path / "models"
+    install_fake_hf(models_dir, revision="e" * 40)  # another revision in the marker: corrupt
+    assert local_model_source("org/rec", models_dir, [hf_entry()]) is None
+
+
+def test_hf_repo_that_is_not_installed_does_not_shadow_the_hub(tmp_path: Path) -> None:
+    """An hf entry for another repo never matches; the installed one keeps resolving."""
+    models_dir = tmp_path / "models"
+    install_fake_hf(models_dir)
+    catalog = [hf_entry("ocr-rec-y", "org/other"), hf_entry()]
+    assert local_model_source("org/other", models_dir, catalog) is None
+    assert local_model_source("org/rec", models_dir, catalog) == str(models_dir / "ocr-rec-x")
 
 
 # ---------------------------------------------------------------- zip entries

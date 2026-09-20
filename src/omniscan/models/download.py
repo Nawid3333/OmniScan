@@ -2,7 +2,8 @@
 
 Downloads stream into a `.part` file that is hashed while written, so a bad download never reaches
 its install path; the `.part` is always cleaned up, also on failure. The mirror (a GitHub release of
-this repo) is private today, so every mirror failure falls back to the upstream source.
+this repo) is private today, so every mirror failure falls back to the upstream source. `hf` entries
+skip the mirror: they come from the upstream Hugging Face repo only, verified per file.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ import httpx
 
 from omniscan.core.config import get_config
 from omniscan.models.catalog import ModelEntry
-from omniscan.models.store import MARKER_NAME, Status, install_path, model_status
+from omniscan.models.store import MARKER_NAME, Status, file_sha256, install_path, model_status
 
 ModelSource = Literal["mirror", "upstream", "ollama", "already installed"]
 
@@ -49,7 +50,7 @@ def download_model(
 ) -> str:
     """Install one catalog entry into `models_dir`.
 
-    Returns "mirror", "upstream", "ollama" or "already installed". An already-installed zip/file
+    Returns "mirror", "upstream", "ollama" or "already installed". An already-installed zip/file/hf
     entry is left untouched without any request; a cloud entry is an error (nothing to download).
     """
     if entry.format == "cloud":
@@ -64,6 +65,8 @@ def download_model(
         return "already installed"
     if entry.format == "zip":
         return _download_zip(entry, models_dir, client, hf_download, on_progress)
+    if entry.format == "hf":
+        return _download_hf(entry, models_dir, hf_download)
     return _download_file(entry, path, client, on_progress)
 
 
@@ -83,7 +86,7 @@ def remove_model(
     path = install_path(entry, models_dir)
     if path is None or not path.exists():
         return False
-    if entry.format == "zip":
+    if entry.format in ("zip", "hf"):
         shutil.rmtree(path)
     else:
         path.unlink()
@@ -98,9 +101,12 @@ def verify_models(
     models_dir: Path,
     *,
     ollama_names: set[str] | None = None,
+    deep: bool = False,
 ) -> dict[str, Status]:
-    """Recompute the status of every entry (`omniscan models verify`)."""
-    return {entry.id: model_status(entry, models_dir, ollama_names=ollama_names) for entry in entries}
+    """Recompute the status of every entry (`omniscan models verify`; `--deep` rehashes hf files)."""
+    return {
+        entry.id: model_status(entry, models_dir, ollama_names=ollama_names, deep=deep) for entry in entries
+    }
 
 
 # ---------------------------------------------------------------- zip and file sources
@@ -248,6 +254,49 @@ def _install_zip_upstream(entry: ModelEntry, models_dir: Path, hf_download: _HfD
         "source": "upstream",
         "revision": entry.upstream_revision,
         "installed_at": datetime.now(tz=UTC).isoformat(),
+    }
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / MARKER_NAME).write_text(json.dumps(marker), encoding="utf-8")
+    return "upstream"
+
+
+def _download_hf(entry: ModelEntry, models_dir: Path, hf_download: _HfDownload | None) -> str:
+    """Fetch an `hf` entry from its upstream Hugging Face repo and verify every catalog file.
+
+    `snapshot_download` fetches only the files the catalog lists (as `allow_patterns`); each is
+    verified against its recorded sha256 — one bad or missing file deletes the whole folder.
+    """
+    if hf_download is None:
+        from huggingface_hub import snapshot_download  # lazy: only needed on the download path
+
+        hf_download = snapshot_download
+    repo, revision = entry.upstream_repo, entry.upstream_revision
+    if repo is None or revision is None:  # unreachable for a validated catalog entry
+        raise ModelDownloadError(f"{entry.id}: no upstream_repo/upstream_revision")
+    folder = models_dir / entry.id
+    try:
+        hf_download(repo, revision=revision, local_dir=str(folder), allow_patterns=list(entry.files))
+    except Exception as exc:
+        raise ModelDownloadError(
+            f"{entry.id}: huggingface {entry.upstream_repo}: {type(exc).__name__}: {exc}"
+        ) from exc
+    bad = []
+    for name, sha256 in entry.files.items():
+        file_path = folder / name
+        if not file_path.is_file():
+            bad.append(f"{name} (missing)")
+        elif file_sha256(file_path) != sha256:
+            bad.append(f"{name} (sha256 mismatch)")
+    if bad:
+        shutil.rmtree(folder, ignore_errors=True)  # never keep a half-verified install
+        raise ModelDownloadError(f"{entry.id}: verification failed, folder removed: {'; '.join(bad)}")
+    marker = {
+        "id": entry.id,
+        "source": "upstream",
+        "revision": entry.upstream_revision,
+        "installed_at": datetime.now(tz=UTC).isoformat(),
+        "files_verified": len(entry.files),
+        "file_sizes": {name: (folder / name).stat().st_size for name in entry.files},
     }
     folder.mkdir(parents=True, exist_ok=True)
     (folder / MARKER_NAME).write_text(json.dumps(marker), encoding="utf-8")

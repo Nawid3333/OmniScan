@@ -1135,6 +1135,8 @@ def _models_progress(steps: dict[str, int]) -> Callable[[str, int, int | None], 
 @models_app.command("list")
 def models_list(
     as_json: Annotated[bool, typer.Option("--json", help="Emit a JSON object instead of text rows.")] = False,
+    role: Annotated[str | None, typer.Option("--role", help="Only models with this role.")] = None,
+    lang: Annotated[str | None, typer.Option("--lang", help="Only models that list this language.")] = None,
 ) -> None:
     """List every catalog model with its size, purpose, install status and hardware fit."""
     from omniscan.hw.assess import assess
@@ -1144,6 +1146,10 @@ def models_list(
 
     cfg = get_config()
     entries = load_catalog()
+    if role is not None:
+        entries = [entry for entry in entries if entry.role == role]
+    if lang is not None:
+        entries = [entry for entry in entries if lang in entry.langs]
     ollama_names = _ollama_model_names(cfg.ollama.local_url)
     statuses = {
         entry.id: model_status(entry, cfg.paths.models_dir, ollama_names=ollama_names) for entry in entries
@@ -1164,6 +1170,12 @@ def models_list(
                     "license": entry.license,
                     "description": entry.description,
                     "used_by": entry.used_by,
+                    "role": entry.role,
+                    "family": entry.family,
+                    "size_class": entry.size_class,
+                    "langs": entry.langs,
+                    "recommended_for": entry.recommended_for,
+                    "notes": entry.notes,
                     "status": statuses[entry.id],
                     "installed_path": str(path)
                     if (path := install_path(entry, cfg.paths.models_dir))
@@ -1183,8 +1195,9 @@ def models_list(
         return
     for entry in entries:
         typer.echo(
-            f"{entry.id}  {entry.kind}  {entry.size_mb} MB  "
-            f"{'required' if entry.required else 'optional'}  {statuses[entry.id]}  {entry.description}"
+            f"{entry.id}  {entry.kind}  {entry.role or '-'}  {entry.size_mb} MB  "
+            f"{'required' if entry.required else 'optional'}  {statuses[entry.id]}  "
+            f"{','.join(entry.langs) or '-'}  {entry.description}"
             f"  {compat[entry.id].level}"
         )
     for entry in entries:
@@ -1309,6 +1322,7 @@ def models_verify(
     ids: Annotated[
         list[str] | None, typer.Argument(help="Model id(s). Default: every non-llm model.")
     ] = None,
+    deep: Annotated[bool, typer.Option("--deep", help="Rehash every file of the hf models (slow).")] = False,
 ) -> None:
     """Recompute model statuses (hash checks); exit 1 when one is corrupt."""
     from omniscan.models.catalog import load_catalog
@@ -1326,7 +1340,7 @@ def models_verify(
         selected = [entry for entry in entries.values() if entry.id in set(ids)]
     else:
         selected = [entry for entry in entries.values() if entry.kind != "llm"]
-    statuses = verify_models(selected, cfg.paths.models_dir)
+    statuses = verify_models(selected, cfg.paths.models_dir, deep=deep)
     for entry in selected:
         typer.echo(f"{entry.id}: {statuses[entry.id]}")
     if any(status == "corrupt" for status in statuses.values()):

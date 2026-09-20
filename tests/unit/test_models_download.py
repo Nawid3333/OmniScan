@@ -83,6 +83,50 @@ def llm_entry(fmt: str = "ollama") -> ModelEntry:
     )
 
 
+HF_REVISION = "c" * 40
+HF_PAYLOADS = {"model.safetensors": b"weights", "config.json": b"{}"}
+
+
+def hf_entry() -> ModelEntry:
+    """A valid hf entry whose catalog files hash the fixed HF_PAYLOADS."""
+    return ModelEntry(
+        id="ocr-rec-x",
+        name="X",
+        kind="ocr",
+        format="hf",
+        size_mb=1,
+        license="Apache-2.0",
+        description="d",
+        upstream_repo="org/rec",
+        upstream_revision=HF_REVISION,
+        files={name: hashlib.sha256(body).hexdigest() for name, body in HF_PAYLOADS.items()},
+    )
+
+
+class HfFake:
+    """Fake snapshot_download for hf entries: writes the payloads, records the call, can break files."""
+
+    def __init__(self, *, drop: str | None = None, corrupt: str | None = None, fail: bool = False) -> None:
+        self.calls: list[dict[str, Any]] = []
+        self.drop = drop
+        self.corrupt = corrupt
+        self.fail = fail
+
+    def __call__(self, repo_id: str, **kwargs: Any) -> str:
+        self.calls.append({"repo_id": repo_id, **kwargs})
+        if self.fail:
+            raise RuntimeError("hf down")
+        folder = Path(kwargs["local_dir"])
+        folder.mkdir(parents=True, exist_ok=True)
+        for name, body in HF_PAYLOADS.items():
+            (folder / name).write_bytes(body)
+        if self.drop is not None:
+            (folder / self.drop).unlink()
+        if self.corrupt is not None:
+            (folder / self.corrupt).write_bytes(b"WRONG")  # different size and hash
+        return str(folder)
+
+
 def mock_client(handler: Callable[[httpx.Request], httpx.Response]) -> httpx.Client:
     return httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=True)
 
@@ -266,6 +310,86 @@ def test_zip_slip_absolute_member(tmp_path: Path) -> None:
     with pytest.raises(ModelDownloadError, match="zip-slip"):
         download_model(zip_entry(body), tmp_path, client=mock_client(serving(body)))
     assert list(tmp_path.rglob("*.part")) == []
+
+
+# ---------------------------------------------------------------- hf (card O1a)
+
+
+def test_download_hf_success_writes_marker_and_verifies(tmp_path: Path) -> None:
+    fake = HfFake()
+    entry = hf_entry()
+    result = download_model(entry, tmp_path, hf_download=fake)
+    assert result == "upstream"
+    assert len(fake.calls) == 1
+    call = fake.calls[0]
+    assert call["repo_id"] == "org/rec"
+    assert call["revision"] == HF_REVISION
+    assert call["local_dir"] == str(tmp_path / "ocr-rec-x")
+    assert call["allow_patterns"] == ["model.safetensors", "config.json"]  # exactly the files keys
+    marker = json.loads((tmp_path / "ocr-rec-x" / MARKER_NAME).read_text(encoding="utf-8"))
+    assert marker["source"] == "upstream"
+    assert marker["revision"] == HF_REVISION
+    assert marker["files_verified"] == 2
+    assert marker["file_sizes"] == {"model.safetensors": 7, "config.json": 2}
+
+
+def test_download_hf_already_installed_makes_no_request(tmp_path: Path) -> None:
+    entry = hf_entry()
+    assert download_model(entry, tmp_path, hf_download=HfFake()) == "upstream"
+    fake = HfFake()
+    assert download_model(entry, tmp_path, hf_download=fake) == "already installed"
+    assert fake.calls == []
+
+
+def test_download_hf_wrong_hash_deletes_folder_and_names_the_file(tmp_path: Path) -> None:
+    fake = HfFake(corrupt="model.safetensors")
+    with pytest.raises(ModelDownloadError, match=r"ocr-rec-x.*model\.safetensors.*sha256 mismatch"):
+        download_model(hf_entry(), tmp_path, hf_download=fake)
+    assert not (tmp_path / "ocr-rec-x").exists()  # the half-verified folder is gone
+
+
+def test_download_hf_missing_file_deletes_folder_and_names_the_file(tmp_path: Path) -> None:
+    fake = HfFake(drop="config.json")
+    with pytest.raises(ModelDownloadError, match=r"ocr-rec-x.*config\.json.*missing"):
+        download_model(hf_entry(), tmp_path, hf_download=fake)
+    assert not (tmp_path / "ocr-rec-x").exists()
+
+
+def test_download_hf_failed_fetch_raises_model_download_error(tmp_path: Path) -> None:
+    fake = HfFake(fail=True)
+    with pytest.raises(ModelDownloadError, match="RuntimeError: hf down"):
+        download_model(hf_entry(), tmp_path, hf_download=fake)
+    assert not (tmp_path / "ocr-rec-x").exists()
+
+
+def test_remove_hf_folder(tmp_path: Path) -> None:
+    entry = hf_entry()
+    download_model(entry, tmp_path, hf_download=HfFake())
+    assert remove_model(entry, tmp_path) is True
+    assert not (tmp_path / "ocr-rec-x").exists()
+    assert remove_model(entry, tmp_path) is False
+
+
+def test_verify_models_deep_rehashes_hf_files(tmp_path: Path) -> None:
+    entry = hf_entry()
+    folder = tmp_path / "ocr-rec-x"
+    folder.mkdir()
+    (folder / "model.safetensors").write_bytes(b"weightx")  # right size, wrong bytes
+    (folder / "config.json").write_bytes(b"{}")
+    (folder / MARKER_NAME).write_text(
+        json.dumps(
+            {
+                "id": entry.id,
+                "source": "upstream",
+                "revision": HF_REVISION,
+                "files_verified": 2,
+                "file_sizes": {"model.safetensors": 7, "config.json": 2},
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert verify_models([entry], tmp_path) == {"ocr-rec-x": "installed"}
+    assert verify_models([entry], tmp_path, deep=True) == {"ocr-rec-x": "corrupt"}
 
 
 # ---------------------------------------------------------------- ollama

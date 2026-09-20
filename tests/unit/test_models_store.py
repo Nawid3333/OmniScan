@@ -1,7 +1,8 @@
-"""Tests for omniscan.models.store (card U2a, part 2: statuses and resolve_model_path)."""
+"""Tests for omniscan.models.store (cards U2a and O1a: statuses and resolve_model_path)."""
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import zipfile
@@ -21,6 +22,10 @@ from omniscan.models.store import (
 
 SHA = "b" * 64
 OTHER_SHA = "c" * 64
+HF_REVISION = "d" * 40
+OTHER_REVISION = "e" * 40
+WEIGHTS = "weights"
+CONFIG_JSON = "{}"
 
 
 def zip_entry(model_id: str = "det") -> ModelEntry:
@@ -88,6 +93,50 @@ def install_fake_zip(models_dir: Path, model_id: str, *, sha: str = SHA, marker:
     (folder / MARKER_NAME).write_text(json.dumps(body), encoding="utf-8")
 
 
+def hf_entry() -> ModelEntry:
+    """A valid hf entry whose two catalog files hash the fixed WEIGHTS/CONFIG_JSON payloads."""
+    return ModelEntry(
+        id="ocr-rec-x",
+        name="X",
+        kind="ocr",
+        format="hf",
+        size_mb=1,
+        license="Apache-2.0",
+        description="d",
+        upstream_repo="org/rec",
+        upstream_revision=HF_REVISION,
+        files={
+            "model.safetensors": hashlib.sha256(WEIGHTS.encode()).hexdigest(),
+            "config.json": hashlib.sha256(CONFIG_JSON.encode()).hexdigest(),
+        },
+    )
+
+
+def install_fake_hf(
+    models_dir: Path,
+    model_id: str = "ocr-rec-x",
+    *,
+    revision: str = HF_REVISION,
+    contents: dict[str, str] | None = None,
+) -> Path:
+    """Write the two catalog files plus the marker; `contents` deviates from the recorded layout."""
+    folder = models_dir / model_id
+    folder.mkdir(parents=True, exist_ok=True)
+    standard = {"model.safetensors": WEIGHTS, "config.json": CONFIG_JSON}
+    written = contents if contents is not None else standard
+    for name, text in written.items():
+        (folder / name).write_text(text, encoding="utf-8")
+    marker = {
+        "id": model_id,
+        "source": "upstream",
+        "revision": revision,
+        "files_verified": len(standard),
+        "file_sizes": {name: len(text.encode()) for name, text in standard.items()},  # the expected sizes
+    }
+    (folder / MARKER_NAME).write_text(json.dumps(marker), encoding="utf-8")
+    return folder
+
+
 def cfg(tmp_path: Path) -> Config:
     return Config(paths=PathsConfig(models_dir=tmp_path / "models"))
 
@@ -99,8 +148,52 @@ def test_install_path_per_format(tmp_path: Path) -> None:
     models_dir = tmp_path / "models"
     assert install_path(zip_entry(), models_dir) == models_dir / "det"
     assert install_path(file_entry(), models_dir) == models_dir / "lama" / "big-lama.pt"
+    assert install_path(hf_entry(), models_dir) == models_dir / "ocr-rec-x"
     assert install_path(ollama_entry(), models_dir) is None
     assert install_path(ollama_entry("cloud"), models_dir) is None
+
+
+# ---------------------------------------------------------------- hf statuses (card O1a)
+
+
+def test_hf_missing_folder(tmp_path: Path) -> None:
+    assert model_status(hf_entry(), tmp_path, ollama_names=None) == "missing"
+
+
+def test_hf_folder_without_marker_is_corrupt(tmp_path: Path) -> None:
+    (tmp_path / "ocr-rec-x").mkdir()
+    assert model_status(hf_entry(), tmp_path, ollama_names=None) == "corrupt"
+
+
+def test_hf_other_revision_marker_is_corrupt(tmp_path: Path) -> None:
+    install_fake_hf(tmp_path, revision=OTHER_REVISION)
+    assert model_status(hf_entry(), tmp_path, ollama_names=None) == "corrupt"
+
+
+def test_hf_wrong_file_size_is_corrupt(tmp_path: Path) -> None:
+    install_fake_hf(
+        tmp_path, contents={"model.safetensors": "a much longer payload", "config.json": CONFIG_JSON}
+    )
+    assert model_status(hf_entry(), tmp_path, ollama_names=None) == "corrupt"
+
+
+def test_hf_missing_catalog_file_is_corrupt(tmp_path: Path) -> None:
+    folder = install_fake_hf(tmp_path)
+    (folder / "config.json").unlink()
+    assert model_status(hf_entry(), tmp_path, ollama_names=None) == "corrupt"
+
+
+def test_hf_all_files_good_is_installed(tmp_path: Path) -> None:
+    install_fake_hf(tmp_path)
+    assert model_status(hf_entry(), tmp_path, ollama_names=None) == "installed"
+
+
+def test_hf_deep_rehashes_same_size_modified_file(tmp_path: Path) -> None:
+    folder = install_fake_hf(tmp_path)  # right size, wrong bytes
+    (folder / "model.safetensors").write_text("w3ights", encoding="utf-8")
+    entry = hf_entry()
+    assert model_status(entry, tmp_path, ollama_names=None) == "installed"  # sizes match: no rehash
+    assert model_status(entry, tmp_path, ollama_names=None, deep=True) == "corrupt"
 
 
 # ---------------------------------------------------------------- zip statuses

@@ -17,15 +17,18 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from omniscan.core.config import DEFAULT_TOML, USER_CONFIG_DIR
 
 ModelKind = Literal["vision", "ocr", "inpaint", "llm"]
-ModelFormat = Literal["zip", "file", "ollama", "cloud"]
+ModelRole = Literal["detector", "text_line_detector", "recognizer", "vlm_ocr", "inpaint", "llm"]
+ModelFormat = Literal["zip", "file", "hf", "ollama", "cloud"]
 Backend = Literal["cuda", "rocm", "mps", "xpu", "cpu"]
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_REVISION_RE = re.compile(r"^[0-9a-f]{40}$")
 
 # Fields every format must set beyond the common ones.
 _REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "zip": ("mirror_url", "sha256", "bytes", "upstream_repo", "upstream_revision"),
     "file": ("mirror_url", "sha256", "bytes", "upstream_url", "install_path"),
+    "hf": ("upstream_repo", "upstream_revision", "files"),
     "ollama": ("ollama_name",),
     "cloud": ("ollama_name",),
 }
@@ -45,14 +48,27 @@ class ModelEntry(BaseModel):
     license: str
     description: str
     used_by: list[str] = Field(default_factory=list)
+    # descriptive (optional) fields: the settings screen shows them, defaults keep old entries valid
+    role: ModelRole | None = None  # what the model does inside the pipeline
+    family: str = ""  # ppocrv6 / ppocrv5 / paddleocr-vl / manga-ocr / comic-detector / lama / llm
+    size_class: str = ""  # tiny / small / medium / server / mobile / base / ...
+    langs: list[str] = Field(
+        default_factory=list
+    )  # the languages the model card lists (empty = language independent)
+    recommended_for: list[str] = Field(
+        default_factory=list
+    )  # languages this model is the current default for
+    notes: str = ""
     # zip / file
     mirror_url: str | None = None
     sha256: str | None = None
     bytes: int | None = None
-    upstream_repo: str | None = None  # zip only
-    upstream_revision: str | None = None  # zip only
+    upstream_repo: str | None = None  # zip / hf
+    upstream_revision: str | None = None  # zip / hf (full commit sha)
     upstream_url: str | None = None  # file only
     install_path: str | None = None  # file only, relative to models_dir
+    # hf
+    files: dict[str, str] = Field(default_factory=dict)  # relative file name -> sha256 of every needed file
     # ollama / cloud
     ollama_name: str | None = None
     # hardware requirements (card H1): what the model needs to run well; `hw.assess` turns
@@ -71,6 +87,17 @@ class ModelEntry(BaseModel):
             raise ValueError(f"{self.format} model {self.id!r} needs {missing[0]}")
         if self.format in ("zip", "file") and (self.sha256 is None or not _SHA256_RE.fullmatch(self.sha256)):
             raise ValueError(f"{self.format} model {self.id!r} needs a 64-hex sha256")
+        if self.format == "hf":
+            assert self.upstream_revision is not None  # checked above
+            if not _REVISION_RE.fullmatch(self.upstream_revision):
+                raise ValueError(f"hf model {self.id!r} needs a 40-hex upstream_revision")
+            if not self.files:
+                raise ValueError(f"hf model {self.id!r} needs files")
+            bad = next((name for name, sha in self.files.items() if not _SHA256_RE.fullmatch(sha)), None)
+            if bad is not None:
+                raise ValueError(f"hf model {self.id!r}: files[{bad!r}] needs a 64-hex sha256")
+            if self.size_mb <= 0:
+                raise ValueError(f"hf model {self.id!r} needs size_mb > 0")
 
 
 def default_catalog_path() -> Path:

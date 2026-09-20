@@ -656,19 +656,25 @@ uv run omniscan serve
 Manage the model catalog (`config/models.toml`): every model OmniScan can download, with its
 purpose, size and licence — the three Hugging Face vision models and the LaMa file (mirrored
 unchanged as assets of this repo's GitHub release `models-v1`, with automatic fallback to the
-upstream source when the mirror is unreachable), plus the Ollama LLMs. Weights land in
-`paths.models_dir` (`<models_dir>/<id>/` for the zips, `<models_dir>/lama/big-lama.pt` for LaMa);
-every download is sha256-verified. See [docs/MODELS.md](MODELS.md) for the per-model notices.
+upstream source when the mirror is unreachable), the full PP-OCR v5/v6 / PaddleOCR-VL / manga-ocr
+OCR catalog (downloaded straight from Hugging Face at a pinned commit, per-file sha256-verified),
+and the Ollama LLMs. Weights land in `paths.models_dir` (`<models_dir>/<id>/` for the zips and hf
+models, `<models_dir>/lama/big-lama.pt` for LaMa); every download is sha256-verified. Each entry
+also carries its `role` (detector / text_line_detector / recognizer / vlm_ocr / inpaint / llm) and
+`langs` tags — see [docs/MODELS.md](MODELS.md) for the per-model notices.
 
 | Subcommand | Effect |
 |---|---|
-| `list [--json]` | print one row per model (`id`, `kind`, `size`, `required`/`optional`, `status`, `description`) with a last column `fit` — how the model would run on this machine (`ok`/`slow`/`warn`/`incompatible`, see below) — plus a footer with the total size of the missing required models. Under the table, every non-`ok` model that is not installed gets one indented line with the reason. `--json` emits a machine-readable object (the stable interface a future settings screen will use) where each model carries a `compatibility` object (`level`, `device`, `messages`) and the top level carries the `hardware` snapshot of `omniscan hardware`; the Ollama statuses show `unknown` when the daemon is unreachable |
+| `list [--json] [--role R] [--lang C]` | print one row per model (`id`, `kind`, `role`, `size`, `required`/`optional`, `status`, `langs`, `description`) with a last column `fit` — how the model would run on this machine (`ok`/`slow`/`warn`/`incompatible`, see below) — plus a footer with the total size of the missing required models. `--role` filters to one role (`recognizer`, `text_line_detector`, …), `--lang` to models tagged with a language code (`ko`, `ja`, `th`, …). `--json` emits a machine-readable object (the stable interface a future settings screen will use) that carries a `compatibility` object per model (`level`, `device`, `messages`), the `hardware` snapshot of `omniscan hardware`, and additionally `family`, `size_class`, `langs`, `recommended_for` and `notes`; the Ollama statuses show `unknown` when the daemon is unreachable |
 | `download <id>... [--required] [--force]` | download the named models; `--required` also downloads every required model that is not installed. A non-`ok` model prints its compatibility messages as a warning first; an `incompatible` model is refused (exit 1, nothing downloaded) unless `--force` is given. Progress is printed at most once per 5 % step; a failing model is reported on stderr and the others are still tried (exit 1). Unknown ids exit 2 |
 | `remove <id>...` | delete installed models (their folder, the LaMa file, or the Ollama daemon's copy). Prints `removed` or `nothing to remove` per model; unknown ids exit 2 |
-| `verify [<id>...]` | recompute the statuses (missing/installed/corrupt/cloud/unknown); default: every non-llm model. Exit 1 when one is `corrupt` |
+| `verify [<id>...] [--deep]` | recompute the statuses (missing/installed/corrupt/cloud/unknown); default: every non-llm model. `--deep` additionally re-hashes every installed file (zip archives and per-file for the hf models) instead of comparing sizes. Exit 1 when one is `corrupt` |
 
 Statuses: `installed` (present and verified), `missing`, `corrupt` (size or sha256 mismatch — delete
-and re-download), `cloud` (Ollama Cloud model, nothing on disk), `unknown` (Ollama unreachable).
+and re-download), `cloud` (Ollama Cloud model, nothing on disk), `unknown` (Ollama unreachable). For
+the hf models the installed folder also carries a `.installed.json` marker with the pinned revision
+and the verified per-file sizes; changing the catalog pin marks the copy `corrupt` until it is
+re-downloaded.
 
 The `fit` column is the per-model compatibility against the hardware snapshot (`omniscan hardware`):
 `ok` (a GPU with enough VRAM, or fast on the CPU), `slow` (runs, but noticeably slower than on a
@@ -689,11 +695,13 @@ its download already uses.
 
 ```bash
 uv run omniscan models list
+uv run omniscan models list --role recognizer
+uv run omniscan models list --lang ko
 uv run omniscan models list --json
 uv run omniscan models download --required
-uv run omniscan models download inpaint-big-lama llm-gemma4-12b
+uv run omniscan models download ocr-rec-ppocrv6-tiny llm-gemma4-12b
 uv run omniscan models remove llm-gemma4-12b
-uv run omniscan models verify
+uv run omniscan models verify --deep
 ```
 
 ### `omniscan queue`

@@ -1,9 +1,10 @@
-"""Tests for omniscan.models.catalog (card U2a, parts 1-2)."""
+"""Tests for omniscan.models.catalog (cards U2a and O1a, parts 1-2)."""
 
 from __future__ import annotations
 
 import tomllib
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -20,6 +21,51 @@ IDS = (
     "llm-gemma4-12b",
     "llm-gemma4-31b",
     "llm-gemma4-31b-cloud",
+    # --- PP-OCRv6 (card O1a)
+    "ocr-det-ppocrv6-tiny",
+    "ocr-det-ppocrv6-small",
+    "ocr-det-ppocrv6-medium",
+    "ocr-rec-ppocrv6-tiny",
+    "ocr-rec-ppocrv6-small",
+    "ocr-rec-ppocrv6-medium",
+    # --- PP-OCRv5 additions (card O1a)
+    "ocr-det-ppocrv5-mobile",
+    "ocr-rec-ppocrv5-server",
+    "ocr-rec-ppocrv5-mobile",
+    "ocr-rec-en-ppocrv5-mobile",
+    "ocr-rec-latin-ppocrv5-mobile",
+    "ocr-rec-eslav-ppocrv5-mobile",
+    "ocr-rec-th-ppocrv5-mobile",
+    "ocr-rec-el-ppocrv5-mobile",
+    "ocr-rec-arabic-ppocrv5-mobile",
+    "ocr-rec-cyrillic-ppocrv5-mobile",
+    "ocr-rec-devanagari-ppocrv5-mobile",
+    "ocr-rec-te-ppocrv5-mobile",
+    "ocr-rec-ta-ppocrv5-mobile",
+    # --- PaddleOCR-VL and GGUF (card O1a)
+    "ocr-vl-1.6",
+    "ocr-vl-1.5",
+    "ocr-vl",
+    "ocr-vl-1.6-gguf",
+    "ocr-vl-1.5-gguf",
+    # --- manga-ocr (card O1a)
+    "ocr-rec-manga-ocr-base",
+    "ocr-rec-manga-ocr-2025",
+)
+
+LEGACY_IDS = IDS[:8]  # the entries that shipped before O1a
+V6_IDS = tuple(i for i in IDS if "ppocrv6" in i)
+V5_LANG_RECS = (
+    ("ocr-rec-en-ppocrv5-mobile", ["en"]),
+    ("ocr-rec-latin-ppocrv5-mobile", []),
+    ("ocr-rec-eslav-ppocrv5-mobile", []),
+    ("ocr-rec-th-ppocrv5-mobile", ["th"]),
+    ("ocr-rec-el-ppocrv5-mobile", ["el"]),
+    ("ocr-rec-arabic-ppocrv5-mobile", ["ar"]),
+    ("ocr-rec-cyrillic-ppocrv5-mobile", []),
+    ("ocr-rec-devanagari-ppocrv5-mobile", []),
+    ("ocr-rec-te-ppocrv5-mobile", ["te"]),
+    ("ocr-rec-ta-ppocrv5-mobile", ["ta"]),
 )
 
 MIRROR_BASE = "https://github.com/Nawid3333/OmniScan/releases/download/models-v1/"
@@ -108,11 +154,6 @@ def test_real_catalog_entries_in_order_and_valid() -> None:
             assert all(c in "0123456789abcdef" for c in entry.sha256)
             assert entry.mirror_url is not None and entry.mirror_url.startswith(MIRROR_BASE)
             assert entry.bytes is not None and entry.bytes > 0
-
-
-def test_real_catalog_required_flags() -> None:
-    entries = load_catalog()
-    assert [e.required for e in entries] == [True, True, True, False, False, False, False, False]
 
 
 def test_real_catalog_matches_pipeline_contracts() -> None:
@@ -301,3 +342,181 @@ def test_zip_entry_without_sha256_raises_on_load(tmp_path: Path) -> None:
     path.write_text(text, encoding="utf-8")
     with pytest.raises(ValueError, match="sha256"):
         load_catalog(path)
+
+
+# ---------------------------------------------------------------- format hf (card O1a)
+
+HF_REVISION = "c" * 40
+HF_FILES = {"model.safetensors": "a" * 64, "config.json": "b" * 64}
+
+
+def hf_entry(**overrides: Any) -> ModelEntry:
+    """A valid hf entry; every keyword overrides one field."""
+    data: dict[str, Any] = {
+        "id": "ocr-rec-x",
+        "name": "X",
+        "kind": "ocr",
+        "format": "hf",
+        "size_mb": 2,
+        "license": "Apache-2.0",
+        "description": "d",
+        "upstream_repo": "org/rec",
+        "upstream_revision": HF_REVISION,
+        "files": dict(HF_FILES),
+    }
+    data.update(overrides)
+    return ModelEntry(**data)
+
+
+def test_hf_entry_is_valid_with_field_defaults() -> None:
+    entry = hf_entry()
+    entry.validate_for_format()  # must not raise
+    assert entry.role is None
+    assert entry.family == ""
+    assert entry.size_class == ""
+    assert entry.langs == []
+    assert entry.recommended_for == []
+    assert entry.notes == ""
+
+
+def test_hf_entry_missing_upstream_repo_names_the_field() -> None:
+    with pytest.raises(ValueError, match="needs upstream_repo"):
+        hf_entry(upstream_repo=None).validate_for_format()
+
+
+def test_hf_entry_missing_revision_names_the_field() -> None:
+    with pytest.raises(ValueError, match="needs upstream_revision"):
+        hf_entry(upstream_revision=None).validate_for_format()
+
+
+def test_hf_entry_short_revision_needs_40_hex() -> None:
+    with pytest.raises(ValueError, match="40-hex upstream_revision"):
+        hf_entry(upstream_revision="c" * 39).validate_for_format()
+
+
+def test_hf_entry_empty_files_needs_files() -> None:
+    with pytest.raises(ValueError, match="needs files"):
+        hf_entry(files={}).validate_for_format()
+
+
+def test_hf_entry_bad_file_hash_names_the_file() -> None:
+    entry = hf_entry(files={"model.safetensors": "a" * 64, "config.json": "nothex"})
+    with pytest.raises(ValueError, match=r"files\['config\.json'\] needs a 64-hex sha256"):
+        entry.validate_for_format()
+
+
+def test_hf_entry_zero_size_mb_needs_size_mb() -> None:
+    with pytest.raises(ValueError, match="needs size_mb > 0"):
+        hf_entry(size_mb=0).validate_for_format()
+
+
+def test_hf_entry_loads_from_toml_files_table(tmp_path: Path) -> None:
+    path = tmp_path / "cat.toml"
+    path.write_text(
+        "\n".join(
+            [
+                "[[model]]",
+                'id = "ocr-rec-x"',
+                'name = "X"',
+                'kind = "ocr"',
+                'format = "hf"',
+                "size_mb = 2",
+                'license = "Apache-2.0"',
+                'description = "d"',
+                'upstream_repo = "org/rec"',
+                f'upstream_revision = "{HF_REVISION}"',
+                "",
+                "[model.files]",
+                f'"model.safetensors" = "{"a" * 64}"',
+                f'"config.json" = "{"b" * 64}"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    entry = load_catalog(path)[0]
+    assert entry.files == HF_FILES
+    entry.validate_for_format()  # must not raise
+
+
+# ---------------------------------------------------------------- descriptive fields in the real catalog
+
+
+def test_real_catalog_roles() -> None:
+    entries = {e.id: e for e in load_catalog()}
+    assert entries["detector-comic-text-bubble"].role == "detector"
+    assert entries["ocr-det-ppocrv5-server"].role == "text_line_detector"
+    assert entries["ocr-rec-korean-ppocrv5-mobile"].role == "recognizer"
+    assert entries["inpaint-big-lama"].role == "inpaint"
+    for model_id in LEGACY_IDS[4:]:
+        assert entries[model_id].role == "llm"
+
+
+def test_real_catalog_v5_entries_are_recommended_for_korean_only() -> None:
+    entries = load_catalog()
+    recommended = {e.id: e.recommended_for for e in entries if e.recommended_for}
+    assert recommended == {
+        "ocr-det-ppocrv5-server": ["ko"],
+        "ocr-rec-korean-ppocrv5-mobile": ["ko"],
+    }
+    korean_rec = next(e for e in entries if e.id == "ocr-rec-korean-ppocrv5-mobile")
+    assert korean_rec.langs == ["ko"]
+    assert korean_rec.family == "ppocrv5" and korean_rec.size_class == "mobile"
+
+
+def test_real_catalog_hf_entries_are_upstream_only_with_file_hashes() -> None:
+    entries = [e for e in load_catalog() if e.format == "hf"]
+    assert len(entries) == 26
+    for entry in entries:
+        assert entry.mirror_url is None and entry.sha256 is None
+        assert entry.upstream_repo and entry.upstream_revision
+        assert len(entry.upstream_revision) == 40  # validate_for_format checks the hex
+        assert entry.files and entry.size_mb > 0
+        assert all(len(sha) == 64 and set(sha) <= set("0123456789abcdef") for sha in entry.files.values())
+
+
+def test_real_catalog_v6_entries_are_en_zh_only() -> None:
+    entries = {e.id: e for e in load_catalog()}
+    assert set(V6_IDS) <= set(entries)
+    for model_id in V6_IDS:
+        entry = entries[model_id]
+        assert entry.role == ("text_line_detector" if "det" in model_id else "recognizer")
+        assert entry.family == "ppocrv6" and entry.format == "hf"
+        assert entry.langs == ["en", "zh"] and "ko" not in entry.langs
+    for model_id in (i for i in V6_IDS if "rec" in i):
+        assert "Korean" in entries[model_id].notes
+    assert {entries[i].size_class for i in V6_IDS} == {"tiny", "small", "medium"}
+
+
+def test_real_catalog_v5_language_recognisers() -> None:
+    entries = {e.id: e for e in load_catalog()}
+    for model_id, langs in V5_LANG_RECS:
+        entry = entries[model_id]
+        assert entry.role == "recognizer" and entry.family == "ppocrv5" and entry.format == "hf"
+        assert entry.langs == langs
+        if not langs:
+            assert "repo name names the script/family" in entry.notes
+    base_rec = entries["ocr-rec-ppocrv5-mobile"]
+    assert base_rec.langs == ["en", "zh"] and "zh-Hant" in base_rec.notes
+    assert entries["ocr-det-ppocrv5-mobile"].role == "text_line_detector"
+    assert entries["ocr-rec-ppocrv5-server"].size_class == "server"
+
+
+def test_real_catalog_vl_gguf_and_manga_entries() -> None:
+    entries = {e.id: e for e in load_catalog()}
+    for model_id in ("ocr-vl-1.6", "ocr-vl-1.5", "ocr-vl"):
+        entry = entries[model_id]
+        assert entry.role == "vlm_ocr" and entry.family == "paddleocr-vl" and entry.format == "hf"
+        assert entry.langs == ["en", "zh", "multilingual"] and entry.size_mb > 1000
+    for model_id in ("ocr-vl-1.6-gguf", "ocr-vl-1.5-gguf"):
+        entry = entries[model_id]
+        assert entry.role == "vlm_ocr" and entry.format == "hf"
+        assert "llama.cpp" in entry.notes
+        assert all(name.endswith((".gguf", ".jinja")) for name in entry.files)
+    for model_id in ("ocr-rec-manga-ocr-base", "ocr-rec-manga-ocr-2025"):
+        entry = entries[model_id]
+        assert entry.role == "recognizer" and entry.family == "manga-ocr" and entry.langs == ["ja"]
+
+
+def test_real_catalog_required_flags() -> None:
+    required = [e.id for e in load_catalog() if e.required]
+    assert required == [LEGACY_IDS[0], LEGACY_IDS[1], LEGACY_IDS[2]]  # the pre-O1a Korean stack only

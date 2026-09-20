@@ -11,12 +11,21 @@
 # entry here and may add new ones (same rule as the translation profiles).
 #
 # Fields per [[model]]: id, name, kind (vision|ocr|inpaint|llm), required (the pipeline cannot run
-# without it), format (zip|file|ollama|cloud), size_mb (approximate download size), license,
-# description (one sentence), used_by (config keys / profile names that use it). Per format:
+# without it), format (zip|file|hf|ollama|cloud), size_mb (approximate download size), license,
+# description (one sentence), used_by (config keys / profile names that use it). Optional descriptive
+# fields (the settings screen shows them; defaults keep old entries valid): role
+# (detector|text_line_detector|recognizer|vlm_ocr|inpaint|llm), family (ppocrv6|ppocrv5|paddleocr-vl|
+# manga-ocr|comic-detector|lama|llm), size_class (tiny|small|medium|server|mobile|base|...), langs
+# (ISO-ish codes as the model card lists them; empty = language independent), recommended_for
+# (languages this model is the current default for), notes (free text). Per format:
 # zip   -> mirror_url, sha256, bytes, upstream_repo, upstream_revision
 #          (the zip holds only files under a top-level <id>/ folder and is extracted into
 #          paths.models_dir, so the model lives at <models_dir>/<id>/)
 # file  -> mirror_url, sha256, bytes, upstream_url, install_path (relative to paths.models_dir)
+# hf    -> upstream_repo, upstream_revision (full 40-hex commit sha) and a [model.files] table that
+#          maps every file the loader needs (weights + small config/tokenizer files; no README or
+#          images) to its sha256. Fetched from Hugging Face only (no mirror asset) and installed
+#          into <models_dir>/<id>/ like a zip, verified per file.
 # ollama-> ollama_name (the tag to pull)
 # cloud -> ollama_name (runs on Ollama Cloud through the local daemon; nothing to download,
 #          needs an Ollama account)
@@ -34,6 +43,8 @@ used_by = ["detect.repo"]
 min_vram_gb = 1.0
 min_ram_gb = 4
 cpu_speed = "slow"
+role = "detector"
+family = "comic-detector"
 mirror_url = "https://github.com/Nawid3333/OmniScan/releases/download/models-v1/detector-comic-text-bubble.zip"
 sha256 = "cccc8a235d90839428327394cc466851961dfc13bf3a6a0658739a8d08224268"
 bytes = 158938404
@@ -53,6 +64,11 @@ used_by = ["ocr.det_repo"]
 min_vram_gb = 0.8
 min_ram_gb = 4
 cpu_speed = "ok"
+role = "text_line_detector"
+family = "ppocrv5"
+size_class = "server"
+langs = ["en", "zh"]
+recommended_for = ["ko"]
 mirror_url = "https://github.com/Nawid3333/OmniScan/releases/download/models-v1/ocr-det-ppocrv5-server.zip"
 sha256 = "a08b334d8b8d6e835c696cfa2530ac1be1548a7e76920489ca18bf27ff4d23a9"
 bytes = 79265655
@@ -73,6 +89,11 @@ used_by = ["ocr.rec_repo"]
 min_vram_gb = 0.5
 min_ram_gb = 4
 cpu_speed = "ok"
+role = "recognizer"
+family = "ppocrv5"
+size_class = "mobile"
+langs = ["ko"]
+recommended_for = ["ko"]
 mirror_url = "https://github.com/Nawid3333/OmniScan/releases/download/models-v1/ocr-rec-korean-ppocrv5-mobile.zip"
 sha256 = "addc407093d7537ae0fcc6b60274d014ec6a8ed70956a701bd2dcb5994aa948b"
 bytes = 22069043
@@ -94,6 +115,8 @@ min_vram_gb = 2.0
 min_ram_gb = 8
 cpu_speed = "slow"
 notes = "fp32 only; the first inference per window shape warms up for 10-25 s"
+role = "inpaint"
+family = "lama"
 mirror_url = "https://github.com/Nawid3333/OmniScan/releases/download/models-v1/big-lama.pt"
 sha256 = "344c77bbcb158f17dd143070d1e789f38a66c04202311ae3a258ef66667a9ea9"
 bytes = 205669692
@@ -113,6 +136,8 @@ used_by = ["translategemma-12b-local"]
 min_vram_gb = 9.0
 min_ram_gb = 16
 cpu_speed = "unusable"
+role = "llm"
+family = "llm"
 ollama_name = "translategemma:12b"
 
 [[model]]
@@ -128,6 +153,8 @@ used_by = ["gemma4-12b-local"]
 min_vram_gb = 8.5
 min_ram_gb = 16
 cpu_speed = "unusable"
+role = "llm"
+family = "llm"
 ollama_name = "gemma4:12b"
 
 [[model]]
@@ -143,6 +170,8 @@ used_by = []
 min_vram_gb = 21.0
 min_ram_gb = 32
 cpu_speed = "unusable"
+role = "llm"
+family = "llm"
 ollama_name = "gemma4:31b"
 
 [[model]]
@@ -160,3 +189,599 @@ cpu_speed = "fast"
 min_vram_gb = 0.0
 notes = "needs internet and an Ollama account"
 ollama_name = "gemma4:31b-cloud"
+role = "llm"
+family = "llm"
+ollama_name = "gemma4:31b-cloud"
+# --- PP-OCRv6 family (published for en+zh only; on Korean pages the v6 rec scored far below
+# the v5 Korean recogniser, docs/PRODUCT_SPEC.md). All entries upstream-only (format hf).
+[[model]]
+id = "ocr-det-ppocrv6-tiny"
+name = "PP-OCRv6 tiny text-line detector"
+kind = "ocr"
+required = false
+format = "hf"
+size_mb = 2
+license = "Apache-2.0"
+description = "Finds the lines of text inside a region (PP-OCRv6 tiny, published for en+zh)."
+used_by = []
+role = "text_line_detector"
+family = "ppocrv6"
+size_class = "tiny"
+langs = ["en", "zh"]
+upstream_repo = "PaddlePaddle/PP-OCRv6_tiny_det_safetensors"
+upstream_revision = "07595f982703daf0d4e120a12a01da8073542f3a"
+
+[model.files]
+"config.json" = "911288a948ee0aa617bd70cdd299315b990db08c611aebea8afb087d041d7d36"
+"model.safetensors" = "cae3c88d2a9902fd0293e6b17990428f54bfa7ec98f800a4368e95423a754d16"
+"preprocessor_config.json" = "74421569a28a78d417db320f9bc039ce0997a1defe2b35f259dfc74299c9f1ed"
+[[model]]
+id = "ocr-det-ppocrv6-small"
+name = "PP-OCRv6 small text-line detector"
+kind = "ocr"
+required = false
+format = "hf"
+size_mb = 10
+license = "Apache-2.0"
+description = "Finds the lines of text inside a region (PP-OCRv6 small, published for en+zh)."
+used_by = []
+role = "text_line_detector"
+family = "ppocrv6"
+size_class = "small"
+langs = ["en", "zh"]
+upstream_repo = "PaddlePaddle/PP-OCRv6_small_det_safetensors"
+upstream_revision = "eae2ee920a39fb3087637d3dbb58df1896ec1f24"
+
+[model.files]
+"config.json" = "b42d76ab6325d5234e1afc9987b73dc592b0ec8437c8a29d46ba6209b79252eb"
+"model.safetensors" = "89a96a8adc4e9cd0c994098edc76022e496d35844392562b4694c8fbc583f2da"
+"preprocessor_config.json" = "74421569a28a78d417db320f9bc039ce0997a1defe2b35f259dfc74299c9f1ed"
+[[model]]
+id = "ocr-det-ppocrv6-medium"
+name = "PP-OCRv6 medium text-line detector"
+kind = "ocr"
+required = false
+format = "hf"
+size_mb = 89
+license = "Apache-2.0"
+description = "Finds the lines of text inside a region (PP-OCRv6 medium, published for en+zh)."
+used_by = []
+role = "text_line_detector"
+family = "ppocrv6"
+size_class = "medium"
+langs = ["en", "zh"]
+upstream_repo = "PaddlePaddle/PP-OCRv6_medium_det_safetensors"
+upstream_revision = "4236c2b61741a259c091fd879dcc4edc339e916c"
+
+[model.files]
+"config.json" = "3ea7e760f64255c152ba139e2f5f798303f7189b87c923cf498e2b2e830cadd3"
+"model.safetensors" = "bd393266c02e1a680b1b34c301d5d0d81e6290440b7f8ab0f5d5032276b17eb1"
+"preprocessor_config.json" = "74421569a28a78d417db320f9bc039ce0997a1defe2b35f259dfc74299c9f1ed"
+[[model]]
+id = "ocr-rec-ppocrv6-tiny"
+name = "PP-OCRv6 tiny recognition"
+kind = "ocr"
+required = false
+format = "hf"
+size_mb = 5
+license = "Apache-2.0"
+description = "Reads en/zh text lines (PP-OCRv6 tiny)."
+used_by = []
+role = "recognizer"
+family = "ppocrv6"
+size_class = "tiny"
+langs = ["en", "zh"]
+notes = "published for en+zh only; on Korean pages it scored far below the v5 Korean recogniser (docs/PRODUCT_SPEC.md)"
+upstream_repo = "PaddlePaddle/PP-OCRv6_tiny_rec_safetensors"
+upstream_revision = "6f2d2d51b4b4226d7a2329a02f416f4994106f3a"
+
+[model.files]
+"config.json" = "d8a130cc18e1833aa5f352e057b5cd0e254c46efc5709823f73d53a8b5a42969"
+"model.safetensors" = "cc3892aba0fbd89afbf6a76d8b7817bb58802668be7a1384ca761ce65612f3f7"
+"preprocessor_config.json" = "196f42619e2e9e0e93a6dc1a622fa1c664628e1c63ce116b376275b3e192125f"
+[[model]]
+id = "ocr-rec-ppocrv6-small"
+name = "PP-OCRv6 small recognition"
+kind = "ocr"
+required = false
+format = "hf"
+size_mb = 22
+license = "Apache-2.0"
+description = "Reads en/zh text lines (PP-OCRv6 small)."
+used_by = []
+role = "recognizer"
+family = "ppocrv6"
+size_class = "small"
+langs = ["en", "zh"]
+notes = "published for en+zh only; on Korean pages it scored far below the v5 Korean recogniser (docs/PRODUCT_SPEC.md)"
+upstream_repo = "PaddlePaddle/PP-OCRv6_small_rec_safetensors"
+upstream_revision = "fe049fb103f57443fe8840c54ed06b702f3c1de5"
+
+[model.files]
+"config.json" = "8693fd8485e8543e13d0f6dde3891a3f4af9a47fc4e3a391fbed71f8015c899e"
+"model.safetensors" = "f65a332afe5aa663f0b9d5706f4ae8457b5b4058a842d5c1eb22df505c27d642"
+"preprocessor_config.json" = "2b24fa36f548893f26a931cf44f1a1a6b2b14ed7e2f8f8e28e6848801a8278db"
+[[model]]
+id = "ocr-rec-ppocrv6-medium"
+name = "PP-OCRv6 medium recognition"
+kind = "ocr"
+required = false
+format = "hf"
+size_mb = 77
+license = "Apache-2.0"
+description = "Reads en/zh text lines (PP-OCRv6 medium)."
+used_by = []
+role = "recognizer"
+family = "ppocrv6"
+size_class = "medium"
+langs = ["en", "zh"]
+notes = "published for en+zh only; on Korean pages it scored far below the v5 Korean recogniser (docs/PRODUCT_SPEC.md)"
+upstream_repo = "PaddlePaddle/PP-OCRv6_medium_rec_safetensors"
+upstream_revision = "024cad6a831de75c2c3c26e711ba8c4a82ccd24b"
+
+[model.files]
+"config.json" = "aa5f351b4a7df95cc4953f013d53a6d44205f1bb0aee0ec7eb243d1d8fae1c27"
+"model.safetensors" = "5f43c16f2a684b1d2284662178bdb604febd3d6bfdb5ca73828d08d0f7c0c3e9"
+"preprocessor_config.json" = "2b24fa36f548893f26a931cf44f1a1a6b2b14ed7e2f8f8e28e6848801a8278db"
+
+# --- PP-OCRv5 family additions (the two mirrored v5 entries above stay as they are; the per-language
+# mobile recognisers and the server/base rec are upstream-only). No v5 entry is recommended_for ko
+# beyond the two existing ones.
+[[model]]
+id = "ocr-det-ppocrv5-mobile"
+name = "PP-OCRv5 mobile text-line detector"
+kind = "ocr"
+required = false
+format = "hf"
+size_mb = 15
+license = "Apache-2.0"
+description = "Lightweight PP-OCRv5 line detector (the card tags en+zh)."
+used_by = []
+role = "text_line_detector"
+family = "ppocrv5"
+size_class = "mobile"
+langs = ["en", "zh"]
+upstream_repo = "PaddlePaddle/PP-OCRv5_mobile_det_safetensors"
+upstream_revision = "c5041d225cf951ff06900ab81a3c7d543c45e2ad"
+
+[model.files]
+"config.json" = "f4f66922bfb21ce8be118fee59f8f7b0fddbfed950041d45dd234f92c8862acd"
+"model.safetensors" = "c49eea87d579f931c79bf29ac1ffb1b3166f86f6811b8e46b982bb66e3f0f287"
+"preprocessor_config.json" = "0246cb8d114eec1447a9c358a1db636dcb8f315718d9781e0937f70a89a56900"
+[[model]]
+id = "ocr-rec-ppocrv5-server"
+name = "PP-OCRv5 server recognition"
+kind = "ocr"
+required = false
+format = "hf"
+size_mb = 85
+license = "Apache-2.0"
+description = "PP-OCRv5 server recogniser (the multilingual base model)."
+used_by = []
+role = "recognizer"
+family = "ppocrv5"
+size_class = "server"
+langs = ["en", "zh"]
+notes = "model card tags en+zh; the upstream v5 release also covers zh-Hant, Japanese and Chinese pinyin (Korean has its own korean_PP-OCRv5_mobile_rec)"
+upstream_repo = "PaddlePaddle/PP-OCRv5_server_rec_safetensors"
+upstream_revision = "542979d7cc3791732bb12af35313a6840952d79f"
+
+[model.files]
+"config.json" = "6e37472f191320b7da226b924ec282e5c5dbf4ac06f0f5ddf6d466ead60665c4"
+"model.safetensors" = "da94c5dd42c88b00c44081942b157bee8eda9ccd0481dbd0af3824f6c241aa91"
+"preprocessor_config.json" = "2f9968f3f38a6fa0b94fd7342dcdbf3a8a53c20bb9e4ab23820a2170480381bf"
+[[model]]
+id = "ocr-rec-ppocrv5-mobile"
+name = "PP-OCRv5 mobile recognition"
+kind = "ocr"
+required = false
+format = "hf"
+size_mb = 32
+license = "Apache-2.0"
+description = "PP-OCRv5 mobile recogniser (the multilingual base model)."
+used_by = []
+role = "recognizer"
+family = "ppocrv5"
+size_class = "mobile"
+langs = ["en", "zh"]
+notes = "model card tags en+zh; the upstream v5 release also covers zh-Hant, Japanese and Chinese pinyin (Korean has its own korean_PP-OCRv5_mobile_rec)"
+upstream_repo = "PaddlePaddle/PP-OCRv5_mobile_rec_safetensors"
+upstream_revision = "485a9a9781535ad477de3b1eea5f96a2e7300d8d"
+
+[model.files]
+"config.json" = "e33ccc6f68b0e710bbc5116b38995d8430f4ead7f6e15e745325e844cfe463f4"
+"model.safetensors" = "0bce74901be5dc8aef6d62a09eef40e46d9687fe7b087b37639e80f5d80219a3"
+"preprocessor_config.json" = "66c17f46fe813495d27e2c246de2256b5d7388780b8c87861f0fb47c5043427f"
+[[model]]
+id = "ocr-rec-en-ppocrv5-mobile"
+name = "PP-OCRv5 English recognition (mobile)"
+kind = "ocr"
+required = false
+format = "hf"
+size_mb = 23
+license = "Apache-2.0"
+description = "PP-OCRv5 mobile recogniser for English."
+used_by = []
+role = "recognizer"
+family = "ppocrv5"
+size_class = "mobile"
+langs = ["en"]
+upstream_repo = "PaddlePaddle/en_PP-OCRv5_mobile_rec_safetensors"
+upstream_revision = "e4abce2bbd335f6c3eda0507b7f8e8abd5af3419"
+
+[model.files]
+"config.json" = "be52e23a259dc4838322115ee4c8f59197ce136a1aa0bd96574122b84f1fa4b7"
+"model.safetensors" = "9dab63fb9b819082f3f06e889a3af56dc2c27155d46d8409659c869a2aece2bc"
+"preprocessor_config.json" = "66db0fbb4e009096e9a766845646dc34c3186892a1b76637dab2cb75a91edd4c"
+[[model]]
+id = "ocr-rec-latin-ppocrv5-mobile"
+name = "PP-OCRv5 Latin recognition (mobile)"
+kind = "ocr"
+required = false
+format = "hf"
+size_mb = 23
+license = "Apache-2.0"
+description = "PP-OCRv5 mobile recogniser for Latin-script text."
+used_by = []
+role = "recognizer"
+family = "ppocrv5"
+size_class = "mobile"
+langs = []
+notes = "script model: the repo name names the script/family; the model card lists no languages"
+upstream_repo = "PaddlePaddle/latin_PP-OCRv5_mobile_rec_safetensors"
+upstream_revision = "47901138f5f32dad06282fa88d2c672fa816d450"
+
+[model.files]
+"config.json" = "5134f6532a92c6d36f8e077deda9d0ea9593a9eb2267f76d34b6bc944d63ac98"
+"model.safetensors" = "bd390b3cdb176e856ac7feab5f26d8dcaed2d7714a1501eb1fce773eccdc126d"
+"preprocessor_config.json" = "048983b9bcb8877f8bb2b6f0fa3ac538fd75e3b801f98594b996a0366d280c93"
+[[model]]
+id = "ocr-rec-eslav-ppocrv5-mobile"
+name = "PP-OCRv5 eslav recognition (mobile)"
+kind = "ocr"
+required = false
+format = "hf"
+size_mb = 23
+license = "Apache-2.0"
+description = "PP-OCRv5 mobile recogniser for the 'eslav' family (upstream naming)."
+used_by = []
+role = "recognizer"
+family = "ppocrv5"
+size_class = "mobile"
+langs = []
+notes = "script model: the repo name names the script/family; the model card lists no languages"
+upstream_repo = "PaddlePaddle/eslav_PP-OCRv5_mobile_rec_safetensors"
+upstream_revision = "feb3757f69257ed5320044604217032a7b90b789"
+
+[model.files]
+"config.json" = "ac924b9044d133ce249ab884386acdf0eed0a1d13f14f481d65384a9fae40dc8"
+"model.safetensors" = "10736dfff02329facb09dbbd3477c85d722b8485961c2736ba3f196ac96e70bf"
+"preprocessor_config.json" = "967a5b30e5ef946835c1ba984d871702ee5d9f513e4120047bfa588c1ec13a7c"
+[[model]]
+id = "ocr-rec-th-ppocrv5-mobile"
+name = "PP-OCRv5 Thai recognition (mobile)"
+kind = "ocr"
+required = false
+format = "hf"
+size_mb = 23
+license = "Apache-2.0"
+description = "PP-OCRv5 mobile recogniser for Thai."
+used_by = []
+role = "recognizer"
+family = "ppocrv5"
+size_class = "mobile"
+langs = ["th"]
+upstream_repo = "PaddlePaddle/th_PP-OCRv5_mobile_rec_safetensors"
+upstream_revision = "4cc4c996b8690bd623683e8d2be06eaf5919584b"
+
+[model.files]
+"config.json" = "09f418d0a4578706aeeec88e26af006f7caf3ec4c336f98ce68deaee24bea41f"
+"model.safetensors" = "aead64f31f8772532573ee2452d59050cc6b4902b5d18ba99a2679f3afbf8a23"
+"preprocessor_config.json" = "661f968f5d6e1128af11040a8d1d8799cac95ec3bb3c03b5779517fbea1c0231"
+[[model]]
+id = "ocr-rec-el-ppocrv5-mobile"
+name = "PP-OCRv5 Greek recognition (mobile)"
+kind = "ocr"
+required = false
+format = "hf"
+size_mb = 23
+license = "Apache-2.0"
+description = "PP-OCRv5 mobile recogniser for Greek."
+used_by = []
+role = "recognizer"
+family = "ppocrv5"
+size_class = "mobile"
+langs = ["el"]
+upstream_repo = "PaddlePaddle/el_PP-OCRv5_mobile_rec_safetensors"
+upstream_revision = "0d7a6ed5020d57efffb993b7979328481bb04c3b"
+
+[model.files]
+"config.json" = "b3bc991f5f3df59b7ade54ee6e4bfb9790095b953c099d00335e026f413516ce"
+"model.safetensors" = "4b2d76d32d7b4e7acdd1c9c08bac156a9c2afb4ce9e7c6000c424cca7f116807"
+"preprocessor_config.json" = "ec36342d540e5130d8b02e07fb420ed7d72059ad0d6657669215df7bce7016b3"
+[[model]]
+id = "ocr-rec-arabic-ppocrv5-mobile"
+name = "PP-OCRv5 Arabic recognition (mobile)"
+kind = "ocr"
+required = false
+format = "hf"
+size_mb = 23
+license = "Apache-2.0"
+description = "PP-OCRv5 mobile recogniser for Arabic."
+used_by = []
+role = "recognizer"
+family = "ppocrv5"
+size_class = "mobile"
+langs = ["ar"]
+upstream_repo = "PaddlePaddle/arabic_PP-OCRv5_mobile_rec_safetensors"
+upstream_revision = "4941f944a2d298f4cefa46c894e7ef129ba84c39"
+
+[model.files]
+"config.json" = "a16ce65d6c7f308446e8190e0709a97190b0978b4f44c9dcac7da6721d94fa79"
+"model.safetensors" = "eb7ed1ed54b54955a03f7d85f6dbc625cc9fddd9c42ff3571d722ffc0ae5f059"
+"preprocessor_config.json" = "20a387443ab993ff6eec0b178da49834ab8b88e85395764e5bffb8beb11e4151"
+[[model]]
+id = "ocr-rec-cyrillic-ppocrv5-mobile"
+name = "PP-OCRv5 Cyrillic recognition (mobile)"
+kind = "ocr"
+required = false
+format = "hf"
+size_mb = 23
+license = "Apache-2.0"
+description = "PP-OCRv5 mobile recogniser for Cyrillic-script text."
+used_by = []
+role = "recognizer"
+family = "ppocrv5"
+size_class = "mobile"
+langs = []
+notes = "script model: the repo name names the script/family; the model card lists no languages"
+upstream_repo = "PaddlePaddle/cyrillic_PP-OCRv5_mobile_rec_safetensors"
+upstream_revision = "365e51a40970de46b7f2cba9cfc2fe529d2575cc"
+
+[model.files]
+"config.json" = "6d4be67342d159800fa7f3c8d68f251e6e579d6fa2fcc61fc1cefba8c4b5c6bf"
+"model.safetensors" = "228aa1232b9ed1d8a0d08afacc7496f3f364282b486fc326f5719b2fa047c305"
+"preprocessor_config.json" = "b22843f37ade911056a16ae926e062ba53eb53a6e2f395003c4231d2a4dc48a8"
+[[model]]
+id = "ocr-rec-devanagari-ppocrv5-mobile"
+name = "PP-OCRv5 Devanagari recognition (mobile)"
+kind = "ocr"
+required = false
+format = "hf"
+size_mb = 23
+license = "Apache-2.0"
+description = "PP-OCRv5 mobile recogniser for Devanagari-script text."
+used_by = []
+role = "recognizer"
+family = "ppocrv5"
+size_class = "mobile"
+langs = []
+notes = "script model: the repo name names the script/family; the model card lists no languages"
+upstream_repo = "PaddlePaddle/devanagari_PP-OCRv5_mobile_rec_safetensors"
+upstream_revision = "4b1f19893a36d00408b1151460aa1e45afec8903"
+
+[model.files]
+"config.json" = "c512021fa79373c2b37df36691644fb8e635b41ae1fe1aab0c1beb9bce146983"
+"model.safetensors" = "7c27e77aa17d5027d7b2705fda120a63573e01f46139eaa94d04abb0158468f7"
+"preprocessor_config.json" = "21afdbbf7babfc1033b985b139cfcb43625392d9fe569a1a5ed8b6118c20bf8b"
+[[model]]
+id = "ocr-rec-te-ppocrv5-mobile"
+name = "PP-OCRv5 Telugu recognition (mobile)"
+kind = "ocr"
+required = false
+format = "hf"
+size_mb = 23
+license = "Apache-2.0"
+description = "PP-OCRv5 mobile recogniser for Telugu."
+used_by = []
+role = "recognizer"
+family = "ppocrv5"
+size_class = "mobile"
+langs = ["te"]
+upstream_repo = "PaddlePaddle/te_PP-OCRv5_mobile_rec_safetensors"
+upstream_revision = "1949a6f874f1d73559900d0f531847eb7a7b947a"
+
+[model.files]
+"config.json" = "d3972cc67ae894e280d39e771239d179bb971c4e9861852387821bd2cf2c4f06"
+"model.safetensors" = "8981a7984ba6f62f83c19e244cf4123318d777c3d13256d1c20f5b9618f7aa6f"
+"preprocessor_config.json" = "57c7332a47e36f499013b5d4e6b8a66bfda769f5a6d5c1863789b8a387601303"
+[[model]]
+id = "ocr-rec-ta-ppocrv5-mobile"
+name = "PP-OCRv5 Tamil recognition (mobile)"
+kind = "ocr"
+required = false
+format = "hf"
+size_mb = 23
+license = "Apache-2.0"
+description = "PP-OCRv5 mobile recogniser for Tamil."
+used_by = []
+role = "recognizer"
+family = "ppocrv5"
+size_class = "mobile"
+langs = ["ta"]
+upstream_repo = "PaddlePaddle/ta_PP-OCRv5_mobile_rec_safetensors"
+upstream_revision = "d1a8d42f3938fc52e2c88b7ca1b8cb62856820d1"
+
+[model.files]
+"config.json" = "9529c4aa7f67172ffda2328cba42d5c713e10a1af62b11ee975d8a6cd8a2a900"
+"model.safetensors" = "f4bf5157774957d9cb62686fa56164993d817bcfe2309c2e5587ff79aea6dfb4"
+"preprocessor_config.json" = "042baad2fa6d537d0e2261be1dce9d1b5141d9c00977cdecbf4a7a706698a1cd"
+
+# --- PaddleOCR-VL (0.9B document-parsing VLM, ~2 GB weights; runs the whole region end to end).
+# The GGUF builds need the llama.cpp engine, which is not built yet (card O1b follows PP-OCR).
+[[model]]
+id = "ocr-vl-1.6"
+name = "PaddleOCR-VL 1.6"
+kind = "ocr"
+required = false
+format = "hf"
+size_mb = 1931
+license = "Apache-2.0"
+description = "0.9B document-parsing VLM that reads whole regions (layout, text, tables) end to end."
+used_by = []
+role = "vlm_ocr"
+family = "paddleocr-vl"
+langs = ["en", "zh", "multilingual"]
+upstream_repo = "PaddlePaddle/PaddleOCR-VL-1.6"
+upstream_revision = "c5630abae1d940eafe0697512a0325494b02ab42"
+
+[model.files]
+"added_tokens.json" = "f59f889088e0fe21c523e7cf121bb6dca3b0bb148cb7159fbb4572c74dfc5644"
+"chat_template.jinja" = "2f27812dab7f333e471884e0c803d807f11953d5453140dfb1aaba234f872bc8"
+"config.json" = "ce7f4565f8b1db78532ad5d1b9ebe55c2139d49bd4cb04778b580a08a598f171"
+"generation_config.json" = "a6701d78ab3b4d972307cdec3b69d4c13f46e0d5140514f50ab7d84259324b94"
+"model.safetensors" = "85a479d506a11e724e7285d395c551be69f41dbc16b6342d3cacfb189aed71db"
+"preprocessor_config.json" = "111872ab1e8bb7fd040ac5087bfced7ab8f011f02139b088cba294964c3b1d0e"
+"processor_config.json" = "1568858960a9760c54431dae693a6152e601ff55cdf6d2eab97a4a99958faea0"
+"special_tokens_map.json" = "d3a125c03103deb2acaf7730791bdbbf196f620e5a2213b664511ff9b4b25bab"
+"tokenizer.json" = "c8a215a59183d0d0781adc33bacd3ce6162716f7fd568fb30234a74d69803a7d"
+"tokenizer.model" = "34ef7db83df785924fb83d7b887b6e822a031c56e15cff40aaf9b982988180df"
+"tokenizer_config.json" = "1f979337347cc0cb72a6282d8a23ed183539aa81a87a906f022aee2bab83c7c5"
+[[model]]
+id = "ocr-vl-1.5"
+name = "PaddleOCR-VL 1.5"
+kind = "ocr"
+required = false
+format = "hf"
+size_mb = 1931
+license = "Apache-2.0"
+description = "The previous PaddleOCR-VL release, same role as 1.6."
+used_by = []
+role = "vlm_ocr"
+family = "paddleocr-vl"
+langs = ["en", "zh", "multilingual"]
+upstream_repo = "PaddlePaddle/PaddleOCR-VL-1.5"
+upstream_revision = "2a4195faa5e7914c12f2fc601d72c81caf8d2da5"
+
+[model.files]
+"added_tokens.json" = "f59f889088e0fe21c523e7cf121bb6dca3b0bb148cb7159fbb4572c74dfc5644"
+"chat_template.jinja" = "2f27812dab7f333e471884e0c803d807f11953d5453140dfb1aaba234f872bc8"
+"config.json" = "ce7f4565f8b1db78532ad5d1b9ebe55c2139d49bd4cb04778b580a08a598f171"
+"generation_config.json" = "a6701d78ab3b4d972307cdec3b69d4c13f46e0d5140514f50ab7d84259324b94"
+"model.safetensors" = "d557c9d8997ae57ed3b1b33bdf347be878cc335687f32ca105341c16973f8958"
+"preprocessor_config.json" = "111872ab1e8bb7fd040ac5087bfced7ab8f011f02139b088cba294964c3b1d0e"
+"processor_config.json" = "1568858960a9760c54431dae693a6152e601ff55cdf6d2eab97a4a99958faea0"
+"special_tokens_map.json" = "d3a125c03103deb2acaf7730791bdbbf196f620e5a2213b664511ff9b4b25bab"
+"tokenizer.json" = "c8a215a59183d0d0781adc33bacd3ce6162716f7fd568fb30234a74d69803a7d"
+"tokenizer.model" = "34ef7db83df785924fb83d7b887b6e822a031c56e15cff40aaf9b982988180df"
+"tokenizer_config.json" = "1f979337347cc0cb72a6282d8a23ed183539aa81a87a906f022aee2bab83c7c5"
+[[model]]
+id = "ocr-vl"
+name = "PaddleOCR-VL"
+kind = "ocr"
+required = false
+format = "hf"
+size_mb = 1931
+license = "Apache-2.0"
+description = "The first PaddleOCR-VL release; 1.5 and 1.6 are newer."
+used_by = []
+role = "vlm_ocr"
+family = "paddleocr-vl"
+langs = ["en", "zh", "multilingual"]
+notes = "the repo's PP-DocLayoutV2 layout subfolder is not part of this entry"
+upstream_repo = "PaddlePaddle/PaddleOCR-VL"
+upstream_revision = "7fa00a8c55b735ba51ba49a9058f3f9c57a99a11"
+
+[model.files]
+"added_tokens.json" = "f59f889088e0fe21c523e7cf121bb6dca3b0bb148cb7159fbb4572c74dfc5644"
+"chat_template.jinja" = "ab4f984a185809daf6d36ebb6efa7a27c5fe7772ed7b0f0cabd3a1b30a2069cd"
+"config.json" = "ce7f4565f8b1db78532ad5d1b9ebe55c2139d49bd4cb04778b580a08a598f171"
+"generation_config.json" = "a6701d78ab3b4d972307cdec3b69d4c13f46e0d5140514f50ab7d84259324b94"
+"model.safetensors" = "3085f1042e184f68f8a412aa0f64f2c4b8562989598bbfba326aaa11fc685de8"
+"preprocessor_config.json" = "0c349d1210abce664bdba8986dc0637e94679b1fe90f13fcb18616a6466c4618"
+"processor_config.json" = "1568858960a9760c54431dae693a6152e601ff55cdf6d2eab97a4a99958faea0"
+"special_tokens_map.json" = "215bf3a1b155fafe3497f8790bedf280af92d29c2f0286c2f87a5c78baff8f7c"
+"tokenizer.json" = "f90f04fd8e5eb6dfa380f37d10c87392de8438dccb6768a2486b5a96ee76dba6"
+"tokenizer.model" = "34ef7db83df785924fb83d7b887b6e822a031c56e15cff40aaf9b982988180df"
+"tokenizer_config.json" = "2eb86166750a1ce6aaeb60d12ef7d88a68e5545ee986a2d266bf143ff8d26f3c"
+[[model]]
+id = "ocr-vl-1.6-gguf"
+name = "PaddleOCR-VL 1.6 (GGUF)"
+kind = "ocr"
+required = false
+format = "hf"
+size_mb = 1818
+license = "Apache-2.0"
+description = "PaddleOCR-VL 1.6 as GGUF for llama.cpp (CPU and low-VRAM machines)."
+used_by = []
+role = "vlm_ocr"
+family = "paddleocr-vl"
+langs = []
+notes = "GGUF build for llama.cpp; needs the llama.cpp engine (not built yet)"
+upstream_repo = "PaddlePaddle/PaddleOCR-VL-1.6-GGUF"
+upstream_revision = "511b09642bb324401f15f97cc23bc67e8f0a291d"
+
+[model.files]
+"PaddleOCR-VL-1.6-GGUF-mmproj.gguf" = "204d757d7610d9b3faab10d506d69e5b244e32bf765e2bab2d0167e65e0a058a"
+"PaddleOCR-VL-1.6-GGUF.gguf" = "f3ae46ec885050acf4b3d31944431e1fd90d50664fb09126af4a3c050ba14ee8"
+"chat_template.jinja" = "1369e43952c7a84e834be95732d65111e96cbefe30aa32a4826eca344f5ef939"
+[[model]]
+id = "ocr-vl-1.5-gguf"
+name = "PaddleOCR-VL 1.5 (GGUF)"
+kind = "ocr"
+required = false
+format = "hf"
+size_mb = 1818
+license = "Apache-2.0"
+description = "PaddleOCR-VL 1.5 as GGUF for llama.cpp (CPU and low-VRAM machines)."
+used_by = []
+role = "vlm_ocr"
+family = "paddleocr-vl"
+langs = []
+notes = "GGUF build for llama.cpp; needs the llama.cpp engine (not built yet)"
+upstream_repo = "PaddlePaddle/PaddleOCR-VL-1.5-GGUF"
+upstream_revision = "cc977c16989848c264d813ec1705cb181b7a21ee"
+
+[model.files]
+"PaddleOCR-VL-1.5-mmproj.gguf" = "e7f1a72400fba517046f90d964e2fa0f4dac7781ee3b1bc5d2022f5f8cecbd87"
+"PaddleOCR-VL-1.5.gguf" = "299051d54faa065abc505cc39b8383ea338fd3020c775ea3e0ba514a7022328c"
+"chat_template.jinja" = "1369e43952c7a84e834be95732d65111e96cbefe30aa32a4826eca344f5ef939"
+
+# --- manga-ocr (Japanese bubble crops).
+[[model]]
+id = "ocr-rec-manga-ocr-base"
+name = "manga-ocr base"
+kind = "ocr"
+required = false
+format = "hf"
+size_mb = 445
+license = "Apache-2.0"
+description = "Reads Japanese manga text from bubble crops (the classic manga-ocr model)."
+used_by = []
+role = "recognizer"
+family = "manga-ocr"
+langs = ["ja"]
+upstream_repo = "kha-white/manga-ocr-base"
+upstream_revision = "aa6573bd10b0d446cbf622e29c3e084914df9741"
+
+[model.files]
+"config.json" = "8c0e395de8fa699daaac21aee33a4ba9bd1309cfbff03147813d2a025f39f349"
+"preprocessor_config.json" = "af4eb4d79cf61b47010fc0bc9352ee967579c417423b4917188d809b7e048948"
+"pytorch_model.bin" = "c63e0bb5b3ff798c5991de18a8e0956c7ee6d1563aca6729029815eda6f5c2eb"
+"special_tokens_map.json" = "303df45a03609e4ead04bc3dc1536d0ab19b5358db685b6f3da123d05ec200e3"
+"tokenizer_config.json" = "d775ad1deac162dc56b84e9b8638f95ed8a1f263d0f56f4f40834e26e205e266"
+"vocab.txt" = "344fbb6b8bf18c57839e924e2c9365434697e0227fac00b88bb4899b78aa594d"
+[[model]]
+id = "ocr-rec-manga-ocr-2025"
+name = "manga-ocr base (2025)"
+kind = "ocr"
+required = false
+format = "hf"
+size_mb = 122
+license = "Apache-2.0"
+description = "Reads Japanese manga text from bubble crops (2025 safetensors refresh of manga-ocr)."
+used_by = []
+role = "recognizer"
+family = "manga-ocr"
+langs = ["ja"]
+upstream_repo = "jzhang533/manga-ocr-base-2025"
+upstream_revision = "1e64d5beb41ee6bee72c200838ddb93ad541482a"
+
+[model.files]
+"config.json" = "8661a5df24966f748b4bc89411b1706f5bc4b90ba6407e5d7656e4397f60b650"
+"generation_config.json" = "71fcc7798c8f93b289eb97f175e6f6a41e7d4a887a283f4a37beb1dc986d14ee"
+"model.safetensors" = "6152295c6d796ff92ed024b3ed5a0246a7865568e36d73c64b4bed2a71e4acb0"
+"preprocessor_config.json" = "df66dd58cabac706e70494a744b79b766960cf153f24aec38ba17afe1083cc04"
+"special_tokens_map.json" = "b6d346be366a7d1d48332dbc9fdf3bf8960b5d879522b7799ddba59e76237ee3"
+"tokenizer_config.json" = "ca618a7be4e00dfed2d4aa46008eb8c892d2ec32f497c9d6c354b93af833ac0f"
+"vocab.txt" = "344fbb6b8bf18c57839e924e2c9365434697e0227fac00b88bb4899b78aa594d"
