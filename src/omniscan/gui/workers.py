@@ -11,10 +11,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
+from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Signal
 
 Progress = Callable[[int, int | None], None]
 TaskFn = Callable[[Progress], Any]
+
+_alive: list["WorkerSignals"] = []  # anchors in-flight signals objects against the GC
 
 
 class WorkerSignals(QObject):
@@ -52,17 +54,27 @@ class TaskWorker(QRunnable):
 def run_task(fn: TaskFn, *, pool: QThreadPool | None = None) -> WorkerSignals:
     """Start `fn(progress)` on `pool` (default: the global one) and return its WorkerSignals.
 
-    Keep the returned signals object referenced until `finished`/`failed` arrives: its
-    connection to the keep-alive slot below (a closure over the worker) is what holds the
-    queued worker in memory.
+    The task starts on the next event-loop pass (a zero-delay timer), so connections the
+    caller makes right after `run_task` returns are always in place before `fn` runs — a fast
+    task can never emit into the void. The module-level `_alive` registry additionally holds
+    every in-flight signals object (signals -> connection -> closure -> worker -> signals is a
+    cycle the GC could otherwise collect mid-run, dropping the queued signals); `_release`
+    removes it when `finished`/`failed` arrives. Keeping the returned reference until then is
+    still good practice.
     """
     worker = TaskWorker(fn)
     signals = worker.signals
+    _alive.append(signals)
+    target = pool or QThreadPool.globalInstance()
 
-    def _keep_alive() -> None:
-        """No-op slot; the connection holds this closure, and with it the worker."""
+    def _release() -> None:
+        """Drop the registry anchor; the task is done, its signals can be collected."""
+        try:
+            _alive.remove(signals)
+        except ValueError:  # already released (finished and failed never both fire)
+            pass
 
-    signals.finished.connect(_keep_alive)
-    signals.failed.connect(_keep_alive)
-    (pool or QThreadPool.globalInstance()).start(worker)
+    signals.finished.connect(_release)
+    signals.failed.connect(_release)
+    QTimer.singleShot(0, lambda: target.start(worker))
     return signals
