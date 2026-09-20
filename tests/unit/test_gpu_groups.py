@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -184,6 +185,44 @@ def test_build_vram_manager_registers_inpaint(monkeypatch: pytest.MonkeyPatch, t
     manager.release()
     assert manager.acquire(VISION_GROUP)["detector"] is fake_detector  # the vision group stays
     manager.release()
+
+
+# ---------------------------------------------------------------- GPU warm-up (card G2, test 2)
+
+
+def test_build_vram_manager_starts_warmup_once_on_cuda(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from omniscan.gpu import groups as groups_module
+    from omniscan.gpu.groups import build_vram_manager
+    from omniscan.gpu.warmup import GpuWarmup
+
+    started: list[torch.device] = []
+
+    def fake_start_warmup(device: torch.device) -> GpuWarmup:
+        started.append(device)
+        return GpuWarmup(torch.device("cpu"))  # an already-done stand-in handle
+
+    monkeypatch.setattr(groups_module, "start_warmup", fake_start_warmup)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(
+        torch.cuda, "get_device_properties", lambda device: SimpleNamespace(total_memory=16 * 2**30)
+    )
+    monkeypatch.setattr(torch.cuda, "set_per_process_memory_fraction", lambda fraction, device: None)
+
+    cfg = cli_cfg(tmp_path).model_copy(update={"gpu": GpuConfig(device="cuda")})
+    manager = build_vram_manager(cfg)
+    assert started == [torch.device("cuda")]  # exactly one start_warmup call for the resolved device
+    assert manager.warmup is not None and manager.warmup.done
+    assert manager.device.type == "cuda"
+
+    manager = build_vram_manager(cfg.model_copy(update={"gpu": GpuConfig(device="cuda", warmup=False)}))
+    assert started == [torch.device("cuda")]  # warm-up disabled: not called again
+    assert manager.warmup is None
+
+    manager = build_vram_manager(cli_cfg(tmp_path))  # cpu device: nothing starts
+    assert started == [torch.device("cuda")]
+    assert manager.warmup is None
 
 
 # ---------------------------------------------------------------- engine dispatch (card O1b, test 8)

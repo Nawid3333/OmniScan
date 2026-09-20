@@ -13,13 +13,21 @@ from typing import Any
 import torch
 
 from omniscan.core.config import Config
+from omniscan.gpu.device import resolve_device
 from omniscan.gpu.vram import VramManager
+from omniscan.gpu.warmup import GpuWarmup, start_warmup
 
 VISION_GROUP = "vision"
 INPAINT_GROUP = "inpaint"
 
 
-def build_vram_manager(cfg: Config) -> VramManager:
+class WarmupVramManager(VramManager):
+    """A VramManager carrying the GPU warm-up handle its build started (None when disabled)."""
+
+    warmup: GpuWarmup | None
+
+
+def build_vram_manager(cfg: Config) -> WarmupVramManager:
     """A VramManager for cfg.gpu with the pipeline's model groups registered."""
 
     def load_vision(device: torch.device) -> dict[str, Any]:
@@ -49,7 +57,11 @@ def build_vram_manager(cfg: Config) -> VramManager:
 
         return {"lama": LamaInpainter.load(cfg.inpaint, cfg.paths.models_dir, device)}
 
-    manager = VramManager(cfg.gpu.device, cfg.gpu.vram_budget_gib, ollama_url=cfg.ollama.local_url)
+    device = resolve_device(cfg.gpu.device)
+    manager = WarmupVramManager(device, cfg.gpu.vram_budget_gib, ollama_url=cfg.ollama.local_url)
     manager.register(VISION_GROUP, load_vision, est_gib=3.0)
     manager.register(INPAINT_GROUP, load_inpaint, est_gib=2.0)
+    # The warm-up runs on its own daemon thread and must not block the caller; resolve_device is the
+    # same call VramManager makes, so both always land on the same device.
+    manager.warmup = start_warmup(device) if cfg.gpu.warmup and device.type == "cuda" else None
     return manager
