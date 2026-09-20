@@ -1,0 +1,62 @@
+# O1a — Catalog of every OCR model and size (PP-OCR v5/v6, PaddleOCR-VL, manga-ocr) with hashes, languages and requirements
+
+**Owner:** GLM builder · **Branch:** `O1a` · **Worktree:** `V:\OmniScan-wt\O1a` (created by `scripts/omni_builder.py`)
+Read `CLAUDE.md` first, then `docs/PRODUCT_SPEC.md` (section 1 with the measured v5/v6 table), `docs/reports/U2a.md`, `docs/reports/U2b.md`, `src/omniscan/models/{catalog,store,download,resolve}.py`, `config/models.toml`, `docs/MODELS.md`, and the tests `tests/unit/test_models_*.py`. If the card H1 (hardware requirements) is already merged, the `min_vram_gb`/`min_ram_gb`/`backends`/`cpu_ok`/`cpu_speed`/`notes` fields exist and you fill them; if not, leave them out (and say so in the report).
+
+## Why
+The owner wants **all** OCR models and sizes available in the settings list so the user decides what to download: PP-OCR v6 (tiny/small/medium, detection and recognition), the PP-OCR v5 family, PaddleOCR-VL, and manga-ocr — runnable on CPU or GPU. Today the catalog only describes the mirrored v5 files. This card is mostly **data plus one new catalog format**; the engines that use these models are card O1b.
+Measured fact you must record in the notes (see the spec): the published PP-OCRv6 models are tagged `en` + `zh` only, and on Korean pages they score far below the v5 Korean recogniser. So `langs` must be accurate, and the catalog must let the tooling recommend per language.
+
+## Files you may create / modify
+- `src/omniscan/models/catalog.py`, `models/download.py`, `models/store.py`, `models/resolve.py` (modify — only what the new format `hf` needs, below)
+- `config/models.toml` (append entries; do not change existing entries except adding the new optional fields listed below)
+- `scripts/hf_catalog.py` (create — the helper that reads the Hugging Face API and prints TOML for an entry; see Part 2)
+- `tests/unit/test_models_catalog.py`, `test_models_store.py`, `test_models_download.py`, `test_models_resolve.py`, `test_models_cli.py` (extend), `tests/unit/test_hf_catalog_script.py` (create)
+- `docs/MODELS.md` (the full table: id, role, languages, size, licence, upstream repo@revision, hardware needs), `docs/USER_GUIDE.md` (`omniscan models` section: the new columns, `--role`/`--lang` filters), `docs/reports/O1a.md` (create)
+Do not modify `src/omniscan/core/**`, the loaders or the pipeline (O1b).
+
+## Part 1 — new catalog format `hf` and new descriptive fields
+`ModelFormat` gains `"hf"`: a model that is fetched **only** from Hugging Face (no mirror asset), stored in `<models_dir>/<id>/`, verified per file. New/changed optional fields of `ModelEntry` (defaults keep all 8 existing entries valid unchanged):
+- `role: Literal["detector", "text_line_detector", "recognizer", "vlm_ocr", "inpaint", "llm"] | None = None` (fill it for the 4 existing vision/OCR/LaMa entries: detector-comic-text-bubble → `detector`, ocr-det-ppocrv5-server → `text_line_detector`, ocr-rec-korean-ppocrv5-mobile → `recognizer`, inpaint-big-lama → `inpaint`; the LLM entries → `llm`),
+- `family: str = ""` (`ppocrv6`, `ppocrv5`, `paddleocr-vl`, `manga-ocr`, `comic-detector`, `lama`, `llm`), `size_class: str = ""` (`tiny`/`small`/`medium`/`server`/`mobile`/`base`/…), `langs: list[str] = []` (ISO-ish codes as the model card lists them; empty = language independent),
+- `recommended_for: list[str] = []` (language codes for which this model is the current default; set `["ko"]` on the three existing v5-based entries as recorded in the spec; leave every new entry empty — O1c decides),
+- for `hf`: `upstream_repo`, `upstream_revision` (full commit sha), and `files: dict[str, str]` = relative file name → sha256 (64 hex) of every file that must be present after install (the model weights and every small config/tokenizer file the loader needs; exclude README, `.gitattributes`, images).
+Validation for `hf`: `upstream_repo`, `upstream_revision` (40 hex) and a non-empty `files` are required; every hash 64 hex; `size_mb` > 0 (`ValueError` naming the field like the other formats).
+**Download** (`download_model` for `hf`): `hf_download(repo_id, revision=..., local_dir=<models_dir>/<id>, allow_patterns=list(files))` (default `huggingface_hub.snapshot_download`, injectable like today); then verify **every** file in `files` exists and its SHA-256 matches; a mismatch or a missing file → delete the folder, `ModelDownloadError` naming the file; on success write `.installed.json` (`source: "upstream"`, `revision`, and `files_verified: <count>`). Return `"upstream"`. **Status** for `hf`: `installed` when `.installed.json` exists, its `revision` equals the catalog's, and every file in `files` exists with the recorded **size** (do not rehash on every status call; `verify` may rehash: give `verify_models` a `deep: bool = False` parameter that rehashes when true and expose it as `omniscan models verify --deep`); otherwise `missing` / `corrupt` as for `zip`. `resolve.local_model_source` must also match `hf` entries by `upstream_repo` (installed only). `omniscan models list` gets `--role ROLE` and `--lang CODE` filters and shows `role` and `langs` in the text table and JSON.
+
+## Part 2 — `scripts/hf_catalog.py`
+`uv run python scripts/hf_catalog.py REPO [--id ID --role ROLE --family F --size-class S --revision SHA]` queries `https://huggingface.co/api/models/<repo>?blobs=true` (metadata, licence, languages from `cardData.language`, siblings with sizes) and `https://huggingface.co/api/models/<repo>/tree/<revision>?recursive=true` (per-file `lfs.oid` = sha256 for LFS files; for small non-LFS files download the file and hash it), and **prints a ready `[[model]]` TOML block** (format `hf`, `size_mb` = the sum of the listed files rounded up, `license` from the card, `langs`, `files`) to stdout. It never writes files; `--revision` defaults to the repo's current head sha. Network access via `urllib`/`httpx` with a `User-Agent`; testable through an injectable fetch function (tests use canned JSON, no network).
+
+## Part 3 — the data (use the script; run it for every repo below and paste the blocks into `config/models.toml`)
+Include only `safetensors`/PyTorch-loadable repos (ONNX and GGUF repos are listed in the report as "later, needs an onnxruntime / llama.cpp engine" and get **no** entry now, except the two GGUF PaddleOCR-VL repos which get entries with `format = "hf"`, `role = "vlm_ocr"`, `notes = "GGUF build for llama.cpp; needs the llama.cpp engine (not built yet)"`).
+1. **PP-OCRv6** (`PaddlePaddle/PP-OCRv6_{tiny,small,medium}_det_safetensors` → role `text_line_detector`, family `ppocrv6`; `PaddlePaddle/PP-OCRv6_{tiny,small,medium}_rec_safetensors` → role `recognizer`); ids `ocr-det-ppocrv6-tiny`, `ocr-det-ppocrv6-small`, `ocr-det-ppocrv6-medium`, `ocr-rec-ppocrv6-tiny`, … ; `langs` exactly as the model cards say (currently `en`, `zh`); `notes` for every rec: `"published for en+zh only; on Korean pages it scored far below the v5 Korean recogniser (docs/PRODUCT_SPEC.md)"`.
+2. **PP-OCRv5:** search `https://huggingface.co/api/models?author=PaddlePaddle&search=PP-OCRv5&limit=100` and include every `*_safetensors` repo (detectors: server, mobile; recognisers: server and every per-language mobile recogniser that exists, e.g. korean, and the ones for Chinese, English, Japanese/Latin/Cyrillic/Arabic/Thai/Greek/… as they appear); the two already in the catalog (`ocr-det-ppocrv5-server`, `ocr-rec-korean-ppocrv5-mobile`) stay as they are (mirrored `zip` entries) — do not duplicate them; `langs` from the cards or derived from the repo name (`korean` → `ko`, `japan` → `ja`, `ch`/`chinese_cht` → `zh`, `en`, `latin` → `["en","fr","de","es","it","pt", ...]` only if the card lists them, otherwise `[]` and a note).
+3. **PaddleOCR-VL:** `PaddlePaddle/PaddleOCR-VL-1.6`, `PaddlePaddle/PaddleOCR-VL-1.5`, `PaddlePaddle/PaddleOCR-VL` (role `vlm_ocr`, family `paddleocr-vl`, size about 1.9–2.1 GB; `files` = `model.safetensors`, `config.json`, tokenizer files, `preprocessor_config.json`/`generation_config.json` as present; exclude the `PP-DocLayoutV2` subfolder of the base repo), plus the two GGUF repos above.
+4. **manga-ocr:** `kha-white/manga-ocr-base` (role `recognizer`, family `manga-ocr`, `langs = ["ja"]`, the repo ships only `pytorch_model.bin` — record that file and the configs), `jzhang533/manga-ocr-base-2025` (safetensors, 121 MB).
+5. Requirements (only when H1 is merged): PP-OCR tiny/small → `min_vram_gb=0.5, cpu_speed="fast"`; medium/server → `0.8, "ok"`; PaddleOCR-VL → `min_vram_gb=6.0, min_ram_gb=12, cpu_speed="unusable"` and `notes="VLM, ~2 GB weights; 6-8 GB of VRAM recommended"`; manga-ocr → `1.5, 8, "ok"`.
+Every new entry: `required = false`, `license` from the card (must be `Apache-2.0` for the OCR/VL/manga-ocr ones — if a card says otherwise, use what it says and mention it in the report), `description` one sentence, `used_by = []`, `size_mb` from the script.
+
+## Acceptance tests (CPU, no network: canned Hugging Face JSON, fake `hf_download`)
+1. **Catalog format `hf`:** valid entry loads; every missing/invalid field message (`upstream_revision` not 40 hex, empty `files`, bad hash, `size_mb = 0`); the 8 old entries load unchanged; `role`/`family`/`size_class`/`langs`/`recommended_for` defaults and the values set on the 4 old vision/OCR/LaMa/LLM entries; `recommended_for == ["ko"]` exactly on the three v5-based entries.
+2. **Real catalog:** `load_catalog()` on the shipped `config/models.toml`: ids unique; every `hf` entry passes validation; the PP-OCRv6 tiny/small/medium det and rec (6 entries) exist with `langs` containing `zh` and `en` and **no** `ko`; the PaddleOCR-VL entries and both manga-ocr entries exist; nothing but the three v5 entries has `recommended_for`; every `hf` file hash is 64 hex; the old `zip`/`file` entries' hashes still equal the published `models-v1` manifest values from the U2a tests.
+3. **Store/verify:** status for `hf`: missing folder → `missing`; marker with another revision → `corrupt`; a file with the wrong size → `corrupt`; all good → `installed`; `verify --deep` rehashes and turns a same-size-but-modified file into `corrupt`.
+4. **Download `hf`:** fake `hf_download` writes the files into `local_dir`; success writes `.installed.json`; a wrong hash / missing file → folder deleted + `ModelDownloadError` with the file name; `allow_patterns` equals the `files` keys; return value `"upstream"`.
+5. **resolve:** `local_model_source(repo)` returns the folder for an installed `hf` entry, `None` when missing/corrupt.
+6. **CLI:** `list --role recognizer`, `list --lang ko`, JSON includes `role`, `langs`, `family`, `size_class`; `verify --deep`.
+7. **`scripts/hf_catalog.py`:** with canned API JSON produces a TOML block that `tomllib` parses and `ModelEntry` accepts; LFS files use `lfs.oid`; a small non-LFS file is hashed from its downloaded bytes (fake fetch); `--revision` overrides the head sha; unknown repo (404) → clear error and exit 1.
+8. `tests/unit/test_docs.py` and the whole suite stay green.
+9. **Live check for the report (do not commit anything else):** run the script for two real repos (`PaddlePaddle/PP-OCRv6_small_rec_safetensors` and `kha-white/manga-ocr-base`), show the printed TOML and confirm the total sizes; then `uv run omniscan models list --role recognizer` and, with `OMNISCAN_PATHS__MODELS_DIR` pointing at a temp folder, `uv run omniscan models download ocr-rec-ppocrv6-tiny` (4.6 MB) and `models verify --deep`; paste the outputs.
+
+## Out of scope
+Using these models in the pipeline (O1b), ONNX and llama.cpp engines, mirroring the new models as release assets (upstream is the source; O1c/model-watch decides about mirrors), recommending defaults (O1c).
+
+## Commands to run before finishing
+```bash
+uv run pytest tests/unit/test_models_catalog.py tests/unit/test_models_store.py tests/unit/test_models_download.py tests/unit/test_models_resolve.py tests/unit/test_models_cli.py tests/unit/test_hf_catalog_script.py tests/unit/test_docs.py -q
+uv run pytest -q
+uv run ruff format . && uv run ruff check .
+uv run pyright
+```
+
+## Report
+`docs/reports/O1a.md`: Changes, Tests, the live outputs, the list of repos included and excluded (with the reason), Deviations, Questions. **Commit early** (`O1a: WIP format hf`) after Part 1 passes and again after the data is in; the final commit is `O1a: catalog of all OCR models`. You have 150 tool calls in total — the data part is script-driven, so budget for it. If anything is unclear: stop, write the question under Questions, commit, and end.

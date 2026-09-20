@@ -52,6 +52,22 @@ Q1 (129 slicer/ingest mutants, 23 test gaps closed), Q2 (115 filter/glossary/imp
 - After the builder: `git rebase main` (README / USER_GUIDE / stub-list conflicts are routine: keep both sides), ruff/pyright/pytest with `PYTHONPATH=<worktree>\src`, then `scripts/mutate.py` with a director-written list, look at real output, write the review addendum, `merge --ff-only`, push, remove worktree + branch.
 - Builders that hit the turn limit have usually finished the work but not committed: check `git status` in the worktree before deciding anything.
 
+## Owner spec of 2026-09-20 → `docs/PRODUCT_SPEC.md` (read it), card queue
+The owner's long list (OCR engines/models on all hardware, model UI + updates + qualification, slicer strategies + compare, promo filter tiers, pipeline preview/gates, reader + side-by-side + manual tools, covers, downloader, GitHub automation) is captured with decisions and evidence in **`docs/PRODUCT_SPEC.md`**. Key evidence: **PP-OCRv6 is en+zh only and scores far below the v5 Korean model on Korean pages** (page chrF 0.105 vs 0.475 on episode 6), so "v6 biggest as default" applies per language where the qualification suite says it wins; the catalog will carry every size so the user can choose.
+| # | ID | What | State |
+|---|---|---|---|
+| S1 | **H1** | Hardware detection (`omniscan hardware`) + per-model compatibility (ok/slow/warn/incompatible with reasons) | card written, launched |
+| S2 | **O1a** | Catalog of all OCR models/sizes (PP-OCRv6 tiny/small/medium, PP-OCRv5 family, PaddleOCR-VL, manga-ocr) with hashes, languages, requirements; format `hf`; `scripts/hf_catalog.py` | card written, launched |
+| S3 | **O1b** | OCR engines behind the recogniser protocol: `ppocr` (sizes), `manga_ocr`, `paddleocr_vl`; settings `ocr.engine`, model ids per role | after O1a |
+| S4 | **O1c** | Qualification suite `scripts/qualify_ocr.py` (ko/cn/ja Pepper&Carrot; default per language must beat the current one) + `model-watch` GitHub Action | after O1b |
+| S5 | **F2** | Filter tiers: post-OCR text patterns, position/shape heuristics, batch over all chapters | card to write |
+| S6 | **S2** | Slicer strategies (`smart`, `page`, `fixed_overlap`, `simple_gutter`) + compare mode | card to write |
+| S7 | **P1** | Runner gates: pause after each stage with a one-chapter preview / automatic mode | card to write |
+| S8 | **B11'/R1'** | Debugger views, reader, side-by-side raw \| output with sync scroll, manual tools | cards to write |
+| S9 | **L1** | Library covers/metadata via AniList/MangaDex/Jikan (no LLM), user upload | card to write |
+| S10 | **B33b** | extract.pics client (shapes now known), chapter selection by list/template/file, credit estimate, completeness checks — **no site crawlers** | card to write |
+| S11 | **G1** | `omni_builder.py ask`: read-only GLM lookups of big/generated files so the director does not spend context on them | card to write |
+
 ## Working rule (owner, 2026-09-19): use the GLM builders more, the director does less by hand
 The director writes cards (exact interfaces, golden values), launches builders, merges and looks at real output; **implementation, tests, docs and routine mutation reviews go to the builders** (keep 3 slots busy; write the next card while they run; when a slot frees, launch the next card at once). One-off work that needs this machine (packaging local model caches, GitHub uploads) is the exception.
 
