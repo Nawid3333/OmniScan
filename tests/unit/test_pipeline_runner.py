@@ -9,7 +9,7 @@ import pytest
 
 import omniscan.pipeline.runner as runner_module
 from omniscan.core.config import Config, GpuConfig, PathsConfig
-from omniscan.pipeline.runner import PipelineResult, needs_gpu, plan_passes, run_pipeline
+from omniscan.pipeline.runner import Gate, GateEvent, PipelineResult, needs_gpu, plan_passes, run_pipeline
 from omniscan.pipeline.stages import STAGE_ORDER
 from omniscan.translate.judge_config import JudgeConfig
 from omniscan.translate.profiles import TranslationProfile
@@ -335,3 +335,214 @@ def test_pipeline_result_ok_property() -> None:
     assert PipelineResult().ok
     assert not PipelineResult(failed={"A": "detect: boom"}).ok
     assert not PipelineResult(aborted="rate limit").ok
+
+
+# ---------------------------------------------------------------- step mode
+
+
+def always(event: GateEvent) -> bool:
+    """A gate that records nothing and continues."""
+    return True
+
+
+def recording(events: list[GateEvent]) -> Gate:
+    """A gate that records every event and continues."""
+
+    def gate(event: GateEvent) -> bool:
+        events.append(event)
+        return True
+
+    return gate
+
+
+def test_auto_mode_ignores_gate_and_preview_chapter(
+    cfg: Config, fake_stages: dict[str, FakeStage]
+) -> None:
+    calls = wire_calls(fake_stages)
+    events: list[GateEvent] = []
+    result = run_pipeline(
+        cfg,
+        SERIES,
+        ["A", "B"],
+        client=FakeClient(),
+        gpu=FakeScheduler(),
+        mode="auto",
+        preview_chapter="B",
+        gate=lambda event: events.append(event) or False,
+    )
+    assert result.ok
+    assert events == []  # the gate is never called in auto mode
+    assert calls == [
+        *[f"{name}(A)" for name in list(STAGE_ORDER)[:4]],
+        *[f"{name}(B)" for name in list(STAGE_ORDER)[:4]],
+        *[f"{name}(A)" for name in list(STAGE_ORDER)[4:6]],
+        *[f"{name}(B)" for name in list(STAGE_ORDER)[4:6]],
+        *[f"{name}(A)" for name in list(STAGE_ORDER)[6:]],
+        *[f"{name}(B)" for name in list(STAGE_ORDER)[6:]],
+    ]
+
+
+def test_step_mode_runs_the_preview_chapter_through_all_passes_first(
+    cfg: Config, fake_stages: dict[str, FakeStage]
+) -> None:
+    calls = wire_calls(fake_stages)
+    events: list[GateEvent] = []
+    result = run_pipeline(
+        cfg,
+        SERIES,
+        ["A", "B", "C"],
+        client=FakeClient(),
+        gpu=FakeScheduler(),
+        mode="step",
+        gate=recording(events),
+    )
+    assert result.ok
+    assert calls == [
+        *[f"{name}(A)" for name in STAGE_ORDER],  # phase A: all passes of A first
+        *[f"{name}(B)" for name in list(STAGE_ORDER)[:4]],
+        *[f"{name}(C)" for name in list(STAGE_ORDER)[:4]],
+        *[f"{name}(B)" for name in list(STAGE_ORDER)[4:6]],
+        *[f"{name}(C)" for name in list(STAGE_ORDER)[4:6]],
+        *[f"{name}(B)" for name in list(STAGE_ORDER)[6:]],
+        *[f"{name}(C)" for name in list(STAGE_ORDER)[6:]],
+    ]
+    assert [(event.chapter, event.stage, event.position, event.total) for event in events] == [
+        ("A", name, index, len(STAGE_ORDER)) for index, name in enumerate(STAGE_ORDER, 1)
+    ]
+    assert [outcome.stage for outcome in result.outcomes["A"]] == list(STAGE_ORDER)  # never duplicated
+
+
+def test_step_mode_positions_follow_the_selection(cfg: Config, fake_stages: dict[str, FakeStage]) -> None:
+    calls = wire_calls(fake_stages)
+    events: list[GateEvent] = []
+    result = run_pipeline(
+        cfg,
+        SERIES,
+        ["A", "B"],
+        stages=["ingest", "inpaint_lama", "export"],
+        lama=False,
+        client=FakeClient(),
+        mode="step",
+        gate=recording(events),
+    )
+    assert result.ok
+    assert calls == ["ingest(A)", "export(A)", "ingest(B)", "export(B)"]
+    assert [(event.stage, event.position, event.total) for event in events] == [
+        ("ingest", 1, 2),
+        ("export", 2, 2),
+    ]
+
+
+def test_step_mode_stops_when_the_gate_answers_no(cfg: Config, fake_stages: dict[str, FakeStage]) -> None:
+    calls = wire_calls(fake_stages)
+    reports: list[tuple[str, str]] = []
+    result = run_pipeline(
+        cfg,
+        SERIES,
+        ["A", "B", "C"],
+        client=FakeClient(),
+        gpu=FakeScheduler(),
+        mode="step",
+        gate=lambda event: event.position < 4,
+        report=lambda chapter, outcome: reports.append((chapter, outcome.stage)),
+    )
+    assert result.aborted == "stopped"
+    assert not result.ok
+    assert result.failed == {}
+    assert [outcome.stage for outcome in result.outcomes["A"]] == list(STAGE_ORDER)[:4]
+    assert reports == [("A", name) for name in list(STAGE_ORDER)[:4]]
+    assert calls == [f"{name}(A)" for name in list(STAGE_ORDER)[:4]]  # no later stage ran
+    assert "B" not in result.outcomes
+    assert "C" not in result.outcomes
+
+
+def test_step_mode_stops_after_a_failed_preview_stage(
+    cfg: Config, fake_stages: dict[str, FakeStage]
+) -> None:
+    calls = wire_calls(fake_stages)
+    fake_stages["detect"] = FakeStage(
+        "detect",
+        gpu_group="vision",
+        fail_chapters=frozenset({"A"}),
+        error=RuntimeError("detect boom"),
+        calls=calls,
+    )
+    events: list[GateEvent] = []
+    result = run_pipeline(
+        cfg,
+        SERIES,
+        ["A", "B"],
+        client=FakeClient(),
+        gpu=FakeScheduler(),
+        mode="step",
+        gate=recording(events),
+    )
+    assert result.aborted == "preview failed"
+    assert not result.ok
+    assert result.failed == {"A": "detect: RuntimeError: detect boom"}
+    assert (events[2].stage, events[2].outcome.status) == ("detect", "failed")  # the gate still saw it
+    assert calls == [f"{name}(A)" for name in list(STAGE_ORDER)[:3]]  # nothing for B ran
+    assert "B" not in result.outcomes
+
+
+def test_step_mode_requires_a_gate(cfg: Config, fake_stages: dict[str, FakeStage]) -> None:
+    with pytest.raises(ValueError, match="step mode needs a gate"):
+        run_pipeline(cfg, SERIES, ["A"], mode="step")
+
+
+def test_step_mode_rejects_unknown_preview_chapter(cfg: Config, fake_stages: dict[str, FakeStage]) -> None:
+    with pytest.raises(ValueError, match="unknown preview chapter 'Z'"):
+        run_pipeline(cfg, SERIES, ["A", "B"], mode="step", preview_chapter="Z", gate=always)
+
+
+def test_step_mode_selected_preview_chapter_runs_first(cfg: Config, fake_stages: dict[str, FakeStage]) -> None:
+    calls = wire_calls(fake_stages)
+    result = run_pipeline(
+        cfg,
+        SERIES,
+        ["A", "B", "C"],
+        preview_chapter="B",
+        mode="step",
+        gate=always,
+        client=FakeClient(),
+        gpu=FakeScheduler(),
+    )
+    assert result.ok
+    assert calls[0] == "ingest(B)"
+    assert calls[len(STAGE_ORDER)] == "ingest(A)"  # phase B starts with the remaining chapters
+    assert calls[len(STAGE_ORDER) + 4] == "ingest(C)"
+    assert [outcome.stage for outcome in result.outcomes["B"]] == list(STAGE_ORDER)
+
+
+def test_step_mode_gates_skipped_stages_and_force_reruns_phase_a(
+    cfg: Config, fake_stages: dict[str, FakeStage]
+) -> None:
+    run_pipeline(cfg, SERIES, ["A"], client=FakeClient(), gpu=FakeScheduler())  # all up to date afterwards
+    calls = wire_calls(fake_stages)
+    statuses: list[str] = []
+    result = run_pipeline(
+        cfg,
+        SERIES,
+        ["A"],
+        client=FakeClient(),
+        gpu=FakeScheduler(),
+        mode="step",
+        gate=lambda event: statuses.append(event.outcome.status) or True,
+    )
+    assert result.ok
+    assert statuses == ["skipped"] * len(STAGE_ORDER)  # up-to-date stages still trigger the gate
+    assert calls == []
+    statuses.clear()
+    result = run_pipeline(
+        cfg,
+        SERIES,
+        ["A"],
+        client=FakeClient(),
+        gpu=FakeScheduler(),
+        mode="step",
+        force=True,
+        gate=lambda event: statuses.append(event.outcome.status) or True,
+    )
+    assert result.ok
+    assert statuses == ["done"] * len(STAGE_ORDER)  # force reaches phase A
+    assert len(calls) == len(STAGE_ORDER)

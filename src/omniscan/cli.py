@@ -712,12 +712,24 @@ def cmd_run(
         bool, typer.Option("--no-lama", help="Skip the LaMa inpaint stage (inpaint_lama).")
     ] = False,
     force: Annotated[bool, typer.Option("--force", help="Re-run stages even if up to date.")] = False,
+    step: Annotated[
+        bool,
+        typer.Option("--step", help="Preview one chapter after every stage and ask before continuing."),
+    ] = False,
+    preview_chapter: Annotated[
+        str | None,
+        typer.Option("--preview-chapter", help="Which chapter step mode previews. Default: the first."),
+    ] = None,
 ) -> None:
     """Take a series from raw chapters to exported English slices in three passes (vision, text, render)."""
     from omniscan.core.stage import StageOutcome
-    from omniscan.pipeline.runner import needs_gpu, run_pipeline
+    from omniscan.pipeline.preview import describe
+    from omniscan.pipeline.runner import GateEvent, needs_gpu, run_pipeline
     from omniscan.pipeline.stages import PASS_OF, STAGE_ORDER
 
+    if preview_chapter is not None and not step:
+        typer.echo("run: --preview-chapter needs --step", err=True)
+        raise typer.Exit(2)
     cfg = get_config()
     if chapter is None and not SeriesPaths.from_config(cfg, series).chapters():
         typer.echo(f"run: no chapters found for series {series!r}", err=True)
@@ -731,6 +743,38 @@ def cmd_run(
         OllamaClient(cfg.ollama, get_secrets()) if any(PASS_OF[name] == "text" for name in names) else None
     )
     gpu = None
+    auto_continue = False  # set by an "all" answer: every later gate passes without asking
+
+    def gate(event: GateEvent) -> bool:
+        """Show the preview block for this stage outcome and ask to continue."""
+        nonlocal auto_continue
+        if auto_continue:
+            return True
+        paths = SeriesPaths.from_config(cfg, series).chapter(event.chapter)
+        preview = describe(event.stage, paths, cfg)
+        typer.echo(
+            f"Preview [{event.position}/{event.total}] {event.chapter} {event.stage}: {event.outcome.status}"
+        )
+        for line in (preview.summary, *preview.details):
+            typer.echo(f"    {line}")
+        if event.outcome.status == "failed" and event.outcome.error is not None:
+            typer.echo(f"    {event.outcome.error}")
+        for _attempt in range(3):
+            try:
+                answer = typer.prompt(
+                    "Continue? [y]es / [n]o stop / [a]ll (finish without asking)", default="y"
+                )
+            except typer.Abort:  # EOF or Ctrl+C at the prompt: stop the run
+                return False
+            answer = answer.strip().lower()
+            if answer in ("", "y"):
+                return True
+            if answer == "n":
+                return False
+            if answer == "a":
+                auto_continue = True
+                return True
+        return False  # three invalid answers: treat them as "no"
 
     def report(chapter: str, outcome: StageOutcome) -> None:
         typer.echo(f"{series}/{chapter} {outcome.stage}: {outcome.status} ({outcome.seconds:.2f}s)")
@@ -752,6 +796,9 @@ def cmd_run(
             client=client,
             gpu=gpu,
             report=report,
+            mode="step" if step else "auto",
+            preview_chapter=preview_chapter,
+            gate=gate,
         )
     except ValueError as exc:
         typer.echo(f"run: {exc}", err=True)
@@ -761,6 +808,13 @@ def cmd_run(
             gpu.release()  # the models leave VRAM when the command ends
         if client is not None:
             client.close()
+    if result.aborted == "stopped":
+        stopped_chapter, stopped_outcomes = next(iter(result.outcomes.items()))
+        typer.echo(f"run: stopped after {stopped_outcomes[-1].stage} of {stopped_chapter}", err=True)
+        raise typer.Exit(4) from None
+    if result.aborted == "preview failed":
+        typer.echo("run: the preview chapter failed — nothing else was run", err=True)
+        raise typer.Exit(1) from None
     if result.aborted is not None:
         typer.echo("run: Ollama rate limit reached — re-run later", err=True)
         raise typer.Exit(3) from None
