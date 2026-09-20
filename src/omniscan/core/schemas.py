@@ -95,7 +95,12 @@ class IngestArtifact(Artifact):
     chapter: str
     strip_width: int
     strip_height: int
-    files: list[SourceFile]
+    files: list[
+        SourceFile
+    ]  # the files that make up the strip (promo files dropped by the file-level check are not listed)
+    filtered_files: list[str] = Field(
+        default_factory=list
+    )  # names of raw files the file-level promo check left out
 
 
 class Band(Model):

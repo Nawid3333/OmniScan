@@ -153,6 +153,13 @@ class ExportConfig(BaseModel):
     subsampling: Literal["444", "422", "420"] = "444"  # chroma subsampling of the exported slices
 
 
+class FilterConfig(BaseModel):
+    """Promo / credit filtering (tier 2 = pHash against the user's example images; see docs/PRODUCT_SPEC.md section 4)."""
+
+    enabled: bool = True
+    threshold: float = 0.90  # dHash similarity at or above which a file/slice counts as a match
+
+
 class Secrets(BaseSettings):
     """Secrets only come from the environment or ~/.config/omniscan/secrets.env — never from TOML."""
 
@@ -176,6 +183,7 @@ class Config(BaseSettings):
     inpaint: InpaintConfig = InpaintConfig()
     typeset: TypesetConfig = TypesetConfig()
     export: ExportConfig = ExportConfig()
+    filter: FilterConfig = FilterConfig()
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
