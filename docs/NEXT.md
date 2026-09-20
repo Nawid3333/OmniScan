@@ -59,18 +59,18 @@ The owner's long list (OCR engines/models on all hardware, model UI + updates + 
 | S1 | **H1** | Hardware detection (`omniscan hardware`) + per-model compatibility | ✔ merged |
 | S2 | **O1a** | Catalog of all OCR models/sizes (34 entries, format `hf`, `scripts/hf_catalog.py`) | ✔ merged (live: HF download + `verify --deep`) |
 | S3 | **O1b** | OCR engines: model ids for `ppocr` (v5/v6, any size), `manga_ocr` crop reader | ✔ merged (live: 91 JA regions in 3.8 s, page chrF 0.686) |
-| S3b | **O1d** | `paddleocr_vl` engine (fp32, ~3.6 s/region, more accurate on stylised lettering) | card written, launch next |
+| S3b | **O1d** | `paddleocr_vl` engine (fp32, ~3.6 s/region, more accurate on stylised lettering) | card written; run started 2026-09-20 but stopped by the weekly Ollama limit (no commits) — re-run when GLM is available |
 | S4 | **O1c** | Qualification suite `scripts/qualify_ocr.py` (ko/cn/ja; page chrF primary — the box-level CER is untrustworthy for JA/ZH until the eval's truth assignment is checked) + `model-watch` Action | after O1d |
 | S5 | **F2a → F2b → F2c** | **The promo filter is not wired into the pipeline** (finding 2026-09-20): F2a integrates tier 2 (file-level in `ingest`, slice-level in `slice`, `filter.json` = user overrides, config `filter.*`); F2b = tier 1 post-OCR text patterns (Discord/Patreon/"translated by"/URLs, global + per series, restorable); F2c = tier 3 position/shape heuristics + batch over all chapters | F2a card next |
 | S6 | **S2** | Slicer strategies + `slice-compare` + per-series `series.toml` | ✔ merged (follow-up: `slice-compare` should mark a failing strategy instead of crashing) |
 | S7 | **P1** | Runner gates: `omniscan run --step` with one-chapter preview | ✔ merged (live-tested) |
-| S8 | **U3b → U3a → U3c** | Desktop app (PySide6, native widgets): **U3b** strip view + side-by-side viewer ✔ merged; **U3a** models view (card written); **U3c** main window, library, reader integration, `omniscan gui`, settings (needs a user-config writer, director) | in progress |
+| S8 | **U3b → U3a → U3c** | (U3a ✔ merged 2026-09-20; U3c goal-style card written, `--max-turns 300`, launch next) | Desktop app (PySide6, native widgets): **U3b** strip view + side-by-side viewer ✔ merged; **U3a** models view (card written); **U3c** main window, library, reader integration, `omniscan gui`, settings (needs a user-config writer, director) | in progress |
 | S9 | **L1** | Library covers/metadata via AniList/MangaDex/Jikan (no LLM), user upload. Shapes measured 2026-09-20: AniList GraphQL (30 req/min), MangaDex `includes[]=cover_art` + `uploads.mangadex.org/covers/<id>/<file>` (HEAD not allowed), Jikan flaky (504) | card to write |
 | S10 | **B33b/c/d** | extract.pics client, page-run selection, chapter selection, completeness, plan, `omniscan acquire plan|run|check` | ✔ merged, live-tested on a CC-BY page (4 of 100 free credits used) |
-| S11 | **G1** | `omni_builder.py ask` (read-only GLM lookups) | running |
-| S12 | **Q5 / Q6** | Mutation reviews: Q5 hw/hf/`series_config` (running), Q6 acquire + slicer strategies (card written) | Q5 running |
-| S13 | **G2** | **Steady GPU load (owner: coil whine):** background GPU warm-up thread (hides the 9–14 s first-conv stall), typeset fit loop 2.5× fewer measurements (identical layouts) | running |
-| S14 | **G3** | Detector/OCR one-batch look-ahead (queue batch i+1 before copying batch i to the host) | only if G2 leaves gaps (measure first) |
+| S11 | **G1** | `omni_builder.py ask` (read-only GLM lookups) | ✔ merged |
+| S12 | **Q5 / Q6** | Mutation reviews: Q5 hw/hf/`series_config` (running), Q6 acquire + slicer strategies (card written) | Q5 ✔ merged (88 mutants, 9 gaps closed); Q6 waiting |
+| S13 | **G2** | **Steady GPU load (owner: coil whine):** background GPU warm-up thread (hides the 9–14 s first-conv stall), typeset fit loop 2.5× fewer measurements (identical layouts) | ✔ merged; measured detect 15–17 s → 3.1 s, typeset 5–7 s → 1.5 s (the slice stage now waits 8 s for the warm-up; ~48 s of a 67 s run are outside the stage timers) |
+| S14 | **G3** | Steady GPU load part 2 (goal-style card `docs/tasks/G3.md`, `--max-turns 300`): timeline of the ~48 s outside the stage timers, fix the biggest idle gaps (17 s LaMa load, start-up, warm-up placement); outputs bit-identical | WIP commit in `V:\OmniScan-wt\G3` (`scripts/measure_run.py`); stopped by the weekly Ollama limit — recreate the `.venv` junction, then `omni_builder.py resume G3 <feedback.md>` |
 
 ## Working rule (owner, 2026-09-19): use the GLM builders more, the director does less by hand
 The director writes cards (exact interfaces, golden values), launches builders, merges and looks at real output; **implementation, tests, docs and routine mutation reviews go to the builders** (keep 3 slots busy; write the next card while they run; when a slot frees, launch the next card at once). One-off work that needs this machine (packaging local model caches, GitHub uploads) is the exception.
@@ -94,7 +94,7 @@ Design (details in `docs/PLAN.md` M13; open questions B4/B11/B12): PySide6 shell
 ## Risks to watch
 - **No real Korean data yet** — synthetic fonts render cleaner than scans; every tuning number (detect threshold, `ocr.drop_conf`, typeset sizes, the golden-test thresholds) is provisional until A1 is answered.
 - **Detector on real art**: on Pepper&Carrot it misses some text and puts low-confidence boxes on objects; on Korean pages it has never been run.
-- **Ollama Cloud limits** — builders and cloud translation share a rolling ~5 h limit (3 concurrent requests); a hard 429 fails fast, wait then `resume`.
+- **Ollama Cloud limits** — builders and cloud translation share a rolling ~5 h limit (3 concurrent requests) **and a weekly usage limit** (hit 2026-09-20 ~20:00: every builder got `429 … reached your weekly usage limit`, the runs retry 10× and exit with code 1). Nothing can be built by GLM until the week resets or the owner adds credits / upgrades (ollama.com/settings, ollama.com/upgrade). A hard 429 fails fast: `resume` after the limit is gone. F2a (WIP in `V:\OmniScan-wt\F2a`, uncommitted tests) and G3 (WIP commit) are waiting to be resumed.
 - **fp16 is unreliable on this ROCm-Windows stack** (MIOpen); everything runs fp32. Re-test when torch/ROCm updates.
 - **Editable-install flip** between worktrees: use `PYTHONPATH=<tree>\src` and `.venv\Scripts\python.exe -m …`.
 - **A killed `scripts/mutate.py` run** leaves a mutant in place; the next `check`/`run` restores it automatically (or `git checkout -- src`).
