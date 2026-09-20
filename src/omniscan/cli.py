@@ -4,6 +4,7 @@ import enum
 import json
 import os
 from collections.abc import Callable, Sequence
+from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
 
@@ -87,6 +88,30 @@ def doctor(
         console.print(f"{counts['OK']} ok, {counts['WARN']} warn, {counts['FAIL']} fail")
     if any(r.status == "FAIL" for r in results):
         raise typer.Exit(1)
+
+
+@app.command()
+def hardware(
+    as_json: Annotated[bool, typer.Option("--json", help="Emit the machine-readable form.")] = False,
+) -> None:
+    """Report this machine's OS, CPU, RAM, GPUs, torch build, best device and free disk."""
+    from omniscan.hw.detect import detect_hardware
+
+    hw = detect_hardware(get_config().paths.models_dir)
+    if as_json:
+        _echo_text(json.dumps(asdict(hw), indent=2, ensure_ascii=False))
+        return
+    _echo_text(f"OS: {hw.os} / {hw.arch}")
+    _echo_text(f"CPU: {hw.cpu_name} ({hw.cpu_cores_physical} physical, {hw.cpu_cores_logical} logical)")
+    _echo_text(f"RAM: {hw.ram_gb:.1f} GB")
+    _echo_text(f"torch build: {hw.torch_build}")
+    _echo_text(f"best device: {hw.best_device}")
+    for gpu in hw.gpus:
+        mark = "  (integrated)" if gpu.integrated else ""
+        _echo_text(f"#{gpu.index} {gpu.name}  {gpu.vram_gb:.1f} GB  {gpu.backend}  device {gpu.device}{mark}")
+    providers = ", ".join(hw.onnxruntime_providers) if hw.onnxruntime_providers else "none"
+    _echo_text(f"onnxruntime providers: {providers}")
+    _echo_text(f"free disk at the models folder: {hw.disk_free_gb:.1f} GB")
 
 
 def cmd_import(
@@ -1111,7 +1136,9 @@ def _models_progress(steps: dict[str, int]) -> Callable[[str, int, int | None], 
 def models_list(
     as_json: Annotated[bool, typer.Option("--json", help="Emit a JSON object instead of text rows.")] = False,
 ) -> None:
-    """List every catalog model with its size, purpose and install status."""
+    """List every catalog model with its size, purpose, install status and hardware fit."""
+    from omniscan.hw.assess import assess
+    from omniscan.hw.detect import detect_hardware
     from omniscan.models.catalog import load_catalog
     from omniscan.models.store import install_path, model_status
 
@@ -1121,6 +1148,8 @@ def models_list(
     statuses = {
         entry.id: model_status(entry, cfg.paths.models_dir, ollama_names=ollama_names) for entry in entries
     }
+    hw = detect_hardware(cfg.paths.models_dir)
+    compat = {entry.id: assess(entry, hw) for entry in entries}
     if as_json:
         payload = {
             "models_dir": str(cfg.paths.models_dir),
@@ -1140,9 +1169,15 @@ def models_list(
                     if (path := install_path(entry, cfg.paths.models_dir))
                     and statuses[entry.id] == "installed"
                     else None,
+                    "compatibility": {
+                        "level": compat[entry.id].level,
+                        "device": compat[entry.id].device,
+                        "messages": list(compat[entry.id].messages),
+                    },
                 }
                 for entry in entries
             ],
+            "hardware": asdict(hw),
         }
         typer.echo(json.dumps(payload, indent=2, ensure_ascii=False))
         return
@@ -1150,7 +1185,12 @@ def models_list(
         typer.echo(
             f"{entry.id}  {entry.kind}  {entry.size_mb} MB  "
             f"{'required' if entry.required else 'optional'}  {statuses[entry.id]}  {entry.description}"
+            f"  {compat[entry.id].level}"
         )
+    for entry in entries:
+        fit = compat[entry.id]
+        if fit.level != "ok" and statuses[entry.id] != "installed" and fit.messages:
+            typer.echo(f"  {entry.id}: {'; '.join(fit.messages)}")
     missing_required = [e for e in entries if e.required and statuses[e.id] in ("missing", "corrupt")]
     if missing_required:
         typer.echo(
@@ -1169,8 +1209,14 @@ def models_download(
         bool,
         typer.Option("--required", help="Also download every required model that is not installed."),
     ] = False,
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Download even when the model is incompatible with this machine."),
+    ] = False,
 ) -> None:
     """Download the named models (plus every missing required one with --required)."""
+    from omniscan.hw.assess import assess
+    from omniscan.hw.detect import detect_hardware
     from omniscan.models.catalog import load_catalog
     from omniscan.models.download import ModelDownloadError, download_model
     from omniscan.models.store import model_status
@@ -1198,6 +1244,7 @@ def models_download(
         typer.echo("models: nothing to download (no ids given and no required model is missing)", err=True)
         raise typer.Exit(2)
     ollama_names = _ollama_model_names(cfg.ollama.local_url)
+    hw = detect_hardware(cfg.paths.models_dir)
     steps: dict[str, int] = {}
     failed = False
     for model_id in selected_ids:
@@ -1205,6 +1252,12 @@ def models_download(
         if entry.format == "ollama" and ollama_names is not None and entry.ollama_name in ollama_names:
             typer.echo(f"{entry.id}: already installed")
             continue
+        compat = assess(entry, hw)
+        if compat.level != "ok":
+            typer.echo(f"{entry.id}: {compat.level}: {'; '.join(compat.messages)}", err=True)
+            if compat.level == "incompatible" and not force:
+                failed = True  # refused: nothing is downloaded for this model
+                continue
         try:
             source = download_model(
                 entry,

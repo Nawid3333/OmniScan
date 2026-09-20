@@ -173,6 +173,78 @@ def test_ollama_entry_without_ollama_name_names_the_field() -> None:
         entry.validate_for_format()
 
 
+# ---------------------------------------------------------------- hardware requirement fields (H1)
+
+
+def test_real_catalog_requirement_fields() -> None:
+    entries = {e.id: e for e in load_catalog()}
+    det = entries["detector-comic-text-bubble"]
+    assert (det.min_vram_gb, det.min_ram_gb, det.cpu_speed) == (1.0, 4.0, "slow")
+    assert (entries["ocr-det-ppocrv5-server"].min_vram_gb, entries["ocr-det-ppocrv5-server"].cpu_speed) == (
+        0.8,
+        "ok",
+    )
+    assert (
+        entries["ocr-rec-korean-ppocrv5-mobile"].min_vram_gb,
+        entries["ocr-rec-korean-ppocrv5-mobile"].cpu_speed,
+    ) == (
+        0.5,
+        "ok",
+    )
+    lama = entries["inpaint-big-lama"]
+    assert (lama.min_vram_gb, lama.min_ram_gb, lama.cpu_speed) == (2.0, 8.0, "slow")
+    assert lama.notes == "fp32 only; the first inference per window shape warms up for 10-25 s"
+    translategemma = entries["llm-translategemma-12b"]
+    assert (translategemma.min_vram_gb, translategemma.min_ram_gb, translategemma.cpu_speed) == (
+        9.0,
+        16.0,
+        "unusable",
+    )
+    assert (entries["llm-gemma4-12b"].min_vram_gb, entries["llm-gemma4-12b"].cpu_speed) == (8.5, "unusable")
+    assert (entries["llm-gemma4-31b"].min_vram_gb, entries["llm-gemma4-31b"].min_ram_gb) == (21.0, 32.0)
+    cloud = entries["llm-gemma4-31b-cloud"]
+    assert (cloud.cpu_ok, cloud.cpu_speed, cloud.min_vram_gb) == (True, "fast", 0.0)
+    assert cloud.notes == "needs internet and an Ollama account"
+    assert all(e.backends == [] for e in entries.values())  # empty = all backends
+
+
+def test_requirement_fields_default_when_absent() -> None:
+    entry = ModelEntry(
+        id="m",
+        name="M",
+        kind="vision",
+        format="zip",
+        size_mb=1,
+        license="Apache-2.0",
+        description="d",
+        mirror_url=f"{MIRROR_BASE}m.zip",
+        sha256=SHA,
+        bytes=1,
+        upstream_repo="org/m",
+        upstream_revision="rev",
+    )
+    assert entry.min_vram_gb is None
+    assert entry.min_ram_gb is None
+    assert entry.backends == []
+    assert entry.cpu_ok is True
+    assert entry.cpu_speed == "ok"
+    assert entry.notes == ""
+
+
+def test_invalid_cpu_speed_raises_value_error() -> None:
+    with pytest.raises(ValueError, match="cpu_speed"):
+        ModelEntry(
+            id="m",
+            name="M",
+            kind="vision",
+            format="zip",
+            size_mb=1,
+            license="Apache-2.0",
+            description="d",
+            cpu_speed="very fast",  # type: ignore[arg-type]  # rejected by pydantic at runtime
+        )
+
+
 # ---------------------------------------------------------------- merging and validation
 
 

@@ -18,6 +18,7 @@ from omniscan.core.config import DEFAULT_TOML, USER_CONFIG_DIR
 
 ModelKind = Literal["vision", "ocr", "inpaint", "llm"]
 ModelFormat = Literal["zip", "file", "ollama", "cloud"]
+Backend = Literal["cuda", "rocm", "mps", "xpu", "cpu"]
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -54,6 +55,14 @@ class ModelEntry(BaseModel):
     install_path: str | None = None  # file only, relative to models_dir
     # ollama / cloud
     ollama_name: str | None = None
+    # hardware requirements (card H1): what the model needs to run well; `hw.assess` turns
+    # them into ok / slow / warn / incompatible against a detected machine
+    min_vram_gb: float | None = None  # GPU memory needed to run comfortably
+    min_ram_gb: float | None = None
+    backends: list[Backend] = Field(default_factory=list)  # empty = all
+    cpu_ok: bool = True  # usable without a GPU at all
+    cpu_speed: Literal["fast", "ok", "slow", "unusable"] = "ok"  # how it feels on CPU
+    notes: str = ""
 
     def validate_for_format(self) -> None:
         """Raise ValueError naming the first format-specific field the entry is missing."""

@@ -12,6 +12,7 @@ from typer.testing import CliRunner
 import omniscan.cli
 from omniscan.cli import app
 from omniscan.core.config import Config, PathsConfig
+from omniscan.hw.detect import GpuInfo, HardwareInfo
 from omniscan.models.store import MARKER_NAME
 
 runner = CliRunner()
@@ -71,6 +72,37 @@ used_by = []
 ollama_name = "c:1b-cloud"
 """
 
+COMPAT_TOML = """\
+[[model]]
+id = "det"
+name = "Detector"
+kind = "vision"
+required = true
+format = "zip"
+size_mb = 10
+license = "Apache-2.0"
+description = "detector"
+used_by = []
+mirror_url = "https://mirror/det.zip"
+sha256 = "{sha}"
+bytes = 100
+upstream_repo = "org/det"
+upstream_revision = "rev1"
+
+[[model]]
+id = "llm-big"
+name = "Big"
+kind = "llm"
+format = "ollama"
+size_mb = 20000
+license = "Gemma terms"
+description = "big llm"
+used_by = []
+ollama_name = "big:31b"
+min_vram_gb = 21.0
+cpu_speed = "unusable"
+"""
+
 SHA = "a" * 64
 JSON_KEYS = (
     "id",
@@ -84,22 +116,52 @@ JSON_KEYS = (
     "used_by",
     "status",
     "installed_path",
+    "compatibility",
 )
 
 
-@pytest.fixture
-def cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
-    """Temp models_dir + a small fake catalog; Ollama is treated as unreachable."""
+def fake_hardware(gpus: tuple[GpuInfo, ...] = ()) -> HardwareInfo:
+    """A CPU-only machine by default: every GPU-less assessment is decided by the cpu_speed rules."""
+    return HardwareInfo(
+        os="windows",
+        arch="x64",
+        cpu_name="AMD Ryzen 9",
+        cpu_cores_physical=8,
+        cpu_cores_logical=16,
+        ram_gb=32.0,
+        gpus=gpus,
+        torch_build="cpu",
+        best_device=gpus[0].device if gpus else "cpu",
+        onnxruntime_providers=("CPUExecutionProvider",),
+        disk_free_gb=500.0,
+    )
+
+
+def install_catalog(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, text: str) -> Config:
+    """The shared fixture body: temp models_dir, fake catalog, unreachable Ollama, no GPUs."""
     config = Config(paths=PathsConfig(models_dir=tmp_path / "models"))
     monkeypatch.setattr(omniscan.cli, "get_config", lambda: config)
     monkeypatch.setattr(omniscan.cli, "_ollama_model_names", lambda *args: None)
+    monkeypatch.setattr("omniscan.hw.detect.detect_hardware", lambda *args, **kwargs: fake_hardware())
     catalog_file = tmp_path / "catalog.toml"
-    catalog_file.write_text(CATALOG_TOML.format(sha=SHA), encoding="utf-8")
+    catalog_file.write_text(text.format(sha=SHA), encoding="utf-8")
     from omniscan.models import catalog as catalog_module
 
     monkeypatch.setattr(catalog_module, "default_catalog_path", lambda: catalog_file)
     monkeypatch.setattr(catalog_module, "machine_catalog_path", lambda: tmp_path / "machine.toml")
     return config
+
+
+@pytest.fixture
+def cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
+    """Temp models_dir + a small fake catalog; Ollama is treated as unreachable."""
+    return install_catalog(tmp_path, monkeypatch, CATALOG_TOML)
+
+
+@pytest.fixture
+def compat_cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
+    """The same, but the catalog carries hardware requirements (a warn and an incompatible model)."""
+    return install_catalog(tmp_path, monkeypatch, COMPAT_TOML)
 
 
 def install_det(cfg: Config, sha: str = SHA) -> None:
@@ -291,3 +353,151 @@ def test_progress_prints_once_per_five_percent_step(capsys: pytest.CaptureFixtur
     assert out == "det: 0% (0/100 MB)\ndet: 5% (5/100 MB)\ndet: 100% (100/100 MB)\n"
     on_progress("det", 50_000_000, None)  # unknown total: no line at all
     assert capsys.readouterr().out == ""
+
+
+# ---------------------------------------------------------------- hardware command (H1)
+
+
+def test_hardware_text_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    machine = HardwareInfo(
+        os="windows",
+        arch="x64",
+        cpu_name="AMD Ryzen 9",
+        cpu_cores_physical=8,
+        cpu_cores_logical=16,
+        ram_gb=31.3,
+        gpus=(
+            GpuInfo(
+                index=1,
+                name="AMD Radeon RX 9070 XT",
+                vendor="amd",
+                backend="rocm",
+                vram_gb=16.0,
+                integrated=False,
+                device="cuda:1",
+            ),
+            GpuInfo(
+                index=0,
+                name="AMD Radeon(TM) Graphics",
+                vendor="amd",
+                backend="rocm",
+                vram_gb=0.5,
+                integrated=True,
+                device="cuda:0",
+            ),
+        ),
+        torch_build="rocm",
+        best_device="cuda:1",
+        onnxruntime_providers=("CPUExecutionProvider",),
+        disk_free_gb=123.4,
+    )
+    monkeypatch.setattr("omniscan.hw.detect.detect_hardware", lambda *args, **kwargs: machine)
+    result = runner.invoke(app, ["hardware"])
+    assert result.exit_code == 0
+    assert "OS: windows / x64" in result.output
+    assert "CPU: AMD Ryzen 9 (8 physical, 16 logical)" in result.output
+    assert "RAM: 31.3 GB" in result.output
+    assert "torch build: rocm" in result.output
+    assert "best device: cuda:1" in result.output
+    assert "#1 AMD Radeon RX 9070 XT  16.0 GB  rocm  device cuda:1" in result.output
+    assert "#0 AMD Radeon(TM) Graphics  0.5 GB  rocm  device cuda:0  (integrated)" in result.output
+    assert "onnxruntime providers: CPUExecutionProvider" in result.output
+    assert "free disk at the models folder: 123.4 GB" in result.output
+
+
+def test_hardware_json(cfg: Config) -> None:
+    result = runner.invoke(app, ["hardware", "--json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["os"] == "windows" and payload["arch"] == "x64"
+    assert payload["best_device"] == "cpu"  # the cfg fixture fakes a CPU-only machine
+    assert payload["onnxruntime_providers"] == ["CPUExecutionProvider"]
+    assert payload["disk_free_gb"] == 500.0
+
+
+# ---------------------------------------------------------------- models list fit (H1)
+
+
+def test_list_fit_column_and_explanations(cfg: Config) -> None:
+    result = runner.invoke(app, ["models", "list"])
+    assert result.exit_code == 0
+    assert "det  vision  10 MB  required  missing  detector  slow" in result.output
+    assert "llm-c  llm  0 MB  optional  cloud  cloud llm  ok" in result.output
+    assert "  det: runs on the CPU (slow)" in result.output
+    assert "  lama: runs on the CPU (slow)" in result.output
+    assert "llm-c: " not in result.output  # cloud is always ok
+
+
+def test_list_json_has_compatibility_and_hardware(cfg: Config) -> None:
+    install_det(cfg)
+    result = runner.invoke(app, ["models", "list", "--json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    by_id = {m["id"]: m for m in payload["models"]}
+    assert by_id["det"]["compatibility"] == {
+        "level": "slow",
+        "device": "cpu",
+        "messages": ["runs on the CPU (slow)"],
+    }
+    assert by_id["llm-c"]["compatibility"] == {"level": "ok", "device": None, "messages": []}
+    assert payload["hardware"]["os"] == "windows"  # the HardwareInfo dict, not just ids
+    assert payload["hardware"]["gpus"] == []
+
+
+def test_list_json_fit_on_a_gpu_machine(cfg: Config, monkeypatch: pytest.MonkeyPatch) -> None:
+    gpu = GpuInfo(
+        index=1,
+        name="AMD Radeon RX 9070 XT",
+        vendor="amd",
+        backend="rocm",
+        vram_gb=16.0,
+        integrated=False,
+        device="cuda:1",
+    )
+    monkeypatch.setattr(
+        "omniscan.hw.detect.detect_hardware", lambda *args, **kwargs: fake_hardware(gpus=(gpu,))
+    )
+    result = runner.invoke(app, ["models", "list"])
+    assert result.exit_code == 0
+    assert "det  vision  10 MB  required  missing  detector  ok" in result.output
+    assert "runs on the CPU" not in result.output
+
+
+# ---------------------------------------------------------------- download compatibility gate (H1)
+
+
+def test_download_warns_for_a_warn_model_and_proceeds(
+    compat_cfg: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("omniscan.models.download.download_model", fake_download)
+    result = runner.invoke(app, ["models", "download", "det"])
+    assert result.exit_code == 0
+    assert "det: slow: runs on the CPU (slow)" in result.output
+    assert "det: installed from mirror" in result.output
+
+
+def test_download_refuses_incompatible_without_force(
+    compat_cfg: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    downloaded: list[str] = []
+
+    def spy(entry: Any, models_dir: Any, **kwargs: Any) -> str:
+        downloaded.append(entry.id)
+        return fake_download(entry, models_dir, **kwargs)
+
+    monkeypatch.setattr("omniscan.models.download.download_model", spy)
+    result = runner.invoke(app, ["models", "download", "llm-big"])
+    assert result.exit_code == 1
+    assert "llm-big: incompatible: runs on the CPU" in result.output
+    assert downloaded == []  # refused: nothing downloaded
+    assert not (compat_cfg.paths.models_dir / "llm-big").exists()
+
+
+def test_download_incompatible_proceeds_with_force(
+    compat_cfg: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("omniscan.models.download.download_model", fake_download)
+    result = runner.invoke(app, ["models", "download", "llm-big", "--force"])
+    assert result.exit_code == 0
+    assert "llm-big: incompatible: runs on the CPU" in result.output
+    assert "llm-big: installed from mirror" in result.output
