@@ -6,6 +6,12 @@ Tests: `test_models_store.py`, `test_models_download.py`, `test_models_resolve.p
 `test_models_cli.py`, `test_update_download.py`, `test_update_cli.py`.
 """
 
+import os
+
+# The harness runs pytest on the mutated files; without this a restore that lands in the same
+# second as the mutation (same-size mutants) can leave stale bytecode in `__pycache__`.
+os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+
 MUTANTS = [
     # ---------------------------------------------------------------- models/store.py (0-14)
     (
@@ -339,5 +345,36 @@ MUTANTS = [
         "key = platform_key() if key is None else key",
         "key = platform_key() if key is not None else key",
         "update dl: swap platform-key default",
+    ),
+    # ---------------------------------------------------------------- round 2 (55-59)
+    (
+        "src/omniscan/models/download.py",
+        'url = entry.mirror_url if source == "mirror" else entry.upstream_url',
+        'url = entry.upstream_url if source == "mirror" else entry.mirror_url',
+        "download: file mirror/upstream URLs swapped",
+    ),
+    (
+        "src/omniscan/models/download.py",
+        '"source": source,\n        "revision": entry.upstream_revision,',
+        '"source": source,\n        "revision": None,',
+        "download: marker drops revision",
+    ),
+    (
+        "src/omniscan/models/download.py",
+        'finally:\n        if client is None:\n            http.close()\n    return "ollama"',
+        'finally:\n        if client is None:\n            http.close()\n    return "unknown"',
+        "download: ollama stream end -> unknown",
+    ),
+    (
+        "src/omniscan/models/store.py",
+        "return digest.hexdigest()",
+        "return digest.hexdigest().upper()",
+        "store: file hash upper-cased",
+    ),
+    (
+        "src/omniscan/update/download.py",
+        'tag_dir / "staged.json"',
+        'tag_dir / "staged.jsonx"',
+        "update dl: staged.json renamed",
     ),
 ]

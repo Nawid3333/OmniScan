@@ -7,6 +7,12 @@ Tests: `test_models_catalog.py`, `test_models_resolve.py`, `test_models_store.py
 `test_update_download.py`, `test_update_cli.py`.
 """
 
+import os
+
+# The harness runs pytest on the mutated files; without this a restore that lands in the same
+# second as the mutation (same-size mutants) can leave stale bytecode in `__pycache__`.
+os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+
 MUTANTS = [
     # ---------------------------------------------------------------- catalog.py (0-7)
     (
@@ -47,8 +53,8 @@ MUTANTS = [
     ),
     (
         "src/omniscan/models/catalog.py",
-        "if entry.id in seen:\n                raise ValueError(f\"{file_path}: duplicate model id {entry.id!r}\")",
-        "if entry.id not in seen:\n                raise ValueError(f\"{file_path}: duplicate model id {entry.id!r}\")",
+        'if entry.id in seen:\n                raise ValueError(f"{file_path}: duplicate model id {entry.id!r}")',
+        'if entry.id not in seen:\n                raise ValueError(f"{file_path}: duplicate model id {entry.id!r}")',
         "catalog: flip duplicate-id check",
     ),
     (
@@ -103,12 +109,8 @@ MUTANTS = [
     # ---------------------------------------------------------------- version.py (15-26)
     (
         "src/omniscan/update/version.py",
-        'return core if not self.pre else f"{core}-{'
-        "'.'"
-        '.join(str(identifier) for identifier in self.pre)}"',
-        'return core if self.pre else f"{core}-{'
-        "'.'"
-        '.join(str(identifier) for identifier in self.pre)}"',
+        "return core if not self.pre else f\"{core}-{'.'.join(str(identifier) for identifier in self.pre)}\"",
+        "return core if self.pre else f\"{core}-{'.'.join(str(identifier) for identifier in self.pre)}\"",
         "version: flip prerelease test in __str__",
     ),
     (
@@ -279,5 +281,24 @@ MUTANTS = [
         'params={"per_page": "100"},',
         'params={"per_page": "10"},',
         "github: per_page 100 -> 10",
+    ),
+    # ---------------------------------------------------------------- round 2 (44-46)
+    (
+        "src/omniscan/update/github.py",
+        "machine = platform.machine().lower()",
+        "machine = platform.machine()",
+        "github: arch key not lower-cased",
+    ),
+    (
+        "src/omniscan/update/github.py",
+        'raise UpdateError(f"unsupported architecture: {platform.machine()}")',
+        'raise UpdateError(f"unsupported platform: {platform.machine()}")',
+        "github: arch error says platform",
+    ),
+    (
+        "src/omniscan/models/catalog.py",
+        'try:\n                entry.validate_for_format()\n            except ValueError as exc:\n                raise ValueError(f"{file_path}: {exc}") from exc',
+        'try:\n                pass\n            except ValueError as exc:\n                raise ValueError(f"{file_path}: {exc}") from exc',
+        "catalog: skip per-entry validation on load",
     ),
 ]
