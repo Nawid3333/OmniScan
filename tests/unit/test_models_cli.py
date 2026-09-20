@@ -514,8 +514,8 @@ def test_hardware_json(cfg: Config) -> None:
 def test_list_fit_column_and_explanations(cfg: Config) -> None:
     result = runner.invoke(app, ["models", "list"])
     assert result.exit_code == 0
-    assert "det  vision  10 MB  required  missing  detector  slow" in result.output
-    assert "llm-c  llm  0 MB  optional  cloud  cloud llm  ok" in result.output
+    assert "det  vision  detector  10 MB  required  missing  -  detector  slow" in result.output
+    assert "llm-c  llm  llm  0 MB  optional  cloud  -  cloud llm  ok" in result.output
     assert "  det: runs on the CPU (slow)" in result.output
     assert "  lama: runs on the CPU (slow)" in result.output
     assert "llm-c: " not in result.output  # cloud is always ok
@@ -552,7 +552,7 @@ def test_list_json_fit_on_a_gpu_machine(cfg: Config, monkeypatch: pytest.MonkeyP
     )
     result = runner.invoke(app, ["models", "list"])
     assert result.exit_code == 0
-    assert "det  vision  10 MB  required  missing  detector  ok" in result.output
+    assert "det  vision  detector  10 MB  required  missing  -  detector  ok" in result.output
     assert "runs on the CPU" not in result.output
 
 

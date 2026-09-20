@@ -287,3 +287,8 @@ Excluded, with reasons (no entries):
 4b64749 O1a: catalog data for all OCR models (26 hf entries + hf_catalog script)
 <final> O1a: catalog of all OCR models
 ```
+## Review addendum (director, 2026-09-20)
+- **Answers to the builder's questions:** (1) two v5-based entries is correct — the card's "three" was a miscount (the detector is language-independent); (2) `langs = []` plus the note is right for the script-named recognisers until the qualification suite (O1c) measures them; (3) `["ja"]` for `manga-ocr-base-2025` is fine.
+- **Rebase onto H1** (which landed first): the branch was squashed into one commit and rebased; conflicts in `config/models.toml`, `models/catalog.py`, `cli.py`, two docs and one test helper were merged by hand (both sides kept). The H1 hardware fields were then added to all 26 new entries by the director (tiny/small v6: 0.5 GB VRAM, `fast`; mobile v5: 0.5 GB, `ok`; medium/base/server: 0.8 GB, `ok`; PaddleOCR-VL: 8 GB VRAM + 12 GB RAM, `cpu_ok = false`, `unusable`; its GGUF builds: 8 GB RAM, `slow`; manga-ocr: 1.5 GB + 8 GB, `ok`). Two H1 assertions on the `models list` row layout were updated for the new `role`/`langs` columns.
+- **Checks:** `ruff format/check` clean, `pyright` 0 errors, full CPU suite **3083 passed**.
+- **Live check** (temp models dir): `omniscan models download ocr-rec-ppocrv6-small` fetched 3 files from Hugging Face at the pinned revision, wrote `.installed.json`; `models verify --deep` re-hashed it and reported `installed`; `models list --role recognizer` shows all 18 recognisers with languages and fit. Not yet mutation-checked: card Q5.
