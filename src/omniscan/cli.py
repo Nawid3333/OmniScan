@@ -980,6 +980,9 @@ def cmd_reference(
     except ValueError as exc:  # e.g. match_chapters found no chapter folders at all
         typer.echo(f"reference: {exc}", err=True)
         raise typer.Exit(2) from exc
+    except OllamaRateLimitError:
+        typer.echo("reference: Ollama rate limit reached — re-run later", err=True)
+        raise typer.Exit(3) from None
     finally:
         if gpu is not None:
             gpu.release()  # the models leave VRAM when the command ends

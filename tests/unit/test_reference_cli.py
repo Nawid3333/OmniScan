@@ -345,7 +345,9 @@ def cli_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         def close(self) -> None:
             self.closed = True
 
-    monkeypatch.setattr(omniscan.cli, "OllamaClient", lambda o, s: clients.append(FakeCliClient(o, s)) or clients[-1])
+    monkeypatch.setattr(
+        omniscan.cli, "OllamaClient", lambda o, s: clients.append(FakeCliClient(o, s)) or clients[-1]
+    )
 
     events: list[str] = []
 
@@ -425,17 +427,21 @@ def test_reference_cli_prints_the_summary_and_closes_the_client(
     assert cli_env["events"] == ["manager", "release"]  # cpu: no lock, manager still built and released
     call = calls[0]
     assert call["series"] == SERIES
-    assert (call["min_locks"], call["model"], call["dry_run"], call["force"]) == (3, "gemma4:31b-cloud", False, False)
+    assert (call["min_locks"], call["model"], call["dry_run"], call["force"]) == (
+        3,
+        "gemma4:31b-cloud",
+        False,
+        False,
+    )
     assert call["client"] is cli_env["clients"][0]
 
 
-def test_reference_cli_passes_flags_through(
-    cli_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_reference_cli_passes_flags_through(cli_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
     make_series(cli_env["cfg"])
     calls = patch_run_reference(monkeypatch, fake_summary())
     result = runner.invoke(
-        app, ["reference", SERIES, "--min-locks", "2", "--model", "translategemma:12b", "--dry-run", "--force"]
+        app,
+        ["reference", SERIES, "--min-locks", "2", "--model", "translategemma:12b", "--dry-run", "--force"],
     )
     assert result.exit_code == 0
     call = calls[0]
@@ -451,12 +457,25 @@ def test_reference_cli_exit_1_when_ocr_failed(
     cli_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     make_series(cli_env["cfg"])
-    patch_run_reference(
-        monkeypatch, fake_summary(ocr_failed=(("raw", "Chapter 001", "ocr: out of memory"),))
-    )
+    patch_run_reference(monkeypatch, fake_summary(ocr_failed=(("raw", "Chapter 001", "ocr: out of memory"),)))
     result = runner.invoke(app, ["reference", SERIES])
     assert result.exit_code == 1
     assert "raw chapter Chapter 001 OCR failed: ocr: out of memory" in result.output
+
+
+def test_reference_cli_rate_limit_exits_3(cli_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    from omniscan.llm.ollama import OllamaRateLimitError
+
+    make_series(cli_env["cfg"])
+
+    def limited(*args: Any, **kwargs: Any) -> ReferenceSummary:
+        raise OllamaRateLimitError("weekly cap")
+
+    monkeypatch.setattr(reference_module, "run_reference", limited)
+    result = runner.invoke(app, ["reference", SERIES])
+    assert result.exit_code == 3
+    assert "reference: Ollama rate limit reached" in result.output
+    assert cli_env["events"] == ["manager", "release"]  # gpu and lock released on the abort
 
 
 def test_reference_cli_acquires_the_gpu_lock_before_the_vram_manager(
@@ -475,7 +494,9 @@ def test_reference_cli_acquires_the_gpu_lock_before_the_vram_manager(
         def close(self) -> None:
             return None
 
-    monkeypatch.setattr(omniscan.cli, "OllamaClient", lambda o, s: clients.append(FakeCliClient()) or clients[-1])
+    monkeypatch.setattr(
+        omniscan.cli, "OllamaClient", lambda o, s: clients.append(FakeCliClient()) or clients[-1]
+    )
     events: list[str] = []
 
     class FakeManager:
@@ -524,8 +545,10 @@ def test_reference_cli_dry_run_writes_nothing(
     monkeypatch.setattr(
         omniscan.cli,
         "OllamaClient",
-        lambda o, s: cli_env["clients"].append(FakeClient(replies=[EXTRACT_REPLY, EXTRACT_REPLY]))
-        or cli_env["clients"][-1],
+        lambda o, s: (
+            cli_env["clients"].append(FakeClient(replies=[EXTRACT_REPLY, EXTRACT_REPLY]))
+            or cli_env["clients"][-1]
+        ),
     )
 
     result = runner.invoke(app, ["reference", SERIES, "--dry-run"])
@@ -548,8 +571,10 @@ def test_reference_cli_full_run_locks_and_exports(
     monkeypatch.setattr(
         omniscan.cli,
         "OllamaClient",
-        lambda o, s: cli_env["clients"].append(FakeClient(replies=[EXTRACT_REPLY, EXTRACT_REPLY]))
-        or cli_env["clients"][-1],
+        lambda o, s: (
+            cli_env["clients"].append(FakeClient(replies=[EXTRACT_REPLY, EXTRACT_REPLY]))
+            or cli_env["clients"][-1]
+        ),
     )
     result = runner.invoke(app, ["reference", SERIES])
     assert result.exit_code == 0

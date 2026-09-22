@@ -10,10 +10,10 @@ OmniScan keeps three roots (see `[paths]` in [Configuration](#configuration)):
 | Path | Written by | Contents |
 |---|---|---|
 | `library_root/<Series>/<Chapter N>/` | `omniscan import` | raw chapter images (read-only for the pipeline) |
-| `library_root/<Series>/_reference_en/` | reference mode (not implemented yet) | already-translated chapters used as style reference |
-| `work_root/<Series>/series.db` | glossary seeding (no command creates it yet) | SQLite glossary working copy |
+| `library_root/<Series>/_reference_en/` | `omniscan import --series "<Series>/_reference_en"` | official English chapters `omniscan reference` learns the glossary from |
+| `work_root/<Series>/series.db` | `omniscan reference`, `omniscan glossary import` | SQLite glossary working copy |
 | `work_root/queue.db` | the job queue | every queued/running/finished job |
-| `work_root/<Series>/glossary.yaml` | `omniscan glossary export` | hand-editable glossary review file |
+| `work_root/<Series>/glossary.yaml` | `omniscan glossary export`, `omniscan reference` | hand-editable glossary review file |
 | `work_root/<Series>/watermarks.json` | `omniscan watermark add` / `remove` | fixed-position watermark regions |
 | `work_root/<Series>/<Chapter N>/ingest.json` | `omniscan ingest` | strip layout: files, widths, y-ranges |
 | `work_root/<Series>/<Chapter N>/slices.json` | `omniscan slice` | bands and slices in strip space |
@@ -125,9 +125,7 @@ OLLAMA_API_KEY=...            # Ollama cloud (`translate` cloud profiles; doctor
 
 ## Commands
 
-The `reference`
-stub is registered but not usable; it prints `not implemented yet` and exits 2. Every other command
-below is fully working. The examples assume you generated the demo chapter with
+Every command below is fully working. The examples assume you generated the demo chapter with
 `uv run python scripts/make_demo_chapter.py`.
 
 ### `omniscan doctor`
@@ -555,8 +553,8 @@ Print the glossary of a series as a table (source, target, type, status, count).
 | `series` | required |
 | `--status <proposed\|locked\|rejected>` | only entries with this status |
 
-Requires `work_root/<series>/series.db` (exit 2 with a message otherwise). Nothing writes that db
-today, so this is only usable once the glossary-seeding stage lands.
+Requires `work_root/<series>/series.db` (exit 2 with a message otherwise) — `omniscan reference` is
+what creates it.
 
 ```bash
 uv run omniscan glossary list DemoSeries
@@ -589,6 +587,65 @@ Same `series.db` requirement; exits 2 if `glossary.yaml` does not exist.
 
 ```bash
 uv run omniscan glossary import DemoSeries --mode merge
+```
+
+### `omniscan reference`
+
+Bootstrap a series' glossary from its official English release (decision D7): match the raw chapters
+against the already-imported reference chapters, OCR both sides, and extract the (source, target)
+term pairs the official translation actually uses. A pair that recurs identically in at least three
+distinct reference chapters is written locked (`status="locked"`, `origin="reference"`); everything
+else is written `proposed` for human review — nothing is dropped.
+
+The reference chapters live under `library_root/<Series>/_reference_en/` (one folder per chapter,
+anything `omniscan import` accepts). Import them with the pseudo series name — its `_`-prefix keeps
+them out of the raw chapter list:
+
+```bash
+uv run omniscan import ~/Downloads/OfficialEN.zip --series "DemoSeries/_reference_en"
+uv run omniscan reference DemoSeries
+```
+
+| Argument/option | Meaning |
+|---|---|
+| `series` | series name (required) |
+| `--min-locks <int>` | distinct reference chapters a (source, target) pair must recur in to be locked. Default: 3 |
+| `--model <name>` | chat model used for term extraction. Default: `gemma4:31b-cloud` |
+| `--dry-run` | match, OCR and extract, but write nothing to the glossary |
+| `--force` | re-run the OCR stages even if up to date |
+
+Chapters are matched by page art (the `omniscan match chapters` matcher — folder names never decide),
+so chapter numbering and folder names may differ between the two sides. Matched pairs run the
+`ingest`/`slice`/`detect`/`ocr` stages on both sides (the same stages, artifacts and manifests the
+pipeline uses — the reference side's land under `work_root/<Series>/_reference_en/`, so a re-run
+skips what is up to date), the OCR'd regions are paired page by page in reading order, and one chat
+request per matched chapter asks for its terms. The merge lands in `work_root/<series>/series.db`
+and is re-exported to `glossary.yaml`.
+
+Existing entries are never silently overwritten. Agreement with a locked entry only raises its
+`count` (a re-run is idempotent); disagreement is flagged as a conflict and the entry is left
+untouched — same for entries you `rejected` and for `origin="user"` rows. A row a previous machine
+pass proposed is updated in place, its previous target recorded in the notes, and runner-up English
+spellings the model saw are kept there too.
+
+The summary prints the matched / raw-only / reference-only chapter counts, the paired-line and
+skipped-page counts, and the locked/proposed counts, followed by one line per unmatched chapter, OCR
+failure, conflict and rejected entry still being extracted:
+
+```text
+reference: 3 matched chapter pair(s), 1 raw-only, 0 reference-only, 9 paired line(s), 0 page pair(s) skipped
+reference:   raw chapter without reference match: Chapter 4
+reference: 2 term(s) locked, 1 proposed
+reference:   conflict: 민준: store has 'Minjun' (locked), reference extraction says 'Min-jun' — entry left untouched
+```
+
+Chapters without a reference match are normal, not an error. Exit 2 when the series has no chapters
+or nothing is imported under `_reference_en` yet; exit 1 when any chapter's OCR failed. Like every
+GPU command it holds the exclusive GPU lock while the models run.
+
+```bash
+uv run omniscan reference DemoSeries --dry-run
+uv run omniscan reference DemoSeries --min-locks 2 --model translategemma:12b --force
 ```
 
 ### `omniscan translate`

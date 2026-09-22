@@ -53,7 +53,9 @@ def make_ingest(chapter: str, page_heights: list[int], width: int = 400) -> Inge
     return IngestArtifact(series="S", chapter=chapter, strip_width=width, strip_height=y, files=files)
 
 
-def make_region(page: SourceFile, offset: int, order: int, text: str, *, kind: RegionKind = "bubble_text") -> Region:
+def make_region(
+    page: SourceFile, offset: int, order: int, text: str, *, kind: RegionKind = "bubble_text"
+) -> Region:
     """A text region fully inside `page`'s strip-space y-range, `offset` px below the page top."""
     y0 = page.y0 + offset
     return Region(
@@ -358,7 +360,11 @@ def test_merge_conflict_with_locked_flags_and_leaves_untouched(tmp_path: Path) -
         report = merge_into_store(s, [terms("민준", "Min-jun", 4)])
         assert len(report.conflicts) == 1
         conflict = report.conflicts[0]
-        assert (conflict.source, conflict.existing_target, conflict.extracted_target) == ("민준", "Minjun", "Min-jun")
+        assert (conflict.source, conflict.existing_target, conflict.extracted_target) == (
+            "민준",
+            "Minjun",
+            "Min-jun",
+        )
         assert conflict.existing_status == "locked"
         row = s.find_by_source("민준")
     assert row is not None and (row.target, row.status) == ("Minjun", "locked")

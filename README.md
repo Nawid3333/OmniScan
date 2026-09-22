@@ -14,7 +14,7 @@ packaged into CBZ/PDF.
 | slice | working — `omniscan slice` |
 | promo filter | module only — `omniscan filter run` / `filter restore` |
 | watermark regions | module only — `omniscan watermark add` / `list` / `remove` |
-| glossary | module only — `omniscan glossary list` / `export` / `import` |
+| glossary | working — `omniscan reference` (bootstrap from imported official `_reference_en` chapters) + `omniscan glossary list` / `export` / `import` |
 | detect | working — `omniscan detect` (regions.json; no text yet) |
 | ocr | working — `omniscan ocr` (ocr.json) |
 | translate | working — `omniscan translate` (candidate runs only; needs ocr.json from `omniscan ocr`) |
@@ -33,12 +33,6 @@ packaged into CBZ/PDF.
 
 "working" = usable from the CLI today. "module only" = the code and its own sub-commands exist, but no
 pipeline stage consumes it yet.
-
-### Not implemented yet
-
-| Command | Behaviour |
-|---|---|
-| `reference` | registered stub; prints `not implemented yet` and exits 2 |
 
 ## Requirements
 

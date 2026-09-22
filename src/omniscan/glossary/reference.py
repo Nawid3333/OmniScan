@@ -39,7 +39,7 @@ from omniscan.glossary.reference_prompts import (
 )
 from omniscan.glossary.store import GlossaryStore
 from omniscan.glossary.yaml_io import export_yaml
-from omniscan.match.chapters import ChapterMapping, PagePair, match_chapters
+from omniscan.match.chapters import PagePair, match_chapters
 from omniscan.pipeline.runner import PipelineResult, run_pipeline
 from omniscan.translate.run import ChatClient
 
@@ -221,7 +221,8 @@ def _most_common(group: list[TermCandidate]) -> str:
 
 
 def _most_common_type(group: list[TermCandidate]) -> TermType:
-    return Counter(candidate.type for candidate in group).most_common(1)[0][0]
+    counts: Counter[TermType] = Counter(candidate.type for candidate in group)
+    return counts.most_common(1)[0][0]
 
 
 def _first_seen(group: Sequence[TermCandidate]) -> float | None:
@@ -510,8 +511,7 @@ def format_summary(summary: ReferenceSummary) -> list[str]:
         f"reference:   reference chapter without raw match: {name}" for name in summary.reference_only
     )
     lines.extend(
-        f"reference:   {side} chapter {name} OCR failed: {error}"
-        for side, name, error in summary.ocr_failed
+        f"reference:   {side} chapter {name} OCR failed: {error}" for side, name, error in summary.ocr_failed
     )
     lines.append(f"reference: {summary.merge.locked} term(s) locked, {summary.merge.proposed} proposed")
     lines.extend(
