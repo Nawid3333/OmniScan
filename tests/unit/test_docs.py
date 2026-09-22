@@ -132,5 +132,12 @@ def test_extraction_helper_detects_unknown_command() -> None:
 
 
 def test_extraction_helper_flags_stub_as_documented() -> None:
-    errors = doc_command_errors("```bash\nomniscan reference DemoSeries\n```")
-    assert any("stub" in e for e in errors)
+    """No live stubs remain; prove the stub check itself on a fake command object."""
+
+    class FakeStubCommand:
+        help = "Not implemented yet."
+
+    errors: list[str] = []
+    _check_stub(FakeStubCommand(), "reference DemoSeries", errors)
+    assert len(errors) == 1
+    assert "reference DemoSeries" in errors[0] and "stub" in errors[0]

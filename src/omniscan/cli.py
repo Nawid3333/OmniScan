@@ -51,8 +51,6 @@ app = typer.Typer(help="OmniScan — manhwa/manga translator", no_args_is_help=T
 
 STATUS_STYLES = {"OK": "green", "WARN": "yellow", "FAIL": "red"}
 
-_STUB_COMMANDS = ("reference",)
-
 
 @app.callback()
 def main(
@@ -227,11 +225,6 @@ def cmd_pack(
 
 
 app.command("pack")(cmd_pack)
-
-
-def _stub(name: str, series: str | None) -> None:
-    typer.echo(f"{name}: not implemented yet", err=True)
-    raise typer.Exit(2)
 
 
 def _run_stages(
@@ -919,17 +912,89 @@ def cmd_serve(
 app.command("serve")(cmd_serve)
 
 
-def cmd_reference(series: Annotated[str | None, typer.Argument()] = None) -> None:
-    """Not implemented yet."""
-    _stub("reference", series)
+def cmd_reference(
+    series: Annotated[str, typer.Argument()],
+    min_locks: Annotated[
+        int,
+        typer.Option(
+            "--min-locks",
+            help="Distinct reference chapters a (source, target) pair must recur in to be locked.",
+        ),
+    ] = 3,
+    model: Annotated[
+        str, typer.Option("--model", help="Chat model used for term extraction.")
+    ] = "gemma4:31b-cloud",
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Match, OCR and extract, but write nothing to the glossary.")
+    ] = False,
+    force: Annotated[bool, typer.Option("--force", help="Re-run the OCR stages even if up to date.")] = False,
+) -> None:
+    """Learn the glossary from official English chapters imported under <series>/_reference_en/.
+
+    Matches raw chapters against the reference chapters by page art, OCRs both sides, extracts
+    (source, target) term pairs with the chat model, and locks every pair that recurs identically
+    in at least --min-locks reference chapters (decision D7); everything else is written proposed.
+    Already-locked entries are never overwritten — disagreements are flagged as conflicts."""
+    from omniscan.glossary.reference import format_summary, run_reference
+
+    cfg = get_config()
+    sp = SeriesPaths.from_config(cfg, series)
+    if not sp.chapters():
+        typer.echo(f"reference: no chapters found for series {series!r}", err=True)
+        raise typer.Exit(2)
+    if not sp.reference_dir.is_dir() or not list_chapters(sp.reference_dir):
+        typer.echo(
+            f"reference: no reference chapters under {sp.reference_dir}"
+            " — import the official releases first (see USER_GUIDE.md)",
+            err=True,
+        )
+        raise typer.Exit(2)
+    # merge series.toml before building the VRAM manager: it decides which OCR/detect models to
+    # load, and run_reference's own merge happens per side, too late for the manager's warm-up
+    cfg = series_config(cfg, sp.library_dir)
+    client = OllamaClient(cfg.ollama, get_secrets())
+    gpu = None
+    hw_lock = None
+    if cfg.gpu.device != "cpu":
+        # exclusive real-GPU access first: build_vram_manager's warm-up thread already touches the
+        # device, so the lock must be held before it is called, not after (see gpu/lock.py)
+        from omniscan.gpu.lock import acquire_gpu_lock
+
+        hw_lock = acquire_gpu_lock(
+            on_wait=lambda: typer.echo("reference: waiting for exclusive GPU access...", err=True)
+        )
+    from omniscan.gpu.groups import build_vram_manager
+
+    gpu = build_vram_manager(cfg)
+    try:
+        summary = run_reference(
+            cfg,
+            series,
+            client=client,
+            model=model,
+            min_locks=min_locks,
+            dry_run=dry_run,
+            force=force,
+            gpu=gpu,
+        )
+    except ValueError as exc:  # e.g. match_chapters found no chapter folders at all
+        typer.echo(f"reference: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    finally:
+        if gpu is not None:
+            gpu.release()  # the models leave VRAM when the command ends
+        if hw_lock is not None:
+            from omniscan.gpu.lock import release_gpu_lock
+
+            release_gpu_lock(hw_lock)
+        client.close()
+    for line in format_summary(summary):
+        typer.echo(line)
+    if summary.ocr_failed:
+        raise typer.Exit(1)
 
 
-def _register_stubs() -> None:
-    for name in _STUB_COMMANDS:
-        app.command(name)(globals()[f"cmd_{name}"])
-
-
-_register_stubs()
+app.command("reference")(cmd_reference)
 
 
 def _chapter_paths(cfg: Config, series: str, chapter: str) -> ChapterPaths:
