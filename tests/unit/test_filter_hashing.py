@@ -69,6 +69,13 @@ def tensor_of(pil_image: Image.Image) -> torch.Tensor:
     return torch.from_numpy(np.asarray(pil_image.convert("RGB")).copy()).permute(2, 0, 1).contiguous()
 
 
+def smooth_page(h: int, w: int, seed: int) -> Image.Image:
+    """One large smooth page (upscaled from a low-resolution grid, like `synthetic_images`)."""
+    rng = np.random.default_rng(seed)
+    low = rng.integers(0, 256, (37, 10, 3), dtype=np.uint8)
+    return Image.fromarray(low).resize((w, h), Image.Resampling.BILINEAR)
+
+
 def synthetic_images(seed: int = 7) -> list[Image.Image]:
     """Seeded synthetic pages: noise, gradients, text-like stripes and solid banners.
 
@@ -137,6 +144,32 @@ def test_dhash_tensor_cuda_matches_cpu() -> None:
 def test_dhash_tensor_one_row_or_column() -> None:
     assert dhash_tensor(torch.randint(0, 256, (3, 1, 50), dtype=torch.uint8)) >= 0
     assert dhash_tensor(torch.randint(0, 256, (3, 50, 1), dtype=torch.uint8)) >= 0
+
+
+def test_dhash_tensor_matches_dhash_on_full_page_crops() -> None:
+    """Full-page slice crops (max side > 512) take the staged path: smooth content stays within
+    6 bits of the PIL dhash and the golden ramp hash is the same as at small sizes."""
+    image = smooth_page(2934, 800, 1)
+    assert hamming(dhash(image), dhash_tensor(tensor_of(image))) <= 6
+    w = 800
+    falling = np.tile(((w - 1 - np.arange(w)) * 255 // (w - 1)).astype(np.uint8), (2934, 1))
+    big = Image.fromarray(np.stack([falling] * 3, axis=-1))
+    assert dhash(big) == 2**64 - 1
+    assert dhash_tensor(tensor_of(big)) == 2**64 - 1
+
+
+@pytest.mark.gpu
+def test_dhash_tensor_full_page_crop_cuda_matches_cpu() -> None:
+    """Regression (director review): a full-page crop crashed ROCm's antialiased interpolate
+    ('Too much shared memory required'); the staged path must run on the GPU and match the CPU."""
+    if not torch.cuda.is_available():
+        pytest.skip("no GPU")
+    from omniscan.gpu.device import resolve_device
+
+    device = resolve_device("auto")
+    gen = torch.Generator().manual_seed(5)
+    image = torch.randint(0, 256, (3, 2934, 800), dtype=torch.uint8, generator=gen)
+    assert dhash_tensor(image) == dhash_tensor(image.to(device))
 
 
 def test_dhash_tensor_rejects_wrong_shape() -> None:

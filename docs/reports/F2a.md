@@ -80,9 +80,17 @@ invocation needed `--no-sync`; command results are identical otherwise).
    tests/unit/test_ingest_filter.py tests/unit/test_slicer_filter.py tests/unit/test_filter_cli.py
    tests/unit/test_filter_decide.py tests/unit/test_docs.py -q` → **75 passed**.
 2. Card command 2 — `pytest -m "not gpu"` (whole CPU suite) → **3472 passed, 22 deselected**
-   in ~76 s.
-3. `ruff format .` → clean (3 files reformatted before the final run); `ruff check .` →
-   **All checks passed!**; `pyright` → **0 errors, 0 warnings, 0 informations**.
+   in ~76 s on the pre-rebase tree; after the director's rebase onto main and the follow-up fix
+   **3562 passed, 23 deselected, 1 xfailed** in ~84 s (the growth is the merged cards' tests plus
+   the two new full-page-crop tests).
+3. `ruff format .` → clean; `ruff check .` → **All checks passed!**; `pyright` →
+   **0 errors, 0 warnings, 0 informations** (re-run after the follow-up fix).
+4. GPU tests (`pytest -m gpu`, RX 9070 XT / ROCm 10) → **22 passed, 1 skipped** in ~106 s: the two
+   `dhash_tensor` GPU parity/regression tests ran on the discrete GPU (the 2934×800 crash
+   reproduction is now the regression test), and the golden E2E passed (6 tests, 40.37 s on its
+   pre-fix run; no examples are configured there, so the filter is inert — see Follow-up fix for
+   how the crash was found anyway). The one skip is `test_ocr_manga_gpu` (manga-ocr weights not
+   installed in this worktree; unrelated to this card).
 4. Golden E2E (`tests/unit/test_e2e_synthetic.py`, GPU, cached weights) → **6 passed in 40.37 s**
    on the RX 9070 XT; no examples are configured, so the filter is inert there (as expected).
 
@@ -130,6 +138,39 @@ Test inventory against the card's acceptance list:
    `--json` parses to the documented shape, unknown series exits 2; `restore` then `run` keeps the
    restored file (artifact asserts `["004.jpg"]`, indices `[0, 1, 2, 4]`); `force` without
    examples filters the file; bad target rejected. Docs test green (`test_docs.py` 9 passed).
+
+## Follow-up fix (director review, 2026-09-22)
+
+**Found on the real GPU:** `omniscan filter run` crashed in `slice` → `apply_slice_filter` →
+`dhash_tensor` with ROCm's `RuntimeError: … antialias … Too much shared memory required: 90268 vs
+65536`. `apply_slice_filter` hashes full-page crops (realistically 800–1600 px wide, 2000–5000 px
+tall) and the ROCm antialiased `interpolate` overflows its box-filter buffer at those downscale
+factors; the card's own tests only covered small images and the golden E2E has no promo examples,
+so the filtered path had never run on the real GPU.
+
+**Fix (`filter/hashing.py`):** `dhash_tensor` now routes through `_antialiased_resize` — one
+antialiased `interpolate` for inputs with max(h, w) ≤ 512 (bit-identical to the previous
+implementation, so every pre-existing hash is unchanged), and for larger inputs a coarse
+`avg_pool2d` first, with integer per-axis factors that keep the intermediate within 512 px per
+axis, then the same small antialiased resize. At 512 the final resize needs at most 57×64 box taps
+(~15 KB), far below ROCm's 64 KB limit, and everything stays fp32 on the device with the same one
+host transfer. Probed against PIL's dhash on full-page sizes: the staged path's Hamming distances
+are *identical* to what the single-pass path produces on CPU (measured for 2934×800 and
+5000×1600 on smooth, striped and stepped content — e.g. stripes 9 bits in both), i.e. the staging
+adds no divergence of its own; the remaining large-size divergence is inherent to PIL-LANCZOS vs
+antialiased-bilinear at extreme factors. Golden ramps are unchanged at full-page size (rising → 0,
+falling → 2**64-1).
+
+**Tests added** (`test_filter_hashing.py`):
+`test_dhash_tensor_matches_dhash_on_full_page_crops` (CPU, 2934×800 smooth + golden falling ramp
+through the staged path) and `test_dhash_tensor_full_page_crop_cuda_matches_cpu` (`@pytest.mark.gpu`,
+the director's 3×2934×800 repro via `resolve_device("auto")` = the discrete GPU — pre-fix this is
+exactly the RuntimeError; post-fix it runs and equals the CPU hash). Both ran on the RX 9070 XT.
+
+**No stage-version bump:** sizes that already worked (max side ≤ 512) are bit-identical; larger
+sizes previously *crashed* rather than produced a hash, and enabling the filter already changes the
+stages' `config_subset` (invalidating those chapters), so stale slices.json from a pre-fix run
+cannot silently keep wrong verdicts.
 
 ## Deviations
 
