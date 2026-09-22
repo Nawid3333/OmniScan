@@ -7,6 +7,7 @@ still shows up. All y coordinates are in strip space (see `omniscan.core.schemas
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -14,10 +15,18 @@ from typing import Literal
 from PIL import Image
 
 from omniscan.core.config import Config
+from omniscan.core.manifest import load_manifest
 from omniscan.core.paths import SeriesPaths, list_chapters, list_images, natural_key
-from omniscan.core.schemas import ExportArtifact, IngestArtifact, SlicesArtifact
+from omniscan.core.schemas import (
+    ExportArtifact,
+    IngestArtifact,
+    Manifest,
+    SlicesArtifact,
+    StageRecord,
+)
 
 TileKind = Literal["image", "filtered", "missing"]
+StageState = Literal["done", "stale", "failed", "not run"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,3 +183,64 @@ def load_chapter_view(cfg: Config, series: str, chapter: str) -> ChapterView:
         output=out_tiles,
         has_output=any(t.kind == "image" for t in out_tiles),
     )
+
+
+@dataclass(frozen=True, slots=True)
+class SeriesSummary:
+    """One library series and how many chapters it has (raws and/or output)."""
+
+    name: str
+    chapters: int
+
+
+@dataclass(frozen=True, slots=True)
+class ChapterStages:
+    """One chapter's state for each of the ten pipeline stages (aligned with `STAGE_ORDER`)."""
+
+    chapter: str
+    states: tuple[StageState, ...]
+
+
+def series_summaries(cfg: Config) -> list[SeriesSummary]:
+    """Every series in the library/output roots with its chapter count, natural order."""
+    return [SeriesSummary(name, len(list_chapter_names(cfg, name))) for name in list_series(cfg)]
+
+
+def chapter_stage_states(cfg: Config, series: str) -> list[ChapterStages]:
+    """Per chapter, the ten stages' states from the chapter's manifest, in `STAGE_ORDER`.
+
+    `done` = recorded as finished with its output files present. `stale` = done but its recorded
+    output is missing, or a stage earlier in `STAGE_ORDER` finished again after it did (the stage
+    would re-run). This is the manifest-only view for review — the runner's own hash check decides
+    at run time.
+    """
+    from omniscan.pipeline.stages import STAGE_ORDER  # lazy: keep importing this module light
+
+    paths = SeriesPaths.from_config(cfg, series)
+    out = []
+    for chapter in list_chapter_names(cfg, series):
+        cp = paths.chapter(chapter)
+        manifest = load_manifest(cp.manifest, series, chapter)
+        out.append(ChapterStages(chapter, _states(manifest, cp.work_dir, STAGE_ORDER)))
+    return out
+
+
+def _states(manifest: Manifest, work_dir: Path, order: Sequence[str]) -> tuple[StageState, ...]:
+    """One chapter's stage states: done / stale / failed / not run (see `chapter_stage_states`)."""
+    records: dict[str, StageRecord] = manifest.stages
+    states: list[StageState] = []
+    for index, name in enumerate(order):
+        record = records.get(name)
+        if record is None:
+            states.append("not run")
+        elif record.status == "failed":
+            states.append("failed")
+        elif any(not (work_dir / output).exists() for output in record.outputs) or any(
+            earlier.finished_at > record.finished_at
+            for earlier in (records.get(before) for before in order[:index])
+            if earlier is not None
+        ):
+            states.append("stale")
+        else:
+            states.append("done")
+    return tuple(states)

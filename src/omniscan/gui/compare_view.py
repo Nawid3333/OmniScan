@@ -24,6 +24,7 @@ from omniscan.gui.services.library import ChapterView
 from omniscan.gui.strip_view import StripView
 
 type SyncMode = Literal["linked", "independent"]
+type SideMode = Literal["both", "raw", "output"]
 
 
 class CompareView(QWidget):
@@ -124,6 +125,19 @@ class CompareView(QWidget):
     def strip_y(self) -> float:
         """Strip y of the master view (the one scrolled/zoomed most recently)."""
         return (self._master or self.left).strip_y()
+
+    def zoom_by(self, factor: float) -> None:
+        """Zoom the master view by `factor` (the other side follows in linked mode)."""
+        master = self._master or self.left
+        master.set_zoom(master.zoom() * factor)
+
+    def set_visible_sides(self, mode: SideMode) -> None:
+        """Show both panes, raw only, or output only (the hidden pane collapses in the splitter)."""
+        raw = self.splitter.widget(0)
+        output = self.splitter.widget(1)
+        if raw is not None and output is not None:
+            raw.setVisible(mode in ("both", "raw"))
+            output.setVisible(mode in ("both", "output"))
 
     # ------------------------------------------------------------------ internals
 

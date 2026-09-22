@@ -9,7 +9,7 @@ import pytest
 pytest.importorskip("PySide6")
 
 from PIL import Image
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 
 from omniscan.gui.compare_view import CompareView
 from omniscan.gui.services.library import ChapterView, Tile
@@ -58,6 +58,13 @@ def _pixel(image, x: int, y: int) -> tuple[int, int, int]:
     """A grabbed image's pixel as an RGB tuple."""
     color = image.pixelColor(x, y)
     return (color.red(), color.green(), color.blue())
+
+
+def _pane(compare: CompareView, index: int) -> QWidget:
+    """One splitter pane (asserted present)."""
+    widget = compare.splitter.widget(index)
+    assert widget is not None
+    return widget
 
 
 def _centre_pixel(compare: CompareView, side: str, y: int) -> tuple[int, int, int]:
@@ -177,3 +184,39 @@ def test_fit_button_fits_both_without_signal_loop(qapp: QApplication, tmp_path: 
     compare.left.set_strip_y(120)
     assert left_ys == [120.0]  # the master emits exactly once
     assert right_ys == []  # the follower moves silently
+
+
+# ---------------------------------------------------------------------- zoom_by / sides (U3c)
+
+
+def test_zoom_by_multiplies_the_master_zoom(qapp: QApplication, tmp_path: Path) -> None:
+    compare = _shown(qapp, CompareView())
+    compare.set_chapter(_chapter_view(tmp_path))
+    before = compare.left.zoom()
+
+    compare.zoom_by(1.25)
+    assert compare.left.zoom() == pytest.approx(before * 1.25)
+    assert compare.right.zoom() == compare.left.zoom()  # linked: the other side follows
+
+    compare.set_sync_mode("independent")
+    compare.right.set_zoom(1.0)  # the right view is now the master
+    compare.zoom_by(0.8)
+    assert compare.right.zoom() == pytest.approx(0.8)
+    assert compare.left.zoom() != compare.right.zoom()  # independent: only the master zoomed
+
+
+def test_set_visible_sides_collapses_one_pane(qapp: QApplication, tmp_path: Path) -> None:
+    compare = _shown(qapp, CompareView())
+    compare.set_chapter(_chapter_view(tmp_path))
+
+    compare.set_visible_sides("raw")
+    assert _pane(compare, 0).isVisible()
+    assert not _pane(compare, 1).isVisible()
+
+    compare.set_visible_sides("output")
+    assert not _pane(compare, 0).isVisible()
+    assert _pane(compare, 1).isVisible()
+
+    compare.set_visible_sides("both")
+    assert _pane(compare, 0).isVisible()
+    assert _pane(compare, 1).isVisible()

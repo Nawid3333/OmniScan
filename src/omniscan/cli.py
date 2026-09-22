@@ -1653,4 +1653,16 @@ app.add_typer(match_app, name="match")
 
 app.add_typer(acquire_app, name="acquire")
 
+
+@app.command("gui")
+def cmd_gui() -> None:
+    """Open the desktop app (needs the `gui` extra: PySide6)."""
+    try:
+        from omniscan.gui.app import main as gui_main
+    except ImportError as error:
+        typer.echo(f"gui: needs PySide6 — install it with `uv sync --extra gui` ({error})", err=True)
+        raise typer.Exit(2) from error
+    raise typer.Exit(gui_main())
+
+
 mark("cli imported")
