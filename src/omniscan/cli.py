@@ -235,7 +235,16 @@ def _run_stages(
     # models to load, and make_context() below would otherwise merge it too late for that choice
     cfg = series_config(cfg, SeriesPaths.from_config(cfg, series).library_dir)
     gpu = None
+    hw_lock = None
     if any(stage.gpu_group is not None for stage in stages):
+        # exclusive real-GPU access first: build_vram_manager's warm-up thread already touches the
+        # device, so the lock must be held before it is called, not after (see gpu/lock.py)
+        if cfg.gpu.device != "cpu":
+            from omniscan.gpu.lock import acquire_gpu_lock
+
+            hw_lock = acquire_gpu_lock(
+                on_wait=lambda: typer.echo(f"{name}: waiting for exclusive GPU access...", err=True)
+            )
         from omniscan.gpu.groups import build_vram_manager
 
         gpu = build_vram_manager(cfg)
@@ -244,6 +253,10 @@ def _run_stages(
     finally:
         if gpu is not None:
             gpu.release()  # the models leave VRAM when the command ends
+        if hw_lock is not None:
+            from omniscan.gpu.lock import release_gpu_lock
+
+            release_gpu_lock(hw_lock)
     failed = False
     for chapter, outcomes in results.items():
         for outcome in outcomes:
@@ -767,6 +780,7 @@ def cmd_run(
         OllamaClient(cfg.ollama, get_secrets()) if any(PASS_OF[name] == "text" for name in names) else None
     )
     gpu = None
+    hw_lock = None
     auto_continue = False  # set by an "all" answer: every later gate passes without asking
 
     def gate(event: GateEvent) -> bool:
@@ -807,6 +821,14 @@ def cmd_run(
 
     try:
         if needs_gpu(names, cfg, client):
+            # exclusive real-GPU access first: build_vram_manager's warm-up thread already touches
+            # the device, so the lock must be held before it is called, not after (see gpu/lock.py)
+            if cfg.gpu.device != "cpu":
+                from omniscan.gpu.lock import acquire_gpu_lock
+
+                hw_lock = acquire_gpu_lock(
+                    on_wait=lambda: typer.echo("run: waiting for exclusive GPU access...", err=True)
+                )
             from omniscan.gpu.groups import build_vram_manager
 
             gpu = build_vram_manager(cfg)
@@ -830,6 +852,10 @@ def cmd_run(
     finally:
         if gpu is not None:
             gpu.release()  # the models leave VRAM when the command ends
+        if hw_lock is not None:
+            from omniscan.gpu.lock import release_gpu_lock
+
+            release_gpu_lock(hw_lock)
         if client is not None:
             client.close()
     if result.aborted == "stopped":

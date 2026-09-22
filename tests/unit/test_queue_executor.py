@@ -59,6 +59,7 @@ def recorder(monkeypatch: pytest.MonkeyPatch, result: PipelineResult | None = No
     ) -> PipelineResult:
         record.calls.append(
             {
+                "cfg": cfg,
                 "series": series,
                 "chapters": chapters,
                 "stages": stages,
@@ -247,3 +248,29 @@ def test_non_gpu_jobs_build_no_vram_manager(cfg: Config, monkeypatch: pytest.Mon
 
     assert built == []
     assert record.calls[0]["gpu"] is None
+
+
+class _FakeManager:
+    def release(self) -> None:
+        return None
+
+
+def test_gpu_jobs_build_the_vram_manager_from_series_merged_config(
+    cfg: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: the executor used to call `build_vram_manager` with the un-merged config, so a
+    per-series `ocr.engine` override picked the right stage behaviour (via make_context, which does
+    merge) but the wrong model group — the OCR stage would then crash with KeyError('reader')."""
+    make_chapter(cfg)
+    (cfg.paths.library_root / SERIES / "series.toml").write_text(
+        '[ocr]\nengine = "manga_ocr"\n', encoding="utf-8"
+    )
+    record = recorder(monkeypatch)
+    seen: list[Config] = []
+    monkeypatch.setattr(
+        "omniscan.gpu.groups.build_vram_manager", lambda cfg: seen.append(cfg) or _FakeManager()
+    )
+    stage_executor(cfg)(make_job(("detect",), chapters=("Chapter 1",)))
+
+    assert seen and seen[0].ocr.engine == "manga_ocr"
+    assert record.calls[0]["cfg"].ocr.engine == "manga_ocr"  # run_pipeline sees it too
