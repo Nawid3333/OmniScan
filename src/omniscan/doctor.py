@@ -176,13 +176,8 @@ def check_ollama_cloud(cfg: Config, secrets: Secrets, http: httpx.Client) -> Che
 
 def check_secrets(secrets: Secrets) -> CheckResult:
     """Check optional secrets; never prints values."""
-    names: list[str] = []
-    if secrets.extractpics_api_key is None:
-        names.append("EXTRACTPICS_API_KEY")
-    if secrets.relay_client_token is None:
-        names.append("OMNISCAN_RELAY_CLIENT_TOKEN")
-    if names:
-        return CheckResult("secrets", "WARN", f"not set: {', '.join(names)}")
+    if secrets.ollama_api_key is None:
+        return CheckResult("secrets", "WARN", "not set: OLLAMA_API_KEY")
     return CheckResult("secrets", "OK", "all optional secrets set")
 
 

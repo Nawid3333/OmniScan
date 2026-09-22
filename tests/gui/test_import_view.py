@@ -15,10 +15,10 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import QUrl
 from PySide6.QtWidgets import QApplication, QTreeWidgetItem
 
-from omniscan.acquire.drm import NOTICE
 from omniscan.gui.import_view import ImportView
 from omniscan.importer.execute import ImportResult
 from omniscan.importer.plan import ImportPlan, ImportPlanError, ImportPlanItem
+from omniscan.legal import NOTICE
 
 WAIT_S = 5.0
 

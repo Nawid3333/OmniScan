@@ -16,7 +16,6 @@ changed and the snippet no longer matches (update or drop the entry). The list f
 | `slicer/bands.py`, `slicer/cuts.py`, `slicer/slice_page.py`, `slicer/ingest.py` | slicer and ingest layout (card Q1) | `tests/unit/test_slicer_*.py`, `tests/unit/test_ingest*.py` |
 | `pipeline.py` | `omniscan run`, stage adapters, queue executor (card R1) | `test_pipeline_*.py`, `test_queue_executor.py`, `test_queue_cli.py`, `test_cli.py` |
 | `e2e.py` | codec race, page order, typeset colour, against the golden test (card E1) | `test_e2e_synthetic.py` (GPU, ~1 min per mutant) |
-| `acquire/rules.py`, `acquire/download.py` | acquisition rules (drm/filters/sources) and the downloader (card Q3) | `test_acquire_*.py`, `test_acquire_mutation_gaps.py` |
 | `models_update/rules.py`, `models_update/download.py` | model catalog/resolve/store/download and app version/GitHub/update download (card Q4) | `test_models_{catalog,resolve,store,download,cli}.py`, `test_update_{version,github,download,cli}.py`, `test_models_update_mutation_gaps.py` |
 | `hw_hf/hw.py`, `hw_hf/hf.py` | hw detection/compat rules and the hf model install path + `series_config` (card Q5) | `test_hw_{assess,detect}.py`, `test_models_{catalog,resolve,store,download,cli}.py`, `test_core_series_config.py`, `test_models_update_mutation_gaps.py`, `test_hw_hf_mutation_gaps.py` |
 

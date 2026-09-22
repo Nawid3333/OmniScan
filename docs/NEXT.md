@@ -6,7 +6,7 @@ Rewritten 2026-09-19 (late evening), after the walking skeleton was finished. Re
 ## Where we are
 The whole pipeline exists and runs: `omniscan run SERIES` takes raw chapters through ingest → slice → detect → OCR → translate (3 models) → judge → inpaint → LaMa → typeset → export in three passes.
 It is protected by ~2 650 tests plus an **end-to-end golden GPU test** (`tests/unit/test_e2e_synthetic.py`: real detector/OCR/LaMa models on synthetic Korean pages, fake LLM; it fails when pages are mixed, reordered or coloured wrongly — proven by putting the old codec race back).
-What is **not** done: sound effects (the detector finds none), everything tuned on real Korean raws (question A1 — all real data so far is English Pepper&Carrot), story memory, web views for the render stages, portability (the torch pin is ROCm-only), `acquire`.
+What is **not** done: sound effects (the detector finds none), everything tuned on real Korean raws (question A1 — all real data so far is English Pepper&Carrot), story memory, web views for the render stages, portability (the torch pin is ROCm-only).
 So the next phase is **quality on real pages and the missing features**, not plumbing. The rule stays: **the director writes cards and looks at real output; builders write the code and the tests.**
 
 ## Start of session (director, ~10 min)
@@ -35,12 +35,12 @@ Every builder has a hard limit of **150 tool calls**: a card must fit (count the
 | 8 | **B31** | Duplicate / near-duplicate chapter detection (reuse the promo filter's dHash) | T1 | filler, card to write |
 | 9a | **U2a → U2b** | Model catalog + `omniscan models` manager (U2a), then loaders read the downloaded folders (U2b) | T2 | U2a card written (`docs/tasks/U2a.md`), launch when a slot frees |
 | 9b | **U6** | Updater core: newest app release from GitHub Releases, download + SHA-256 check, staged folder | T2 | card written (`docs/tasks/U6.md`), launch when a slot frees |
-| 9 | **B33a/b** | `acquire`: **B33a** plumbing (image-list downloader, filters, DRM refusal, `sources.toml`) — ✔ **merged** (the builder caught a wrong row in the card; a review fix makes remembered rejections apply only while filters are on); **Q3** mutation review of it (card written, launch when a slot frees); **B33b** the `omniscan acquire` command + extract.pics client (needs the API docs as text, question A4) | T2 | B33a done, Q3 queued, B33b waits for A4 |
+| 9 | **B33a/b** | `acquire` plumbing + command — ✔ **merged** in 2026-09 and **removed again on 2026-09-22 (card RM1)**: raws are user-supplied; the acquisition subsystem (extract.pics client, relay, `omniscan acquire`) no longer exists | — | superseded |
 | 10 | **C4b/c** | Second-opinion OCR (PaddleOCR-VL); zh/ja model packs (config + tests) | T3 | after real data |
 | 11 | **C7d** | Polygon fitting to the bubble outline, font roles (dialogue/shout/thought/narration), colour matching | T3 | after real data |
 | 12 | **P1/P2** | Portability: torch backend selectable in `pyproject.toml` (ROCm / CUDA / CPU / MPS via `uv` extras + `conflicts`), then a GitHub Actions matrix (Windows + Linux + macOS, CPU tests). Today nothing except this PC can `uv sync`. Needs care: use `--model glm` or do it as director | T3 | decide the shape soon, it changes `pyproject.toml`/`uv.lock` |
 | 13 | **C2** | Hybrid GPU JPEG codec decision (question F1); CPU `turbo` is ~145 Mp/s and not the bottleneck so far | director | open |
-| later | **M13** | Desktop shell (Qt), relay deployment, reference mode (C12), LAN mode | — | `docs/PLAN.md` |
+| later | **M13** | Desktop shell (Qt), reference mode (C12), LAN mode | — | `docs/PLAN.md` |
 
 Merged and reviewed so far (all with mutation checks; details in `docs/reports/<ID>.md`): C3 detect, C4a OCR, C5a post-check/agreement, C5b judge, C6a flat inpaint, C6b LaMa, C7a fit, C7b typeset stage, C7c render + export, X1 Korean fixtures, R1 `omniscan run`,
 Q1 (129 slicer/ingest mutants, 23 test gaps closed), Q2 (115 filter/glossary/importer mutants, 19 gaps closed), E1 golden test.
@@ -68,7 +68,7 @@ The owner's long list (OCR engines/models on all hardware, model UI + updates + 
 | S9 | **L1** | Library covers/metadata via AniList/MangaDex/Jikan (no LLM), user upload. Shapes measured 2026-09-20: AniList GraphQL (30 req/min), MangaDex `includes[]=cover_art` + `uploads.mangadex.org/covers/<id>/<file>` (HEAD not allowed), Jikan flaky (504) | card to write |
 | S10 | **B33b/c/d** | extract.pics client, page-run selection, chapter selection, completeness, plan, `omniscan acquire plan|run|check` | ✔ merged, live-tested on a CC-BY page (4 of 100 free credits used) |
 | S11 | **G1** | `omni_builder.py ask` (read-only GLM lookups) | ✔ merged |
-| S12 | **Q5 / Q6** | Mutation reviews: Q5 hw/hf/`series_config` (running), Q6 acquire + slicer strategies (card written) | Q5 ✔ merged (88 mutants, 9 gaps closed); Q6 waiting |
+| S12 | **Q5 / Q6** | Mutation reviews: Q5 hw/hf/`series_config` (running), Q6 slicer strategies (card written; its acquire half is moot — the subsystem was removed, RM1) | Q5 ✔ merged (88 mutants, 9 gaps closed); Q6 waiting |
 | S13 | **G2** | **Steady GPU load (owner: coil whine):** background GPU warm-up thread (hides the 9–14 s first-conv stall), typeset fit loop 2.5× fewer measurements (identical layouts) | ✔ merged; measured detect 15–17 s → 3.1 s, typeset 5–7 s → 1.5 s (the slice stage now waits 8 s for the warm-up; ~48 s of a 67 s run are outside the stage timers) |
 | S14 | **G3** | Steady GPU load part 2 | ✔ merged 2026-09-22: median wall 44.9 s -> 33.0 s (-30%) on PepperCarrotKR Episode 06, bit-identical outputs (director re-verified after rebase). New: `gpu/timeline.py`, `VramManager.prefetch` (background one-worker prefetch of the next model group, gated on first acquire), evict-skip margin, contiguous single H2D copy. Remaining floor is the MIOpen find chain (~28 s); a kernel-db pre-seed could reach it, open follow-up (not scheduled). |
 | S15 | **GPU lock** | Cross-process exclusive-GPU lock (`omniscan.gpu.lock`), built 2026-09-22 after the owner's GPU driver crashed during concurrent builder+live-check GPU use | ✔ merged, wired into `cli.py`, `queue/executor.py`, `tests/conftest.py` (every `gpu`-marked test); `docs/GPU_NOTES.md` "Cross-process GPU exclusivity" |
@@ -89,8 +89,8 @@ Design (details in `docs/PLAN.md` M13; open questions B4/B11/B12): PySide6 shell
 - Recommendation: one installer per platform that contains the app + the matching torch runtime + the small vision models, and downloads the LLM weights once on first run (progress dialog, checksum) — or an "offline bundle" that includes them (~10–14 GB). Needs the owner's decision (B4/B11/B12) before the cards are written.
 - Cards to write once the pipeline is tuned (not now): **U1** embedded LLM runtime behind `ChatClient` (+ model manager), **U2** device/runtime selection + first-run model downloader, **U3** PySide6 shell (project list, run/queue view with progress, embedded review views, settings), **U4** PyInstaller/Nuitka packaging + CI matrix (Windows/macOS/Linux), **U5** installer + auto-update. U1 and U2 can start earlier and are useful even for the CLI.
 
-## Acquisition (downloader) — scope decided 2026-09-19
-`acquire` is being built as **source-agnostic plumbing**: B33a (running) = ordered, resumable image-list downloader + non-chapter filter + DRM-platform refusal + `sources.toml`; B33b (next) = the `omniscan acquire` command and the extract.pics client (needs the API docs as text, question A4). There is no site-specific code and no HTML crawler in the project, the tool prints a "you are responsible for the rights to this content" notice, and Claude does not run it against unlicensed aggregator sites (see `docs/DECISIONS.md`).
+## Acquisition (downloader) — removed 2026-09-22 (card RM1)
+The acquisition subsystem (`omniscan acquire`, the extract.pics client, the webhook relay) was removed: raws are now exclusively user-supplied via `omniscan import` / the GUI import page. The legal notice ("you are responsible for the rights to this content") still shows on the import page (`omniscan.legal.NOTICE`), and the no-scraping rule for unlicensed aggregator sites stands (see `docs/DECISIONS.md`). Historical scope (decided 2026-09-19, built as B33a/b/c/d, removed by RM1): source-agnostic image-list downloader + non-chapter filter + DRM-platform refusal + `sources.toml`.
 
 ## Risks to watch
 - **No real Korean data yet** — synthetic fonts render cleaner than scans; every tuning number (detect threshold, `ocr.drop_conf`, typeset sizes, the golden-test thresholds) is provisional until A1 is answered.

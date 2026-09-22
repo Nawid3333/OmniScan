@@ -6,6 +6,7 @@
 Goal: drop in raw Korean/Chinese/Japanese chapters (`<Series>/Chapter N/`) and get back English slices that look like an official release. The pipeline removes and inpaints the original text, letters English into the bubbles, keeps names consistent across hundreds of chapters, and later replaces SFX.
 Greenfield project. It runs **GPU end-to-end** on the RX 9070 XT, using as much VRAM as possible. It was planned for WSL2 but is now built and run on **Windows 11 natively** (see "Plan revisions" below; where the text below still says WSL, that is the founding plan).
 Raws come in through an **acquisition layer** (the extract.pics API plus a webhook relay in the repo). **Chapters that are already translated** in a series act as a reference baseline for translating the rest.
+*(Removed 2026-09-22, card RM1: the acquisition layer was deleted — raws are now exclusively user-supplied via `omniscan import` / the GUI import page. Acquisition-related text below is historical.)*
 Work is split: a **GLM builder agent** (Claude Code CLI on your Ollama, **glm-5.3-flash:cloud**) builds the well-specified parts. **Claude (Opus)** writes the task cards, builds the hard parts, and reviews and merges everything.
 
 ## Plan revisions (2026-09-19) — these win over the older text below
@@ -16,7 +17,7 @@ Status by milestone (details in [CHECKPOINT.md](CHECKPOINT.md); the ordered work
 | M0 environment | done — moved to Windows-native; the WSL steps (1, 2, 5) and B17 "Docker for ROCm on WSL" are obsolete |
 | M1 foundation | done (contracts, `VramManager`, scaffold, `doctor`) |
 | M2 codec / ingest / slicer / viewer | done except C2 (hybrid GPU codec): the CPU `turbo` codec is the baseline until a real chapter is profiled |
-| M2b acquisition | relay built but not deployed; `acquire` not built (extract.pics docs unavailable, question A4) |
+| M2b acquisition | superseded 2026-09-22 (RM1): the relay was built but never deployed, `omniscan acquire` was built and then removed — raws are user-supplied (`omniscan import`) |
 | M2c import | done (B21) |
 | M3 promo filter | done (B6, B30) |
 | M4 detect + OCR | C3 half built on branch `C3`; C4 not started; OCR view done (B7) |
@@ -80,7 +81,7 @@ Changes to the plan:
 - **Promo filter:** example-driven; results moved to `_filtered/` (never deleted) with a review panel. Watermark inpainting is optional and comes later.
 - **SFX:** full replacement is the goal; it's a late milestone.
 - **Korean manhwa first**, then Chinese, then Japanese.
-- **Acquisition:** extract.pics API (your key stays local) → webhook → **Cloudflare Worker relay** kept in the repo and deployed by a GitHub Action → pushed to OmniScan over a WebSocket. There's no polling of extract.pics.
+- **Acquisition:** ~~extract.pics API (your key stays local) → webhook → **Cloudflare Worker relay** kept in the repo and deployed by a GitHub Action → pushed to OmniScan over a WebSocket. There's no polling of extract.pics.~~ *(Removed 2026-09-22, card RM1 — raws are user-supplied via `omniscan import`.)*
 - **Reference mode:** translated chapters of the same series are aligned with their raws. Terms that stay consistent across **≥ 3 reference chapters are auto-locked**; the rest are proposed. The reference chapters also feed a style guide, few-shot examples, story memory and a quality benchmark.
 - **Builder model: glm-5.3-flash:cloud** (your choice: more token-efficient, slower). It escalates to glm-5.3:cloud only for a card that fails review twice.
 - **Assumptions to confirm:**
@@ -134,9 +135,8 @@ The builder starts right after M0: **B1 is the pilot** (it calibrates card style
 
 ### Folder layout
 ```
-<library_root>/<Series>/Chapter N/*.jpg|png|webp     ← raws, READ-ONLY (written only by `acquire`)
+<library_root>/<Series>/Chapter N/*.jpg|png|webp     ← raws, READ-ONLY (written only by `omniscan import`)
 <library_root>/<Series>/_reference_en/Chapter N/…    ← already-translated chapters (optional baseline)
-<library_root>/<Series>/sources.toml                 ← chapter URLs / URL template for acquire
 promo_examples/global/*.jpg  promo_examples/<Series>/*.jpg
 <work_root>/<Series>/series.db  glossary.yaml
                      Chapter N/manifest.json ingest.json slices.json filter.json regions.json ocr.json
@@ -151,6 +151,8 @@ promo_examples/global/*.jpg  promo_examples/<Series>/*.jpg
 - The debug tool draws overlays client-side (SVG over the raw JPEGs), so no preview files are needed.
 
 ### Acquisition layer (extract.pics + webhook relay)
+> **Superseded 2026-09-22 (card RM1):** the acquisition layer (extract.pics client, webhook relay, `omniscan acquire`) was removed; raws are user-supplied. Kept as historical design record.
+
 **What extract.pics does (from its docs):**
 - `POST https://api.extract.pics/v0/extractions` with the API key in the `Authorization` header; batches are supported.
 - The webhook URL is set **once per extract.pics project** in the project settings.
@@ -189,7 +191,7 @@ promo_examples/global/*.jpg  promo_examples/<Series>/*.jpg
 8. **Compare view** in the web tool: raw | human EN | OmniScan output, side by side.
 
 ### Stages (package + CLI subcommand + JSON artifact each)
-0. **acquire** (optional): see above; it writes raws into the library.
+0. **acquire** (removed 2026-09-22, card RM1): raws come from `omniscan import` / the GUI import page.
 1. **ingest:** discover series/chapters (natural sort); convert non-JPEG to JPEG q95 4:4:4 (EXIF-rotate, flatten alpha on white, CMYK → RGB).
 2. **vision pass (per chapter, all vision models resident, pixels decoded once into VRAM):**
    - a. codec decodes **straight into the preallocated chapter strip** (so stitching is free). Mismatched widths are resized on the GPU to the dominant width.
@@ -263,7 +265,7 @@ tests/ unit/ fixtures/synthetic/ e2e/      fonts/ (OFL defaults + yours)     mod
 5. [C] Install the Claude Code CLI in WSL; create the `omni-builder` wrapper + flock slots + `.builder/settings.json`; do a smoke run (`omni-builder -p "print the python version"`).
 6. [C] `gh repo create Nawid3333/OmniScan --private`; push `CLAUDE.md`, the task template, `docs/PLAN.md`, `.gitignore`.
 7. [C] `scripts/rocjpeg_probe.py` committed (re-run on every driver update).
-8. [You] Create a free Cloudflare account → an API token ("Edit Cloudflare Workers") + your account ID → I store them as GitHub repo secrets with `gh secret set`. Put your extract.pics API key in `~/.config/omniscan/secrets.env` (never committed). Once the relay is deployed (M2b), paste its hook URL into the extract.pics project settings.
+8. ~~[You] Create a free Cloudflare account → an API token ("Edit Cloudflare Workers") + your account ID → I store them as GitHub repo secrets with `gh secret set`. Put your extract.pics API key in `~/.config/omniscan/secrets.env` (never committed). Once the relay is deployed (M2b), paste its hook URL into the extract.pics project settings.~~ *(Obsolete 2026-09-22, card RM1: the relay was never deployed and the subsystem was removed.)*
 
 ### M1 — Foundation
 - **C1:** contracts:
@@ -298,6 +300,7 @@ tests/ unit/ fixtures/synthetic/ e2e/      fonts/ (OFL defaults + yours)     mod
   - raw ↔ slices view with synced scroll
 
 ### M2b — Acquisition [B, reviewed by C]
+> **Superseded 2026-09-22 (card RM1):** the subsystem described here was built and then removed; raws are user-supplied (`omniscan import`). Kept as historical record.
 - **B18:** Cloudflare Worker relay + Durable Object + GitHub Action deploy + vitest suite. *Accept:*
   - duplicate POSTs are stored once
   - a wrong secret returns 404
@@ -412,7 +415,7 @@ One packaged application (Windows `.exe`, macOS `.app`, Linux binary) instead of
 - Per-stage metrics: time, peak VRAM (≤ budget), CPU %, OCR fallback rate, **glossary violations = 0 for locked terms**, overflow count.
 - Re-running is a no-op (resumable); editing one line re-renders only that slice.
 - Builder loop: every merged card has a PR, a green CI-equivalent (pytest/ruff/pyright) and a REPORT.md.
-- Acquisition: the relay vitest suite is green in the GitHub Action. A live extract.pics chapter → event arrives over the WebSocket with no polling → the chapter folder is written in order.
+- ~~Acquisition: the relay vitest suite is green in the GitHub Action. A live extract.pics chapter → event arrives over the WebSocket with no polling → the chapter folder is written in order.~~ *(Superseded 2026-09-22, card RM1: the acquisition subsystem was removed; raws come from `omniscan import`.)*
 - Reference mode: on a series with translated chapters, alignment precision is spot-checked in the Compare view. Auto-locked terms match the human translation. The calibration report ranks the profiles, and the chosen setup beats the default on held-out reference chapters.
 
 ## Backlog — scoped out for now, don't lose these

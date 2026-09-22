@@ -145,8 +145,13 @@ def test_ollama_cloud_key_rejected() -> None:
 def test_secrets_missing_listed() -> None:
     result = doctor.check_secrets(make_secrets())
     assert result.status == "WARN"
-    assert "EXTRACTPICS_API_KEY" in result.detail
-    assert "OMNISCAN_RELAY_CLIENT_TOKEN" in result.detail
+    assert result.detail == "not set: OLLAMA_API_KEY"
+
+
+def test_secrets_all_set() -> None:
+    result = doctor.check_secrets(make_secrets(ollama_api_key="test-key"))
+    assert result.status == "OK"
+    assert result.detail == "all optional secrets set"
 
 
 def test_rocm_not_applicable_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:

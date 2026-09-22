@@ -14,9 +14,6 @@ Each has the **default I will use until you answer**, so nothing is blocked unle
 | ID | Question | Blocks / why it matters | Default until answered |
 |---|---|---|---|
 | A1 | Can you provide **1–2 real Korean raw chapters** (a folder of images; `omniscan import "<folder>" --series Sample --chapter "Chapter 1"`)? | **Blocks** tuning detection/OCR on real Korean text; everything so far was validated on English/synthetic pages | I keep using the CC BY *Pepper&Carrot* pages (English) |
-| A3 | Cloudflare account + API token ("Edit Cloudflare Workers") + account id, your extract.pics API key, and later the relay hook URL (plan M0 step 8) | **Blocks** deploying the relay (B18) and live `acquire` | Relay code stays undeployed |
-| A4 | Can you paste the **extract.pics API docs as text** (or export the OpenAPI/Markdown; the quickstart URL you sent is a JS app and `WebFetch` returns nothing, no `llms.txt`/`openapi.json` exists)? The key is already stored in `secrets.env` | **Blocks** the concrete extract.pics client in `acquire` (B19); the rest of acquire can be built without it | I build downloader/sources/filter first and leave the client as a stub |
-| A5 | Which **sites** do you actually raw-acquire from? | Referer/hotlink rules, non-chapter-image filter heuristics, the DRM-platform warning list | Generic heuristics only |
 | A6 | Which **promo / end-card** pages appear in your raws (drop 3–5 examples into `promo_examples/global/` and per series)? | The promo filter is example-driven; with no examples it filters nothing | Nothing filtered |
 
 ## B. Platforms, distribution and the universal app
@@ -101,3 +98,4 @@ Each has the **default I will use until you answer**, so nothing is blocked unle
 | 2026-09-19 | GPU choice | `gpu.device = "auto"` picks the strongest discrete GPU (skips integrated GPUs); no hard-coded `cuda:0` |
 | 2026-09-19 | Process | Open questions are kept in this file and asked at natural pauses; a checkpoint lives in `docs/CHECKPOINT.md` |
 | 2026-09-19 | Product | Owner wants the exe fully self-contained ("people just run the exe, everything the program needs is inside"). Open: does that include the local LLM weights (installer ~10–14 GB) or a first-run download (B4/B11/B12)? The translator currently needs Ollama |
+| 2026-09-22 | Raws | Raws are now exclusively user-supplied (`omniscan import` / GUI import page); the acquisition subsystem (extract.pics client, webhook relay, `omniscan acquire`) was removed |

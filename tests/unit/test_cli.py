@@ -43,7 +43,7 @@ runner = CliRunner()
 def test_help_lists_all_commands() -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    for name in ("doctor", "version", "typeset", "acquire", *STUB_COMMANDS):
+    for name in ("doctor", "version", "typeset", "import", *STUB_COMMANDS):
         assert name in result.output
 
 

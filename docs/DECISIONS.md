@@ -44,9 +44,10 @@ group. "Status": **firm** (measured or explicitly decided), **default** (my choi
 ## Acquisition
 | Decision | Why / evidence | Status |
 |---|---|---|
-| extract.pics → **Cloudflare Worker relay** (kept in the repo, deployed by GitHub Actions) → WebSocket to the app; GitHub itself cannot be the webhook | The extract.pics form has only a URL (no headers/secret); GitHub's inbound triggers need an `Authorization` header — a live test got 401/405 | firm; relay built, not deployed; client unfinished (docs not fetchable, Q A4) |
+| Raws are user-supplied only (`omniscan import` / the GUI import page); the acquisition subsystem (extract.pics client, webhook relay, `omniscan acquire`) was removed | Owner 2026-09-22: "you can now delete the extract pics api and stuff because now the manhwas and manga files will be provided by the user" | firm (card RM1) |
+| extract.pics → **Cloudflare Worker relay** (kept in the repo, deployed by GitHub Actions) → WebSocket to the app; GitHub itself cannot be the webhook | The extract.pics form has only a URL (no headers/secret); GitHub's inbound triggers need an `Authorization` header — a live test got 401/405 | **superseded 2026-09-22 (RM1)**: the relay and the extract.pics client were removed with the subsystem |
 | **No acquisition from paid DRM platforms** | Obfuscated canvases; a different, riskier problem; scope boundary in the plan | firm (Q C2 asks to confirm) |
-| Local import (`omniscan import`) is a first-class second path | Groups already have raws on disk | firm, built |
+| Local import (`omniscan import`) is a first-class second path | Groups already have raws on disk | firm, built — now the only path |
 
 ## Tooling and process
 | Decision | Why / evidence | Status |
@@ -57,7 +58,7 @@ group. "Status": **firm** (measured or explicitly decided), **default** (my choi
 | Job queue: SQLite, single worker per queue, notifications never fail a job | Simple, resumable; multi-worker not needed yet | firm |
 | Questions live in `docs/OPEN_QUESTIONS.md`; state lives in `docs/CHECKPOINT.md`; conversation learnings live here and in `docs/HANDOFF.md` | The owner asked that nothing depend on chat history | firm |
 | Test and tuning data must be legally usable: own chapters via `omniscan import`, open-licensed comics (Pepper&Carrot, CC BY 4.0: Korean/English/text-free versions of the same art), official free chapters. Claude does not scrape unlicensed aggregator sites (toongod, wfwf, …) or fetch fan translations, and does not pick commercial titles to download | Those copies are unlicensed; Pepper&Carrot gives real Korean lettering plus exact ground truth without that problem (owner asked for scraping on 2026-09-19; declined, alternative delivered) | firm |
-| `acquire` is built against the extract.pics API only after its docs text is available (the docs site is a JS app: `WebFetch`, `llms.txt` and `openapi.json` all fail); the API key lives only in `~/.config/omniscan/secrets.env` (`EXTRACTPICS_API_KEY`), never in the repo, cards or builder prompts | Builders test against fakes; a key pasted in chat should be rotated if the transcript is shared | firm |
+| `acquire` is built against the extract.pics API only after its docs text is available (the docs site is a JS app: `WebFetch`, `llms.txt` and `openapi.json` all fail); the API key lives only in `~/.config/omniscan/secrets.env` (`EXTRACTPICS_API_KEY`), never in the repo, cards or builder prompts | Builders test against fakes; a key pasted in chat should be rotated if the transcript is shared | **superseded 2026-09-22 (RM1)**: the acquire subsystem was removed |
 | The app is small; models are downloaded by the user's choice from a settings list. Vision/OCR/LaMa weights are mirrored as assets of the release `models-v1` (Apache-2.0, unchanged, hashes in `config/models.toml`), with automatic fallback to the upstream sources; LLMs come from Ollama | Small installer, user control (owner 2026-09-19); big LLM weights do not belong in a repo; the mirror repo is private today so the fallback is essential | firm |
 | App updates: GitHub Releases built by GitHub Actions, app tags `vX.Y.Z` only, `SHA256SUMS` verified before staging | Owner wish (2026-09-19); the repository also carries non-app releases (`models-v1`), so the updater filters by tag | firm |
 

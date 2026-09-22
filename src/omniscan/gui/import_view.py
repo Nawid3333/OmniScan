@@ -31,7 +31,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from omniscan.acquire.drm import NOTICE
 from omniscan.gui.services.importer import (
     ImporterService,
     conversion_text,
@@ -43,6 +42,7 @@ from omniscan.gui.services.importer import (
 )
 from omniscan.gui.workers import WorkerSignals, run_task
 from omniscan.importer.plan import ARCHIVE_SUFFIXES, JPEG_SUFFIXES, ImportPlan
+from omniscan.legal import NOTICE
 
 CONVERT_BACKGROUND = QBrush(QColor(255, 249, 196))  # light yellow: this page will be re-encoded
 

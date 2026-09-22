@@ -9,7 +9,6 @@ packaged into CBZ/PDF.
 
 | Stage | Status |
 |---|---|
-| acquire | working — `omniscan acquire plan` / `run` / `check` (extract.pics; needs `EXTRACTPICS_API_KEY` for `run`) |
 | import | working — `omniscan import` |
 | ingest | working — `omniscan ingest` |
 | slice | working — `omniscan slice` |
@@ -78,8 +77,8 @@ npm run dev
 # precedence: built-in defaults < config/default.toml < ~/.config/omniscan/config.toml < environment
 # env pattern: OMNISCAN_<SECTION>__<KEY>, e.g.:
 OMNISCAN_PATHS__LIBRARY_ROOT=/data/omniscan/library OMNISCAN_GPU__CODEC=turbo
-# secrets live only in ~/.config/omniscan/secrets.env (OLLAMA_API_KEY, EXTRACTPICS_API_KEY,
-# OMNISCAN_RELAY_CLIENT_TOKEN) — never commit them; `omniscan doctor` reports which are unset
+# secrets live only in ~/.config/omniscan/secrets.env (OLLAMA_API_KEY) — never commit them;
+# `omniscan doctor` reports which are unset
 ```
 
 See the full key reference and per-command details in the user guide:

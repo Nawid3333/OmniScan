@@ -4,7 +4,7 @@ Read this before implementing any stage. Contracts live in `src/omniscan/core/` 
 
 ## Layout on disk
 ```
-<library_root>/<Series>/Chapter N/*.jpg     raws (read-only; written only by `acquire`)
+<library_root>/<Series>/Chapter N/*.jpg     raws (read-only; written only by `omniscan import`)
 <library_root>/<Series>/_reference_en/...   already-translated chapters (reference mode)
 <work_root>/<Series>/series.db              glossary, story memory, run registry
 <work_root>/<Series>/Chapter N/             manifest.json + JSON/.npz artifacts (no intermediate images)
@@ -63,7 +63,7 @@ host buffers + `non_blocking=True` for transfers (measured: pinned H2D 49 GB/s v
 
 ## Config (`core/config.py`)
 `get_config()` merges defaults → `config/default.toml` → `~/.config/omniscan/config.toml` → env
-`OMNISCAN_<SECTION>__<KEY>`. Secrets (`OLLAMA_API_KEY`, `EXTRACTPICS_API_KEY`, `OMNISCAN_RELAY_CLIENT_TOKEN`) come only
+`OMNISCAN_<SECTION>__<KEY>`. Secrets (`OLLAMA_API_KEY`) come only
 from env or `~/.config/omniscan/secrets.env` via `get_secrets()`; never log them.
 
 ## Render pass (inpaint → typeset → export)

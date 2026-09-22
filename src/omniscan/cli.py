@@ -15,7 +15,6 @@ from PIL import Image
 from rich.console import Console
 from rich.table import Table
 
-from omniscan.acquire.cli import acquire_app
 from omniscan.core.config import Config, get_config, get_secrets, series_config
 from omniscan.core.paths import ChapterPaths, SeriesPaths, chapter_number, list_chapters, list_images
 from omniscan.core.schemas import GlossaryEntry, IngestArtifact, SlicesArtifact
@@ -1650,8 +1649,6 @@ def update_download(
 app.add_typer(update_app, name="update")
 
 app.add_typer(match_app, name="match")
-
-app.add_typer(acquire_app, name="acquire")
 
 
 @app.command("gui")
