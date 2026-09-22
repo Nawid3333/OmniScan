@@ -9,7 +9,8 @@
       "WebFetch",
       "Read(~/.config/omniscan/**)",
       "Read(**/.env*)",
-      "Read(**/secrets.env)"
+      "Read(**/secrets.env)",
+      "Read(~/.claude/**)"
     ]
   },
   "env": {

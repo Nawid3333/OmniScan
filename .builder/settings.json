@@ -49,6 +49,9 @@
       "Read(~/.config/omniscan/**)",
       "Read(**/.env*)",
       "Read(**/secrets.env)",
+      "Read(~/.claude/**)",
+      "Edit(~/.claude/**)",
+      "Write(~/.claude/**)",
       "Bash(uv sync:*)",
       "Bash(uv add:*)",
       "Bash(uv remove:*)"
