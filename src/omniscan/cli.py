@@ -26,7 +26,13 @@ from omniscan.glossary.store import GlossaryStore
 from omniscan.glossary.yaml_io import export_yaml, import_yaml
 from omniscan.gpu.timeline import mark
 from omniscan.importer.execute import execute_import
-from omniscan.importer.plan import ImportPlanError, plan_import
+from omniscan.importer.plan import (
+    ARCHIVE_SUFFIXES,
+    ImportPlan,
+    ImportPlanError,
+    files_to_convert,
+    plan_import,
+)
 from omniscan.llm.ollama import OllamaClient, OllamaError, OllamaRateLimitError
 from omniscan.log import setup_logging
 from omniscan.match.cli import match_app
@@ -119,7 +125,7 @@ def hardware(
 
 
 def cmd_import(
-    source: Annotated[Path, typer.Argument(exists=True, file_okay=False)],
+    source: Annotated[Path, typer.Argument(exists=True, help="Folder, or a .zip/.cbz archive.")],
     series: Annotated[str | None, typer.Option("--series")] = None,
     chapter: Annotated[str | None, typer.Option("--chapter")] = None,
     move: Annotated[
@@ -129,13 +135,18 @@ def cmd_import(
         bool, typer.Option("--dry-run", help="Print the plan without writing anything.")
     ] = False,
 ) -> None:
-    """Import raw chapter images from a local folder into the library."""
+    """Import raw chapter images from a local folder or .zip/.cbz archive into the library."""
+    if source.is_file() and source.suffix.lower() not in ARCHIVE_SUFFIXES:
+        typer.echo(f"import: {source} is not a folder or a .zip/.cbz archive", err=True)
+        raise typer.Exit(2)
+    plan = None
     try:
         plan = plan_import(source, series=series, chapter=chapter)
         if dry_run:
             typer.echo(f"import: plan for series '{plan.series}' — {len(plan.items)} chapter(s)")
             for item in plan.items:
                 typer.echo(f"import:   {item.chapter}: {len(item.files)} file(s)")
+            _note_conversions(plan, "import:   {} file(s) will be converted to JPEG")
             for warning in plan.warnings:
                 typer.echo(f"import:   {warning}", err=True)
             return
@@ -143,14 +154,24 @@ def cmd_import(
     except ImportPlanError as exc:
         typer.echo(f"import: {exc}", err=True)
         raise typer.Exit(2) from exc
+    finally:
+        if plan is not None:
+            plan.cleanup()  # archive extractions are one-shot for the CLI
     for chapter_written in result.chapters_written:
         typer.echo(f"import: {plan.series}/{chapter_written}")
     for warning in plan.warnings:
         typer.echo(f"import: {warning}", err=True)
-    typer.echo(
-        f"import: {result.files_copied} file(s) copied, "
-        f"{result.files_skipped_duplicate} duplicate file(s) skipped"
-    )
+    summary = f"import: {result.files_copied} file(s) copied"
+    if result.files_converted:
+        summary += f", {result.files_converted} file(s) converted to JPEG"
+    typer.echo(summary + f", {result.files_skipped_duplicate} duplicate file(s) skipped")
+
+
+def _note_conversions(plan: ImportPlan, line: str) -> None:
+    """Print `line` (formatted with the conversion count) when the plan converts any file."""
+    count = len(files_to_convert(plan))
+    if count:
+        typer.echo(line.format(count))
 
 
 app.command("import")(cmd_import)

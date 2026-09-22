@@ -1,10 +1,13 @@
-"""Import planning: read-only inspection of a source folder into chapter/file items (three shapes)."""
+"""Import planning: read-only inspection of a source folder or .zip/.cbz archive into chapter/file items (three shapes)."""
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
-from pathlib import Path
+import shutil
+import tempfile
+import zipfile
+from dataclasses import dataclass, field, replace
+from pathlib import Path, PurePosixPath
 
 from omniscan.core.paths import (
     IMAGE_SUFFIXES,
@@ -21,6 +24,9 @@ from omniscan.core.paths import (
 # chapters. Per-file grouping (Case C) only fires on an explicit marker ("Ch1", "Chapter_02", "ep3", ...);
 # bare page numbers fall through to Case A instead (single chapter, needs --chapter or a parseable folder name).
 _EXPLICIT_CHAPTER_RE = re.compile(r"(?:chapter|chap|ch|episode|ep)[\s._-]*(\d+(?:\.\d+)?)", re.IGNORECASE)
+
+ARCHIVE_SUFFIXES = frozenset({".zip", ".cbz"})
+JPEG_SUFFIXES = frozenset({".jpg", ".jpeg"})
 
 
 def _explicit_chapter_number(name: str) -> float | None:
@@ -47,15 +53,34 @@ class ImportPlan:
     series: str
     items: list[ImportPlanItem]
     warnings: list[str]  # e.g. "skipped non-image file: notes.txt"
+    archive: Path | None = None  # the source archive, when the plan was made from one
+    temp_dir: tempfile.TemporaryDirectory[str] | None = field(
+        default=None, compare=False, repr=False
+    )  # where archive members were extracted; `cleanup()` removes it
+
+    def cleanup(self) -> None:
+        """Remove the extracted archive's temporary files (no-op when the source was a folder)."""
+        if self.temp_dir is not None:
+            self.temp_dir.cleanup()
 
 
 def plan_import(source: Path, *, series: str | None = None, chapter: str | None = None) -> ImportPlan:
-    """Read-only inspection of `source`; never touches the filesystem outside of listing it.
+    """Read-only inspection of `source` (folder, or .zip/.cbz archive extracted to a temp dir).
 
-    Supports three shapes, decided by `source`'s immediate children: a single chapter folder
+    Folder sources: three shapes, decided by `source`'s immediate children — a single chapter folder
     (all image files), a folder of chapter folders (all children are directories naming chapters),
     or a flat dump of images whose filenames carry the chapter number.
     """
+    source = Path(source)
+    if source.suffix.lower() in ARCHIVE_SUFFIXES:
+        return _plan_archive(source, series=series, chapter=chapter)
+    return _plan_folder(source.resolve(), series=series, chapter=chapter)
+
+
+def _plan_folder(
+    source: Path, *, series: str | None, chapter: str | None
+) -> ImportPlan:
+    """The folder path: unchanged from before archives existed (all three shapes live here)."""
     source = source.resolve()
     if not source.is_dir():
         raise ImportPlanError(f"source folder not found: {source}")
@@ -83,6 +108,67 @@ def plan_import(source: Path, *, series: str | None = None, chapter: str | None 
     if dirs:
         return _plan_folder_of_folders(source, dirs, series=series, chapter=chapter, warnings=warnings)
     return _plan_flat(source, list_images(source), series=series, chapter=chapter, warnings=warnings)
+
+
+def _plan_archive(source: Path, *, series: str | None, chapter: str | None) -> ImportPlan:
+    """Archive shape: extract to a temp dir and plan the extracted folder (same three shapes).
+
+    The series defaults to the archive's own name without extension; a lone top-level wrapper
+    folder (how archive tools usually export a series) is descended into. The extraction lives
+    until `ImportPlan.cleanup()` — the plan's items point into it.
+    """
+    if not source.is_file():
+        raise ImportPlanError(f"source archive not found: {source.resolve()}")
+    temp_dir = tempfile.TemporaryDirectory(prefix="omniscan-import-")
+    try:
+        root = _unwrap(_extract_archive(source, Path(temp_dir.name) / "archive"))
+        plan = _plan_folder(root, series=source.stem if series is None else series, chapter=chapter)
+    except BaseException:
+        temp_dir.cleanup()  # a failed plan must not leak its extraction
+        raise
+    return replace(plan, archive=source, temp_dir=temp_dir)
+
+
+def _extract_archive(source: Path, dest: Path) -> Path:
+    """Extract `source`'s file members into `dest` (returning it); unreadable archives raise ImportPlanError."""
+    dest.mkdir(parents=True, exist_ok=True)  # an archive with no file members is still an empty root
+    try:
+        with zipfile.ZipFile(source) as archive:
+            for member in archive.infolist():
+                _extract_member(archive, member, dest)
+    except ImportPlanError:
+        raise
+    except (zipfile.BadZipFile, RuntimeError, OSError) as exc:  # truncated/corrupt, or encrypted members
+        raise ImportPlanError(f"can't read archive {source.resolve()}: {exc}") from exc
+    return dest
+
+
+def _extract_member(archive: zipfile.ZipFile, member: zipfile.ZipInfo, dest: Path) -> None:
+    """Write one regular-file member into `dest`, refusing names that would escape the tree."""
+    name = PurePosixPath(member.filename)
+    if member.is_dir() or not name.parts:
+        return
+    if name.is_absolute() or ".." in name.parts or name.drive:
+        raise ImportPlanError(f"unsafe member name in {archive.filename}: {member.filename!r}")
+    target = dest.joinpath(*name.parts)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with archive.open(member) as member_file, target.open("wb") as out:
+        shutil.copyfileobj(member_file, out)
+
+
+def _unwrap(root: Path) -> Path:
+    """Descend through a lone top-level wrapper folder (only when the root holds exactly that one child)."""
+    while True:
+        entries = list(root.iterdir())
+        if len(entries) == 1 and entries[0].is_dir():
+            root = entries[0]
+        else:
+            return root
+
+
+def files_to_convert(plan: ImportPlan) -> list[Path]:
+    """Source files a commit will re-encode to JPEG (every image whose suffix is not .jpg/.jpeg)."""
+    return [file for item in plan.items for file in item.files if file.suffix.lower() not in JPEG_SUFFIXES]
 
 
 def _plan_folder_of_folders(

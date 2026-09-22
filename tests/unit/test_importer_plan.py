@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+import zipfile
 from pathlib import Path
 
 import pytest
 
-from omniscan.importer.plan import ImportPlanError, plan_import
+from omniscan.importer.plan import (
+    ImportPlan,
+    ImportPlanError,
+    ImportPlanItem,
+    files_to_convert,
+    plan_import,
+)
 
 
 def _write_files(folder: Path, names: list[str], content: bytes = b"img") -> None:
@@ -154,3 +161,142 @@ def test_case_c_requires_explicit_chapter_keyword(tmp_path: Path) -> None:
 
     with pytest.raises(ImportPlanError, match=r"02\.jpg"):
         plan_import(src, series="Solo Leveling")
+
+
+# ---------------------------------------------------------------- archives
+
+
+def _make_zip(path: Path, members: dict[str, bytes]) -> Path:
+    """A .zip (or .cbz by name) holding the given member names and contents."""
+    with zipfile.ZipFile(path, "w") as archive:
+        for name, content in members.items():
+            archive.writestr(name, content)
+    return path
+
+
+def test_zip_folder_of_folders(tmp_path: Path) -> None:
+    src = _make_zip(tmp_path / "My Series.zip", {"Chapter 10/2.jpg": b"i", "Chapter 2/1.jpg": b"i"})
+
+    plan = plan_import(src)
+
+    assert plan.series == "My Series"  # the archive's own name without extension
+    assert plan.archive == src
+    assert [(item.chapter, [p.name for p in item.files]) for item in plan.items] == [
+        ("Chapter 2", ["1.jpg"]),
+        ("Chapter 10", ["2.jpg"]),
+    ]
+    assert plan.warnings == []
+
+
+def test_cbz_single_chapter_folder(tmp_path: Path) -> None:
+    src = _make_zip(tmp_path / "One Chapter.cbz", {"Chapter 5/2.jpg": b"i", "Chapter 5/1.jpg": b"i"})
+
+    plan = plan_import(src)
+
+    assert plan.series == "One Chapter"  # Case A still needs a series; the stem provides it
+    assert len(plan.items) == 1
+    assert plan.items[0].chapter == "Chapter 5"
+    assert [p.name for p in plan.items[0].files] == ["1.jpg", "2.jpg"]
+
+
+def test_zip_flat_dump_grouped_by_filename_marker(tmp_path: Path) -> None:
+    src = _make_zip(tmp_path / "dump.zip", {"S_Ch2_01.jpg": b"i", "S_Ch1_02.jpg": b"i", "S_Ch1_01.jpg": b"i"})
+
+    plan = plan_import(src)
+
+    assert [(item.chapter, [p.name for p in item.files]) for item in plan.items] == [
+        ("Chapter 1", ["S_Ch1_01.jpg", "S_Ch1_02.jpg"]),
+        ("Chapter 2", ["S_Ch2_01.jpg"]),
+    ]
+
+
+def test_zip_wrapper_folder_is_unwrapped(tmp_path: Path) -> None:
+    # Archive tools usually export a series as one wrapping folder; the plan descends into it.
+    src = _make_zip(
+        tmp_path / "My Manhwa.zip",
+        {"My Manhwa/Chapter 1/1.jpg": b"i", "My Manhwa/Chapter 2/1.jpg": b"i"},
+    )
+
+    plan = plan_import(src)
+
+    assert plan.series == "My Manhwa"
+    assert [item.chapter for item in plan.items] == ["Chapter 1", "Chapter 2"]
+
+
+def test_zip_series_option_overrides_stem(tmp_path: Path) -> None:
+    src = _make_zip(tmp_path / "whatever.zip", {"Chapter 1/1.jpg": b"i"})
+
+    plan = plan_import(src, series="Solo Leveling")
+
+    assert plan.series == "Solo Leveling"
+
+
+def test_zip_warns_about_non_image_members(tmp_path: Path) -> None:
+    src = _make_zip(tmp_path / "My Series.zip", {"Chapter 1/1.jpg": b"i", "cover.txt": b"t"})
+
+    plan = plan_import(src)
+
+    assert plan.warnings == ["skipped non-image file: cover.txt"]
+
+
+def test_corrupt_zip_raises_clear_error(tmp_path: Path) -> None:
+    src = tmp_path / "broken.zip"
+    src.write_bytes(b"this is not a zip file")
+
+    with pytest.raises(ImportPlanError, match="can't read archive"):
+        plan_import(src)
+
+
+def test_missing_archive_raises(tmp_path: Path) -> None:
+    with pytest.raises(ImportPlanError, match="source archive not found"):
+        plan_import(tmp_path / "nope.cbz")
+
+
+def test_empty_zip_raises(tmp_path: Path) -> None:
+    src = _make_zip(tmp_path / "empty.zip", {})
+
+    with pytest.raises(ImportPlanError, match="source folder is empty"):
+        plan_import(src)
+
+
+def test_zip_slip_member_name_is_refused(tmp_path: Path) -> None:
+    src = _make_zip(tmp_path / "evil.zip", {"../escape.txt": b"x"})
+
+    with pytest.raises(ImportPlanError, match="unsafe member name"):
+        plan_import(src)
+
+
+def test_plan_cleanup_removes_extraction(tmp_path: Path) -> None:
+    src = _make_zip(tmp_path / "My Series.zip", {"Chapter 1/1.jpg": b"i"})
+
+    plan = plan_import(src)
+    extracted = plan.items[0].files[0]
+    assert extracted.is_file()  # the plan's files point into the extraction
+    assert plan.temp_dir is not None
+
+    plan.cleanup()
+    plan.cleanup()  # twice is fine (TemporaryDirectory cleanup is idempotent)
+
+    assert not extracted.exists()
+
+
+def test_edited_plan_keeps_the_extraction_alive(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    plan = plan_import(_make_zip(tmp_path / "My Series.zip", {"Chapter 1/1.jpg": b"i"}))
+    assert plan.temp_dir is not None
+
+    edited = replace(plan, items=[ImportPlanItem(chapter="Chapter 1", files=list(plan.items[0].files))])
+
+    assert edited.temp_dir is plan.temp_dir  # dataclasses.replace preserves the extraction
+
+
+def test_files_to_convert_lists_only_non_jpegs(tmp_path: Path) -> None:
+    src = tmp_path / "mixed"
+    _write_files(src, ["p1.jpg", "p2.png", "p3.bmp", "p4.jpeg"])
+
+    plan = plan_import(src, series="Solo Leveling", chapter="Chapter 1")
+
+    assert [p.name for p in files_to_convert(plan)] == ["p2.png", "p3.bmp"]
+    all_jpeg = plan_import(_make_zip(tmp_path / "alljpg.zip", {"Chapter 1/1.jpg": b"i"}))
+    assert files_to_convert(all_jpeg) == []
