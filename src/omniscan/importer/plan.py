@@ -130,6 +130,7 @@ def _plan_archive(source: Path, *, series: str | None, chapter: str | None) -> I
 def _extract_archive(source: Path, dest: Path) -> Path:
     """Extract `source`'s file members into `dest` (returning it); unreadable archives raise ImportPlanError."""
     dest.mkdir(parents=True, exist_ok=True)  # an archive with no file members is still an empty root
+    dest = dest.resolve()
     try:
         with zipfile.ZipFile(source) as archive:
             for member in archive.infolist():
@@ -141,14 +142,31 @@ def _extract_archive(source: Path, dest: Path) -> Path:
     return dest
 
 
+_UNSAFE_MEMBER_RE = re.compile(r"^[A-Za-z]:|\\")  # a Windows drive prefix, or any backslash
+
+
 def _extract_member(archive: zipfile.ZipFile, member: zipfile.ZipInfo, dest: Path) -> None:
-    """Write one regular-file member into `dest`, refusing names that would escape the tree."""
+    """Write one regular-file member into `dest`, refusing names that would escape the tree.
+
+    `member.filename` is attacker-controlled and only *nominally* POSIX-style (the ZIP spec mandates
+    forward slashes). A name pattern check on the parsed `PurePosixPath` alone is not sufficient on a
+    Windows host: a drive prefix (`C:/evil/file.txt`) parses with an empty `.drive` on `PurePosixPath`
+    (POSIX paths have no drive concept, so that check would be a no-op), and a name with an embedded
+    backslash (`..\\x`) stays one opaque part under `PurePosixPath` (which never splits on `\\`) yet
+    gets split once joined onto a real (Windows) `Path` — whether that actually escapes `dest` then
+    depends on which physical drive `dest` happens to live on, which is not something to rely on.
+    Neither a drive prefix nor a backslash is ever legitimate in a ZIP member name, so both are
+    rejected outright; the resolved target is then also verified to land inside `dest` as a second,
+    independent guard (catches plain `..`/absolute members regardless of platform).
+    """
+    if _UNSAFE_MEMBER_RE.search(member.filename):
+        raise ImportPlanError(f"unsafe member name in {archive.filename}: {member.filename!r}")
     name = PurePosixPath(member.filename)
     if member.is_dir() or not name.parts:
         return
-    if name.is_absolute() or ".." in name.parts or name.drive:
+    target = dest.joinpath(*name.parts).resolve()
+    if target != dest and dest not in target.parents:
         raise ImportPlanError(f"unsafe member name in {archive.filename}: {member.filename!r}")
-    target = dest.joinpath(*name.parts)
     target.parent.mkdir(parents=True, exist_ok=True)
     with archive.open(member) as member_file, target.open("wb") as out:
         shutil.copyfileobj(member_file, out)

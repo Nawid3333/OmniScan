@@ -265,6 +265,27 @@ def test_zip_slip_member_name_is_refused(tmp_path: Path) -> None:
         plan_import(src)
 
 
+def test_zip_slip_drive_letter_member_name_is_refused(tmp_path: Path) -> None:
+    """A `C:/...`-style member name: PurePosixPath.drive is always empty (POSIX has no drives), so a
+    check on that attribute alone would silently do nothing — the extracted path must still be
+    verified to land inside the extraction directory."""
+    src = _make_zip(tmp_path / "evil-drive.zip", {"C:/escape.txt": b"x"})
+
+    with pytest.raises(ImportPlanError, match="unsafe member name"):
+        plan_import(src)
+
+
+def test_zip_slip_backslash_member_name_is_refused(tmp_path: Path) -> None:
+    """A member name with an embedded backslash stays one opaque part under PurePosixPath (which
+    never splits on `\\`), but Windows' own path flavour splits it once joined onto a real Path —
+    so a pattern check on the parsed parts alone would miss this; only a containment check on the
+    resolved target catches it."""
+    src = _make_zip(tmp_path / "evil-backslash.zip", {"..\\escape.txt": b"x"})
+
+    with pytest.raises(ImportPlanError, match="unsafe member name"):
+        plan_import(src)
+
+
 def test_plan_cleanup_removes_extraction(tmp_path: Path) -> None:
     src = _make_zip(tmp_path / "My Series.zip", {"Chapter 1/1.jpg": b"i"})
 

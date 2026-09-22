@@ -217,3 +217,31 @@ runs on the CPU (libjpeg-turbo); when card C2 (rocJPEG) lands, both the line and
 `CONVERSION_REASON` string in `gui/services/importer.py` are the two places to update. (2) The
 demo/screenshot workflow (`scripts/gui_import_demo.py`) builds its archive in code and never
 touches real manga, so it is safe to re-run anytime.
+
+## Review addendum (director)
+
+Verified independently before merge: `ruff format --check`/`ruff check`/`pyright` clean, full
+`pytest -m "not gpu"` green (3714 passed pre-fix), the screenshot script re-run for real (fonts
+pointed at `C:\Windows\Fonts`, not the guessed path in the card) — the page matches the report's
+description exactly (DRM notice, honest CPU/libjpeg-turbo wording, editable plan tree with
+per-page conversion highlights, grouping controls, per-file conversion list, progress/summary).
+
+Found and fixed a **zip-slip / path-traversal vulnerability** in `_extract_member`
+(`importer/plan.py`) before merging: the original guard (`name.is_absolute() or ".." in
+name.parts or name.drive`, checked on a `PurePosixPath`) does not actually hold on Windows —
+`PurePosixPath.drive` is always empty (POSIX paths have no drive concept), so a member name like
+`C:/evil/file.txt` passes the check silently; separately, a name with an embedded backslash
+(`..\evil.txt`) stays one opaque part under `PurePosixPath` (which never splits on `\`) so `".."
+in name.parts` also misses it, yet the backslash *does* get split once the name is joined onto a
+real Windows `Path`, so the write still escapes the extraction directory. Confirmed both bypasses
+empirically (`dest.joinpath(*name.parts)` landing outside `dest`) before fixing.
+
+Fix: reject any member name containing a backslash or matching a Windows drive prefix
+(`^[A-Za-z]:`) outright — neither is ever legitimate in a ZIP member name — and, as a second,
+independent guard, resolve the joined target and verify it actually sits inside the (also
+resolved) extraction directory, rather than trying to enumerate every unsafe name pattern.
+Added `test_zip_slip_drive_letter_member_name_is_refused` and
+`test_zip_slip_backslash_member_name_is_refused` to `tests/unit/test_importer_plan.py`
+(29 tests now pass in that file, all deterministic regardless of which physical drive the OS
+temp directory happens to live on). Re-ran the full suite after the fix: 3716 passed, ruff/pyright
+still clean. No other files touched.
