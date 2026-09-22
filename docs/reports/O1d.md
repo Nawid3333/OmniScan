@@ -121,3 +121,5 @@ Acceptance tests, mapped to the card:
 88ee2d1 O1d: WIP vl reader
 <final> O1d: PaddleOCR-VL engine
 ```
+## Review addendum (director, 2026-09-22)
+Rebased on main; ruff/pyright clean, CPU suite 3585 passed. Live check: found and fixed a pre-existing bug this card exposed but did not cause — `cli.py` built the VRAM manager from the un-merged user config, so a per-series `ocr.engine` override (the natural way to opt one series into `paddleocr_vl`) crashed with `KeyError('reader')`; fixed separately on main (`84f7dbb`). The card's own GPU acceptance test (`test_ocr_vl_gpu.py`, real `ocr-vl-1.6` installed) passed twice on the RX 9070 XT after one unexplained fatal (non-Python) crash on its first attempt — not reproducible on two retries, and correlated with three GPU-heavy processes (two other builders plus this check) running concurrently at that moment; treated as environmental (see the director's GPU-concurrency note to the owner) rather than a defect in this card's code, since the failure mode (a hard process crash before any Python exception) is inconsistent with a logic bug and the identical test then passed cleanly.
