@@ -29,11 +29,11 @@ OmniScan keeps three roots (see `[paths]` in [Configuration](#configuration)):
 | `work_root/<Series>/<Chapter N>/export.json` | `omniscan export` | the written slices: quality, subsampling, file list |
 | `work_root/<Series>/<Chapter N>/inpaint_lama.json` | `omniscan inpaint --lama` | LaMa clean record for the regions the flat fill could not clean |
 | `work_root/<Series>/<Chapter N>/patches_lama.npz` | `omniscan inpaint --lama` | LaMa-cleaned crops and masks (export applies them after `patches.npz`) |
-| `work_root/<Series>/<Chapter N>/filter.json` | `omniscan filter run` / `restore` | promo-filter decisions |
+| `work_root/<Series>/<Chapter N>/filter.json` | `omniscan filter restore` / `force` / web Restore | manual promo-filter overrides (read as an input by `ingest` and `slice`) |
 | `work_root/<Series>/<Chapter N>/manifest.json` | the stage runner | per-stage status, inputs and config hashes |
 | `work_root/<Series>/<Chapter N>/converted/` | `omniscan ingest` | JPEG cache for raws that were not JPEG |
 | `output_root/<Series>/<Chapter N>/` | `omniscan export` | final English slices (`0001.jpg` …) |
-| `output_root/<Series>/_filtered/<Chapter N>/` | `omniscan filter run` | byte-copies of promo-filtered raw files (never deleted) |
+| `output_root/<Series>/_filtered/<Chapter N>/` | `omniscan filter run` (ingest/slice) | byte-copies of promo-filtered raw files and filtered slices (never deleted) |
 | `output_root/<Series>/_packaged/` | `omniscan pack` | finished `.cbz` / `.pdf` files |
 
 `<Chapter N>` means whatever the folder is actually called — chapter names are parsed with
@@ -525,38 +525,74 @@ Continue? [y]es / [n]o stop / [a]ll (finish without asking) [y]:
 
 ### `omniscan filter run`
 
-Filter promo files/slices of a chapter against the user's promo examples.
+Run the promo filter over a series: ingest and slice re-run for the chosen chapters and everything
+matching a promo example is filtered out of the strip.
 
 | Argument/option | Meaning |
 |---|---|
-| `series`, `chapter` | required |
-| `--threshold <float>` | similarity threshold for a filtered verdict. Default: 0.9 |
+| `series` | required |
+| `-c/--chapter <name>` | chapter folder; repeatable. Default: every chapter |
+| `--json` | print one JSON object (`chapters`, `totals`) instead of text lines |
 
-Needs `ingest.json` and `slices.json` (exit 2 with a message if either is missing). Every raw file and
-every slice is d-hashed and matched against `promo_examples/global` and `promo_examples/<Series>`
-images; decisions go to `filter.json`, and files/slices that are judged promos are byte-copied into
-`output_root/<series>/_filtered/<chapter>/` (nothing is deleted). Exit 0 even when nothing is
-filtered; with no examples configured everything is kept.
+Every raw file whose dHash is within `filter.threshold` (default 0.9, `[filter]` in the config) of a
+`promo_examples/global` or `promo_examples/<Series>` image is left out of the strip at ingest time,
+and every slice whose dHash matches is flagged after slicing. Filtered files are byte-copied into
+`output_root/<series>/_filtered/<chapter>/` (nothing is deleted) and recorded in `ingest.json` /
+`slices.json`, which the printed counts summarise. With no examples configured everything is kept,
+and a chapter whose every image matches fails with an error.
 
 ```bash
-uv run omniscan filter run DemoSeries "Chapter 1"
+uv run omniscan filter run DemoSeries
+uv run omniscan filter run DemoSeries --chapter "Chapter 1" --json
 ```
 
 ### `omniscan filter restore`
 
-Restore a previously filtered file or slice (metadata override; nothing is deleted).
+Restore a filtered file or slice (metadata override; nothing is deleted).
 
 | Argument | Meaning |
 |---|---|
 | `series`, `chapter` | required |
 | `target` | `file` or `slice` |
-| `index` | the index of the decision in `filter.json` (`file` index = source-file index, `slice` index = slice index) |
+| `index` | `file` index = the raw file's position in the chapter folder (its `SourceFile.index`); `slice` index = the slice's index in `slices.json` |
 
-Appends a manual `restored` decision to `filter.json`. Requires `filter.json` from a previous
-`filter run`.
+Appends a manual `restored` entry to the chapter's `filter.json` (creating the file when absent) and
+prints that the decision applies on the next run: the next `omniscan filter run`, `ingest` or `slice`
+keeps the restored file or slice no matter what the examples say.
 
 ```bash
 uv run omniscan filter restore DemoSeries "Chapter 1" slice 0
+```
+
+### `omniscan filter force`
+
+Force-filter a file or slice, even when no example matches it.
+
+| Argument | Meaning |
+|---|---|
+| `series`, `chapter`, `target`, `index` | as for `filter restore` |
+
+Appends a manual `filtered` entry to `filter.json`; it applies on the next run even when
+`filter.enabled` is false or the examples folder is empty.
+
+```bash
+uv run omniscan filter force DemoSeries "Chapter 1" file 2
+```
+
+### `omniscan filter add`
+
+Copy an image into the promo-examples folder for `filter run` to match against.
+
+| Argument/option | Meaning |
+|---|---|
+| `series`, `path` | required; `path` is a JPEG/PNG file on disk |
+| `--global` | add to the shared `global` examples instead of this series' folder |
+| `--name <name>` | destination file name. Default: the source's name |
+
+Refuses to overwrite an existing example and rejects anything that is not a readable JPEG/PNG.
+
+```bash
+uv run omniscan filter add DemoSeries ~/Downloads/end_card.jpg --name end_card.jpg
 ```
 
 ### `omniscan glossary list`
