@@ -80,10 +80,6 @@ class OllamaConfig(BaseModel):
     request_timeout_s: float = 600.0
 
 
-class RelayConfig(BaseModel):
-    url: str = ""  # e.g. https://omniscan-relay.<account>.workers.dev
-
-
 class OcrConfig(BaseModel):
     det_repo: str = "PaddlePaddle/PP-OCRv5_server_det_safetensors"  # text-line detector (fp32 only, see docs/DECISIONS.md)
     det_revision: str | None = None  # pin a HF commit hash once validated
@@ -168,8 +164,6 @@ class Secrets(BaseSettings):
     model_config = SettingsConfigDict(env_file=SECRETS_ENV, env_file_encoding="utf-8", extra="ignore")
 
     ollama_api_key: SecretStr | None = Field(default=None, alias="OLLAMA_API_KEY")
-    extractpics_api_key: SecretStr | None = Field(default=None, alias="EXTRACTPICS_API_KEY")
-    relay_client_token: SecretStr | None = Field(default=None, alias="OMNISCAN_RELAY_CLIENT_TOKEN")
 
 
 class Config(BaseSettings):
@@ -180,7 +174,6 @@ class Config(BaseSettings):
     slicer: SlicerConfig = SlicerConfig()
     detect: DetectConfig = DetectConfig()
     ollama: OllamaConfig = OllamaConfig()
-    relay: RelayConfig = RelayConfig()
     ocr: OcrConfig = OcrConfig()
     inpaint: InpaintConfig = InpaintConfig()
     typeset: TypesetConfig = TypesetConfig()

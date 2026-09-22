@@ -22,7 +22,8 @@ Verified facts:
 - rocJPEG hardware decode did not work in WSL (no /dev/dri) and does not exist on Windows either → CPU `turbo` codec today; hybrid GPU codec (C2) is an open decision.
 - The WSL distro (Ubuntu-26.04, created 2026-09-16, also held an abandoned Paddle-from-source build) was **deleted on 2026-09-19** at the user's request after
   everything was moved to `V:\OmniScan`. `C:\Users\limex\.wslconfig` (mirrored networking) may still exist and is harmless.
-- extract.pics webhooks can't target GitHub directly → Cloudflare Worker relay deployed by GitHub Actions (not deployed yet).
+- The extract.pics acquisition client and its Cloudflare Worker webhook relay were removed 2026-09-22
+  (card RM1): raws are now exclusively user-supplied (`omniscan import` / the GUI import page).
 - Detector fp16 ≈ 2.4× fp32 (170 vs 71 tiles/s of 640² on this GPU); fp16 detections not yet compared with fp32.
 
 Related: [[omniscan-project]]
