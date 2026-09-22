@@ -1,8 +1,10 @@
-"""Crop-reading OCR engines: whole region crops -> (text, score), no line detection (card O1b).
+"""Crop-reading OCR engines: whole region crops -> (text, score), no line detection (cards O1b, O1d).
 
 `MangaOcrReader` runs the manga-ocr VisionEncoderDecoder over region crops (uint8 `[3, h, w]`, any
 device) in fp32; the crops are resized to 224x224 by the ViT processor, so no width batching is
 needed. Decoding uses the model's `vocab.txt` directly (transformers' tokenizer needs `fugashi`).
+`PaddleOcrVlReader` runs PaddleOCR-VL (a 0.9 B vision-language model) over the same crops — one
+chat-formatted `generate` per crop, in order, which reads all CJK scripts and Latin.
 """
 
 from __future__ import annotations
@@ -15,10 +17,11 @@ from pathlib import Path
 from typing import Any, Protocol
 
 import torch
+from PIL import Image
 
 from omniscan.core.config import OcrConfig
 from omniscan.ocr.engines import engine_rec_model, load_kwargs, model_source
-from omniscan.ocr.model import _to_device
+from omniscan.ocr.model import _check_model_role, _to_device
 
 log = logging.getLogger(__name__)
 
@@ -172,3 +175,114 @@ def _load_vocab(source: Any) -> list[str]:
     if vocab and vocab[-1] == "":
         vocab.pop()  # the file's trailing newline is not a token
     return vocab
+
+
+VL_PROMPT = "OCR:"
+VL_MIN_SIDE = 28  # the vision tower works on 28-px patches: smaller sides must be upscaled first
+VL_MAX_PIXELS = 1280 * 28 * 28  # the processor's longest_edge: a region crop never needs more
+
+
+def prepare_vl_image(crop: torch.Tensor) -> Image.Image:
+    """A crop (uint8 `[3, h, w]`, any device) as an RGB PIL image, upscaled so min(w, h) >= 28."""
+    from torchvision.transforms.functional import to_pil_image
+
+    image = to_pil_image(crop.detach().cpu()).convert("RGB")
+    width, height = image.size
+    smallest = min(width, height)
+    if smallest >= VL_MIN_SIDE:
+        return image
+    scale = VL_MIN_SIDE / smallest
+    return image.resize((math.ceil(width * scale), math.ceil(height * scale)), Image.Resampling.LANCZOS)
+
+
+def clean_vl_text(text: str) -> str:
+    """One space per whitespace run (the model writes newlines between the lines); nothing else."""
+    return " ".join(text.split())
+
+
+class PaddleOcrVlReader:
+    """PaddleOCR-VL crop reader (`cfg.rec_model` or the engine default): one `generate` per crop."""
+
+    def __init__(self, model: Any, processor: Any, device: torch.device, *, max_new_tokens: int) -> None:
+        self.model = model
+        self.processor = processor
+        self._device = device
+        self._max_new_tokens = max_new_tokens
+
+    @classmethod
+    def load(cls, cfg: OcrConfig, device: torch.device, models_dir: Path | None = None) -> PaddleOcrVlReader:
+        """Download (first use) and load PaddleOCR-VL fp32 (~3.4 GiB — the accuracy mode)."""
+        rec_model = engine_rec_model(cfg)
+        if rec_model is None:
+            raise ValueError("paddleocr_vl needs ocr.rec_model")
+        _check_model_role(rec_model, "vlm_ocr")
+        source = model_source(rec_model, models_dir)
+        path_or_repo, kwargs = load_kwargs(source, models_dir=models_dir)
+        if device.type == "cuda":
+            # MIOpen launches kernels against the current device (the iGPU here), not the tensors' device
+            torch.cuda.set_device(device)
+        from transformers import AutoModelForImageTextToText, AutoProcessor
+
+        model = _to_device(
+            AutoModelForImageTextToText.from_pretrained(path_or_repo, dtype=torch.float32, **kwargs), device
+        ).eval()
+        processor = AutoProcessor.from_pretrained(path_or_repo, **kwargs)
+        return cls(model, processor, device, max_new_tokens=cfg.vl_max_new_tokens)
+
+    def read(self, crops: Sequence[torch.Tensor]) -> list[tuple[str, float]]:
+        """(text, score) per crop, in order, one `generate` each; `cfg.crop_batch_size` is ignored.
+
+        Sequential by design today (batched generation is a later card): the model reads a whole
+        region with the fixed "OCR:" chat prompt, greedy, scored by the mean generated-token
+        log-probability.
+        """
+        if not crops:
+            return []
+        readings: list[tuple[str, float]] = []
+        for crop in crops:
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": prepare_vl_image(crop)},
+                        {"type": "text", "text": VL_PROMPT},
+                    ],
+                }
+            ]
+            inputs = self.processor.apply_chat_template(
+                messages,
+                add_generation_prompt=True,
+                tokenize=True,
+                return_dict=True,
+                return_tensors="pt",
+                images_kwargs={
+                    "size": {
+                        "shortest_edge": self.processor.image_processor.size["shortest_edge"],
+                        "longest_edge": VL_MAX_PIXELS,
+                    }
+                },
+            ).to(self._device)
+            n_prompt = inputs["input_ids"].shape[-1]
+            with torch.inference_mode():
+                out = self.model.generate(
+                    **inputs,
+                    max_new_tokens=self._max_new_tokens,
+                    do_sample=False,
+                    output_scores=True,
+                    return_dict_in_generate=True,
+                )
+            text = clean_vl_text(self.processor.decode(out.sequences[0][n_prompt:], skip_special_tokens=True))
+            readings.append((text, self._score(out)) if text else ("", 0.0))
+        return readings
+
+    def _score(self, out: Any) -> float:
+        """exp of the mean generated-token log-prob, clamped to [0, 1]; 1.0 when it cannot be computed."""
+        try:
+            transition = self.model.compute_transition_scores(
+                out.sequences, out.scores, normalize_logits=True
+            )
+            score = math.exp(float(transition[0].mean()))
+        except Exception:
+            log.debug("paddleocr-vl transition scores unavailable; scoring 1.0", exc_info=True)
+            return 1.0
+        return round(min(max(score, 0.0), 1.0), 4)

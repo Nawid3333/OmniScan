@@ -173,7 +173,9 @@ def test_engine_rec_model() -> None:
     assert engine_rec_model(OcrConfig(engine="ppocr", rec_model="ocr-rec-ppocrv6-medium")) == (
         "ocr-rec-ppocrv6-medium"
     )
+    assert engine_rec_model(OcrConfig(engine="paddleocr_vl")) == "ocr-vl-1.6"
+    assert engine_rec_model(OcrConfig(engine="paddleocr_vl", rec_model="ocr-vl-1.5")) == "ocr-vl-1.5"
 
 
 def test_default_rec_model_table() -> None:
-    assert DEFAULT_REC_MODEL == {"manga_ocr": "ocr-rec-manga-ocr-2025"}
+    assert DEFAULT_REC_MODEL == {"manga_ocr": "ocr-rec-manga-ocr-2025", "paddleocr_vl": "ocr-vl-1.6"}

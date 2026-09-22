@@ -255,6 +255,38 @@ def test_vision_group_for_manga_ocr_loads_the_reader_not_the_detector(
 
     assert models == {"detector": fake_detector, "reader": fake_reader}
     assert seen["reader"] == (cfg.ocr, manager.device, cfg.paths.models_dir)
+    assert manager._groups[VISION_GROUP].est_gib == 3.0  # only paddleocr_vl is budgeted higher
+    manager.release()
+
+
+def test_vision_group_for_paddleocr_vl_loads_the_reader_not_the_detector(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from omniscan.gpu.groups import VISION_GROUP, build_vram_manager
+    from omniscan.ocr.crop_readers import PaddleOcrVlReader
+
+    fake_reader, fake_detector = object(), object()
+    seen: dict[str, Any] = {}
+
+    def fake_reader_load(cfg: Any, device: torch.device, models_dir: Path | None) -> object:
+        seen["reader"] = (cfg, device, models_dir)
+        return fake_reader
+
+    def fail_line_detector(cfg_: Any, device: torch.device, models_dir: Path | None = None) -> object:
+        raise AssertionError("LineDetector.load must not run for paddleocr_vl")
+
+    monkeypatch.setattr(PaddleOcrVlReader, "load", fake_reader_load)
+    monkeypatch.setattr(Detector, "load", lambda cfg_, device, models_dir=None: fake_detector)
+    monkeypatch.setattr(LineDetector, "load", fail_line_detector)
+
+    cfg = cli_cfg(tmp_path).model_copy(update={"ocr": OcrConfig(engine="paddleocr_vl")})
+    manager = build_vram_manager(cfg)
+
+    models = manager.acquire(VISION_GROUP)
+
+    assert models == {"detector": fake_detector, "reader": fake_reader}
+    assert seen["reader"] == (cfg.ocr, manager.device, cfg.paths.models_dir)
+    assert manager._groups[VISION_GROUP].est_gib == 6.6  # 3.0 detector + 3.6 for the 0.9 B VLM
     manager.release()
 
 
@@ -264,9 +296,10 @@ def test_vision_group_for_unknown_engine_raises(monkeypatch: pytest.MonkeyPatch,
     monkeypatch.setattr(Detector, "load", lambda cfg_, device, models_dir=None: object())
 
     cfg = cli_cfg(tmp_path).model_copy(update={"ocr": OcrConfig(engine="paddleocr_vl")})
+    monkeypatch.setattr(cfg.ocr, "engine", "not_an_engine")  # a Literal can hold no other engine
     manager = build_vram_manager(cfg)
 
-    with pytest.raises(ValueError, match="OCR engine 'paddleocr_vl' is not available yet"):
+    with pytest.raises(ValueError, match="OCR engine 'not_an_engine' is not available yet"):
         manager.acquire(VISION_GROUP)
 
 

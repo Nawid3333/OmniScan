@@ -286,3 +286,44 @@ def test_manga_ocr_stage_reruns_when_engine_or_rec_model_change(cfg: Config) -> 
     assert outcome.status == "done"  # engine and rec_model are part of the config hash
     built = RegionsArtifact.load(rec_model.paths.work_root / SERIES / CHAPTER / "ocr.json").regions[0]
     assert built.lines[0].engine == "ocr-rec-manga-ocr-base"  # the label follows the rec model id
+
+
+# ---------------------------------------------------------------- paddleocr_vl (card O1d, test 5)
+
+
+VL_CFG = OcrConfig(tile_px=400, engine="paddleocr_vl")
+
+
+def test_paddleocr_vl_stage_reads_whole_region_crops(cfg: Config) -> None:
+    vl = cfg.model_copy(update={"ocr": VL_CFG})
+    ctx = prepared(vl)
+    ctx.gpu = FakeScheduler({"reader": FakeReader(("I even brought my potions!", 0.9))})
+
+    outcome = run_stage(OcrStage(), ctx)
+
+    assert outcome.status == "done"
+    assert outcome.metrics["tiles"] == 0.0 and outcome.metrics["lines"] == 1.0
+    assert outcome.metrics["regions_dropped"] == 0.0
+    built = RegionsArtifact.load(ctx.paths.artifact("ocr.json")).regions[0]
+    assert built.text == "I even brought my potions!" and built.confidence == 0.9
+    assert built.lines[0].engine == "ocr-vl-1.6"  # the engine's default catalog id
+    assert run_stage(OcrStage(), make_context(vl, SERIES, CHAPTER, ctx.gpu)).status == "skipped"
+
+
+def test_paddleocr_vl_stage_drops_low_confidence_regions(cfg: Config) -> None:
+    strict = cfg.model_copy(update={"ocr": VL_CFG.model_copy(update={"drop_conf": 0.99})})
+    ctx = prepared(strict)
+    ctx.gpu = FakeScheduler({"reader": FakeReader(("あ", 0.9))})
+
+    assert run_stage(OcrStage(), ctx).metrics["regions_dropped"] == 1.0
+    assert RegionsArtifact.load(ctx.paths.artifact("ocr.json")).regions == []
+
+
+def test_paddleocr_vl_stage_drops_regions_without_text(cfg: Config) -> None:
+    ctx = prepared(cfg.model_copy(update={"ocr": VL_CFG}))
+    ctx.gpu = FakeScheduler({"reader": FakeReader(("", 0.8))})
+
+    outcome = run_stage(OcrStage(), ctx)
+
+    assert outcome.metrics["regions_empty"] == 1.0 and outcome.metrics["regions_dropped"] == 1.0
+    assert RegionsArtifact.load(ctx.paths.artifact("ocr.json")).regions == []

@@ -20,7 +20,8 @@ from omniscan.models.resolve import local_model_source
 log = logging.getLogger(__name__)
 
 DEFAULT_REC_MODEL: dict[str, str] = {
-    "manga_ocr": "ocr-rec-manga-ocr-2025",  # paddleocr_vl is added by card O1d
+    "manga_ocr": "ocr-rec-manga-ocr-2025",
+    "paddleocr_vl": "ocr-vl-1.6",
 }
 
 

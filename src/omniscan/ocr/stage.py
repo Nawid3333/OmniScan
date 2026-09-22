@@ -3,8 +3,8 @@
 The strip is cut into overlapping tiles (only tiles that touch a region), the line detector runs in
 batches, lines are merged across tiles, assigned to regions, cropped and read by the recognizer, and
 the results are assembled into the regions of ocr.json via ocr/pipeline.py. With `ocr.engine` set to
-a crop-reading engine (manga_ocr today, paddleocr_vl later) every region is read as one whole crop
-instead and no line detection runs.
+a crop-reading engine (manga_ocr or paddleocr_vl) every region is read as one whole crop instead and
+no line detection runs.
 """
 
 from __future__ import annotations
