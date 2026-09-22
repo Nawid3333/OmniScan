@@ -29,6 +29,7 @@ from omniscan.importer.execute import execute_import
 from omniscan.importer.plan import ImportPlanError, plan_import
 from omniscan.llm.ollama import OllamaClient, OllamaError, OllamaRateLimitError
 from omniscan.log import setup_logging
+from omniscan.match.cli import match_app
 from omniscan.models.rows import build_rows, row_to_json
 from omniscan.models.rows import ollama_model_names as _ollama_model_names
 from omniscan.packaging import pack_cbz, pack_pdf, safe_filename
@@ -1626,6 +1627,8 @@ def update_download(
 
 
 app.add_typer(update_app, name="update")
+
+app.add_typer(match_app, name="match")
 
 app.add_typer(acquire_app, name="acquire")
 

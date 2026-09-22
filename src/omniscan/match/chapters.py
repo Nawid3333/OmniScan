@@ -129,6 +129,8 @@ def _chapter_qualities(
     page_matches: dict[tuple[int, int], PageMatches] = {}
     lengths_a = np.asarray([len(hashes) for _, hashes in chapters_a])
     lengths_b = np.asarray([len(hashes) for _, hashes in chapters_b])
+    if lengths_a.max() == 0 or lengths_b.max() == 0:  # every chapter folder empty: nothing can match
+        return quality, page_matches
     for a_indices, block in similarity_blocks(
         [hashes for _, hashes in chapters_a], [hashes for _, hashes in chapters_b]
     ):
@@ -136,7 +138,7 @@ def _chapter_qualities(
         block = np.where(valid[:, :, None, None], block, -1.0)  # similarities are >= 0; -1 prunes
         bound = np.minimum(
             block.max(axis=3).mean(axis=2),  # per A page, its best B page, averaged
-            block.max(axis=2).mean(axis=3),  # per B page, its best A page, averaged
+            block.max(axis=2).mean(axis=2),  # per B page, its best A page, averaged
         )
         rows = lengths_a[list(a_indices)]
         for a_row in range(block.shape[0]):
@@ -197,10 +199,11 @@ def _add_runner_ups(
     names_b = [name for name, _ in chapters_b]
     for (i, j), match in zip(pair_indices, matched, strict=True):
         candidates: list[RunnerUp] = []
-        for side, row, own, names in (
+        sides: tuple[tuple[Literal["a", "b"], np.ndarray, int, list[str]], ...] = (
             ("b", allowed[i], j, names_b),  # other B chapters A's chapter could have matched
             ("a", allowed[:, j], i, names_a),  # other A chapters B's chapter could have matched
-        ):
+        )
+        for side, row, own, names in sides:
             other = _best_other(row, own)
             if other is not None:
                 candidates.append(RunnerUp(side=side, name=names[other[0]], quality=round(other[1], 4)))

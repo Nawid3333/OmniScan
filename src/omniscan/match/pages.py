@@ -16,6 +16,7 @@ from omniscan.core.paths import list_images
 from omniscan.filter.hashing import dhash
 
 BITS = 64  # dhash hash_size 8 -> 64-bit fingerprints
+BLOCK_ELEMENTS = 16_000_000  # XOR intermediates are cut so one block stays <=128 MB
 
 
 def chapter_hashes(chapter_dir: Path) -> list[int]:
@@ -47,7 +48,7 @@ def similarity_blocks(
     p_max = max(len(chapter) for chapter in hashes_a)
     q_max = max(len(chapter) for chapter in hashes_b)
     packed_b = _pack(hashes_b, q_max)  # [len_b, q_max]
-    block = max(1, int(16e6 // max(1, len_b * p_max * q_max * 8)))  # <=128 MB of XOR intermediate
+    block = max(1, BLOCK_ELEMENTS // max(1, len_b * max(1, p_max) * max(1, q_max) * 8))
     for start in range(0, len_a, block):
         stop = min(start + block, len_a)
         packed = _pack(hashes_a[start:stop], p_max)  # [len_block, p_max]

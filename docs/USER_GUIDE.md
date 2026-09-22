@@ -767,6 +767,51 @@ uv run omniscan eval PepperCarrotKR -c "Episode 06"
 uv run omniscan eval PepperCarrotKR --json
 ```
 
+### `omniscan match chapters`
+
+Align two independently-sourced chapter sets of the same series before comparing them page by page:
+a raw-language set and an official English release do not necessarily line up 1:1 — one side may
+carry an extra prologue or ad/insert chapter, chapter numbering may differ, folder names always can,
+and either side may simply have more chapters. The command computes which chapter of the second
+directory corresponds to which chapter of the first, with a confidence signal, and flags every
+chapter that has no confident counterpart (never forcing a wrong pairing just to fill a slot).
+
+Matching runs on page art alone: every page gets a dHash (the promo filter's perceptual hash, so it
+is language-independent and resolution-independent), the pages of every candidate chapter pair are
+aligned with a global sequence alignment (tolerant of an extra ad page on either side), and the
+chapters of the two sets are aligned the same way, using each pair's page alignment as its evidence.
+Folder names are used only to put chapters in reading order, never to match them.
+
+```bash
+uv run omniscan match chapters data/raws/PepperCarrotKR data/translated-check/PepperCarrotKR
+uv run omniscan match chapters data/raws/PepperCarrotKR data/translated-check/PepperCarrotKR --out pepper_match.json --json
+```
+
+| Argument/option | Meaning |
+|---|---|
+| `dir_a`, `dir_b` | the two chapter-set directories (one subfolder per chapter); either order works |
+| `--out <path>` | mapping artifact path. Default: `chapter-match.json` in the current folder |
+| `--force` | overwrite an existing mapping (the file is meant to be hand-edited, so overwriting is refused without it) |
+| `--page-similarity <0..1>` | dHash similarity at/above which two pages may align. Default: `0.75` |
+| `--page-gap <float>` | penalty for leaving a page unmatched inside a chapter pair. Default: `0.25` |
+| `--chapter-gap <float>` | penalty for leaving a chapter unmatched. Default: `0.6` |
+| `--min-quality <0..1>` | page-coverage quality at/above which a chapter pair may match. Default: `0.3` |
+| `--review-quality <0..1>` | matched chapters below this quality are listed for a second look. Default: `0.5` |
+| `--json` | print the full mapping JSON to stdout instead of the text summary |
+
+The output is one JSON file, hand-editable on purpose: `matched` (each with the `a`/`b` folder
+names, `quality` — the aligned pages' similarity sum divided by the larger page count, `pages_a`,
+`pages_b`, the aligned `pages` as `(page_a, page_b, similarity)` triples, `runner_up` (the strongest
+alternative partner on either side, when one was even allowed), `review` true/false) plus
+`unmatched_a` / `unmatched_b` folder-name lists and the `thresholds` the run used. Fix a wrong
+match by editing the `a`/`b` names or moving chapters between `matched` and the unmatched lists;
+keep `quality` and `pages` as they are or delete them, but keep the field names.
+
+The text summary prints matched/unmatched counts, every unmatched chapter (eyeball these before
+trusting the mapping), and the weakest matches — lowest quality first — each with its `runner_up`
+when a close alternative existed. Missing or chapter-less directories exit 2; an existing mapping
+file is never overwritten without `--force`.
+
 ### `omniscan watermark add`
 
 Record a fixed-position watermark region for a series (fractions of every raw page).
