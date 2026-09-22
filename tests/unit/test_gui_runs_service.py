@@ -228,6 +228,53 @@ def test_failed_chapter_reaches_the_outcome(cfg: Config) -> None:
     assert not outcome.ok
 
 
+def test_gpu_run_takes_and_releases_the_exclusive_gpu_lock(
+    cfg: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A GPU spec acquires the exclusive lock before the manager is built and releases it in `finally`."""
+    import omniscan.gpu.lock as lock_module
+    import omniscan.gui.services.runs as runs_module
+
+    events: list[str] = []
+
+    def fake_acquire(*, poll_seconds: float = 2.0, on_wait: object = None) -> object:
+        events.append("acquire")
+        return ("handle",)
+
+    def fake_release(handle: object) -> None:
+        events.append("release")
+
+    class FakeGpu:
+        released = False
+
+        def release(self) -> None:
+            self.released = True
+
+    monkeypatch.setattr(lock_module, "acquire_gpu_lock", fake_acquire)
+    monkeypatch.setattr(lock_module, "release_gpu_lock", fake_release)
+    monkeypatch.setattr(runs_module, "needs_gpu", lambda *_a: True)
+    gpu = FakeGpu()
+    runner = FakeRunner()
+
+    controller = RunController(
+        cfg,
+        RunSpec(series=SERIES, chapters=("Episode 01",), stages=("ingest",)),
+        run_fn=runner,
+        client_factory=lambda _cfg: None,
+        gpu_factory=lambda _cfg: gpu,
+    )
+    outcome = controller.run(
+        on_stage=lambda _u: None,
+        on_preview=lambda _p: None,
+        cancel_event=threading.Event(),
+        channel=GateChannel(),
+    )
+
+    assert outcome.ok
+    assert events == ["acquire", "release"]
+    assert gpu.released
+
+
 # ---------------------------------------------------------------------- cancel
 
 

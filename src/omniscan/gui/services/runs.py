@@ -14,7 +14,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import IO, Any, Literal
 
 from omniscan.core.config import Config
 from omniscan.core.paths import SeriesPaths
@@ -201,8 +201,15 @@ class RunController:
         mode = "step" if is_step else "auto"
         client = self._client_factory(cfg) if any(PASS_OF[name] == "text" for name in names) else None
         gpu: Any = None  # opaque: the factory's product goes to run_pipeline and is released here
+        hw_lock: IO[bytes] | None = None
         try:
             if needs_gpu(names, cfg, client):
+                if cfg.gpu.device != "cpu":
+                    # exclusive real-GPU access before the manager's warm-up touches the device,
+                    # exactly like the CLI `run` command (the manager's warm-up thread needs it too)
+                    from omniscan.gpu.lock import acquire_gpu_lock
+
+                    hw_lock = acquire_gpu_lock()
                 gpu = self._gpu_factory(cfg)
             result = self._run_fn(
                 cfg,
@@ -222,6 +229,10 @@ class RunController:
         finally:
             if gpu is not None:
                 gpu.release()  # the models leave VRAM when the run ends (as the CLI does)
+            if hw_lock is not None:
+                from omniscan.gpu.lock import release_gpu_lock
+
+                release_gpu_lock(hw_lock)
             if client is not None:
                 client.close()
         return RunOutcome(

@@ -1,109 +1,139 @@
 # U3c — Desktop app shell: main window, library, reader, run page, `omniscan gui`
 
-**Status: stopped at the card's stop condition, before any code was written.**
-The Run page's Cancel cannot be implemented against the contracts as they stand. Per the card
-("Cancel … if `run_pipeline` lacks a cancel hook, stop and describe the needed core change in the
-report") and `CLAUDE.md` ("If a contract is missing or wrong, stop and describe the needed change"),
-this report describes the gap and the needed change; nothing else in the card was built so the next
-launch can proceed against a runner that has the hook instead of around a dead Cancel button.
+**Status: done.** The earlier stop (run_pipeline had no cancel hook) was resolved on main in
+commit `106f4f6` — `run_pipeline(..., after_stage=...)` honoured in every mode — this worktree was
+rebased onto it, and the card was built exactly as designed. The Cancel design proposed in the
+previous version of this report is what landed: the run worker owns a `threading.Event`, the
+controller's `after_stage` returns `not event.is_set()`, `RunAbortedError` is folded by the runner
+into `PipelineResult.aborted == "stopped"`.
 
-## The gap
+## What was built
 
-The card requires Cancel to use "the `after_stage`/`RunAbortedError` mechanism through
-`run_pipeline`'s gate/report hooks". Reading the two files:
+New files (all under the card's file list):
 
-- The mechanism exists in `core/stage.py`: `run_series(..., after_stage=...)` (stage.py:210-233);
-  a hook returning False raises `RunAbortedError` after the just-finished stage was recorded —
-  "the run stops after the stage that was just recorded".
-- `run_pipeline` uses that mechanism **only in step mode**: `_run_preview` passes its gate hook to
-  `run_series(..., after_stage=hook)` (runner.py:137-141). A gate answer of False aborts the run
-  (`aborted = "stopped"`), which is also how step-mode Cancel would work.
-- In auto mode — the mode behind **Full, Subset and Auto**, i.e. every run long enough to be worth
-  cancelling — the pass loop's two `run_series` calls (runner.py:222-224) receive **no
-  `after_stage`**, and the `gate` parameter is only honoured when `mode == "step"`
-  (runner.py:186-195). `report` cannot stop a run (it returns None). Verified by grep: no other
-  module in `src/omniscan` passes or exposes `after_stage` (the queue executor only reads
-  `result.aborted` after the fact).
+| File | Purpose |
+|---|---|
+| `src/omniscan/gui/main_window.py` | The shell: sidebar (Library/Reader/Run/Models/Settings), QStackedWidget, status bar (device, job), Ctrl+1…5, QSettings geometry + last page |
+| `src/omniscan/gui/library_view.py` | Series list with chapter counts; per-chapter table of the ten stage states (done/stale/failed/not run, colored); `chapter_opened` on double-click; `Refresh` |
+| `src/omniscan/gui/reader_view.py` | Wraps `CompareView` (not forked): prev/next + chapter switcher, zoom −/+, `Sides` (both/raw/output), `Jump to slice…`, status line; `chapters_fn` injectable for tests |
+| `src/omniscan/gui/run_view.py` | Run form (series, chapter checklist + All, Full/Subset/Step/Auto, stage grid, LaMa, force, preview chapter), progress bar, step-preview panel with Continue/Abort, log, Start/Cancel; `busy_changed` |
+| `src/omniscan/gui/run_worker.py` | QThread: `cancel()` (a `threading.Event`), `respond_preview()` (gate handshake), signals carry plain dataclasses |
+| `src/omniscan/gui/settings_view.py` | Tabs: Global (every `GLOBAL_FIELDS` row, commit-on-validate + inline errors + Reset), Per-series (override table + Set/Remove), Translation (profile enable checkboxes), Hardware (snapshot + per-model warnings; detection deferred to first tab open) |
+| `src/omniscan/gui/app.py`, `src/omniscan/gui/__main__.py` | `main()` + `python -m omniscan.gui`; one-line error + exit 2 when PySide6 is missing |
+| `src/omniscan/gui/services/runs.py` | Qt-free: `RunSpec` + `validate_spec` (also fixed a real bug here — see below), `RunController` (client/GPU lifetime as the CLI, plus the exclusive GPU lock), `StageUpdate`/`StepPreview`/`RunOutcome` dataclasses, `GateChannel` |
+| `src/omniscan/gui/services/settings.py` | Qt-free writers: `set_global`/`clear_global` (validated, `path` injectable), `series_overrides`/`set_series_override`/`remove_series_override`, `parse_value`, `model_ids`, `translation_profiles`, `set_profile_enabled` |
+| `src/omniscan/gui/services/hardware.py` | Qt-free: `HardwareService.report()` → `HardwareReport(info, warnings)` filtered from model rows |
+| `scripts/gui_screenshots.py` | One PNG per page offscreen over the synthetic fixture library (`--out`, `--size`, `--series`, `--chapter`); faked models/hardware so it needs no daemon and no GPU |
 
-So `run_pipeline` lacks a cancel hook for the three non-step modes. The card's contingency applies.
+Edited: `src/omniscan/cli.py` (`omniscan gui` command, guarded: one-line error + exit 2 without the
+extra), `src/omniscan/gui/compare_view.py` (+11 lines: `zoom_by`, `set_visible_sides` used by the
+Reader), `src/omniscan/gui/services/library.py` (stale-state note fix), `docs/USER_GUIDE.md`
+(new "Desktop app" section before "Web viewer").
 
-## The needed core change (pipeline/runner.py only; nothing under `src/omniscan/core/**`)
+## How the pieces meet the card
 
-One keyword-only parameter, passed down in both phases:
+- **One run at a time, GUI stays responsive**: `_start_worker` creates a `RunWorker` (QThread) per
+  run; the form freezes until it ends. All worker→GUI communication is `Signal(object)` with
+  dataclasses (`StageUpdate`, `StepPreview`, `RunOutcome`) — queued onto the GUI thread.
+- **Cancel**: the worker's event → `after_stage` → the runner stops after the stage that just
+  finished (`aborted="stopped"`); the log line says "stopping after the current stage".
+- **Step gate**: `GateChannel` (a `threading.Event` + answer) armed before each preview; the
+  GUI's Continue/Abort call `respond_preview`; the gate returns False on abort/cancel →
+  `aborted="preview failed"` in the summary.
+- **Worker lifetime as the CLI**: the controller builds `OllamaClient` only when a text stage is
+  selected, `build_vram_manager(cfg)` only when `needs_gpu(...)`, releases both in `finally`.
+- **Addition beyond the CLI**: the controller also takes the **exclusive GPU lock**
+  (`gpu/lock.py`) around real-GPU runs — the CLI takes it and the GUI must not become a second
+  unlocked GPU user (the owner's driver crashed on multi-process GPU access on 2026-09-22).
+  Tested in `test_gpu_run_takes_and_releases_the_exclusive_gpu_lock`.
+- **Settings write paths are injectable** (`path=`/`config_path=`/`profiles_path=`), so no test or
+  demo touches the real user config.
 
-1. `run_pipeline(..., gate=None, after_stage: AfterStage | None = None)` — `AfterStage` is already
-   exported by `core.stage` (`type AfterStage = Callable[[ChapterContext, StageOutcome], bool]`,
-   stage.py:178).
-2. Auto loop: pass the hook through and fold the abort the way `_run_preview` already does:
-   ```python
-   for _label, pass_stages in passes:
-       stage_objects = [build_stage(name, cfg, client=client) for name in pass_stages]
-       try:
-           pass_results = run_series(
-               stage_objects, cfg, series, active, gpu=gpu, force=force, after_stage=after_stage
-           )
-       except RunAbortedError as error:
-           for chapter, outcomes in {**error.results, error.chapter: error.outcomes}.items():
-               result.outcomes.setdefault(chapter, []).extend(outcomes)
-               if report is not None:
-                   for outcome in outcomes:
-                       report(chapter, outcome)
-           result.aborted = "stopped"
-           break
-       _record_pass_results(result, pass_results, report)
-   ```
-   Note: `RunAbortedError.results` (the chapters of the interrupted pass that finished before it)
-   must be merged into `result.outcomes` and reported too, alongside `error.outcomes` (the chapter
-   that was being run) — otherwise a cancelled pass loses the chapters it already completed.
-3. Step mode: compose the two hooks inside `_run_preview`'s `hook`, cancel first:
-   ```python
-   def hook(ctx: ChapterContext, outcome: StageOutcome) -> bool:
-       nonlocal position
-       position += 1
-       if after_stage is not None and not after_stage(ctx, outcome):
-           return False  # cancelled: stop like a gate "no"
-       return gate(GateEvent(...))
-   ```
+## Deviations from the card
 
-An alternative that avoids the new parameter: honour the existing `gate` in auto mode as well
-(check it after every stage and build `GateEvent`s there). I recommend `after_stage`: it matches
-the card's wording ("uses the `after_stage`/`RunAbortedError` mechanism"), it keeps step mode's
-preview semantics out of plain runs, and the GUI's hook is trivial (a `threading.Event` check)
-without needing to build `GateEvent`s it cannot display. Either form is ~15 lines in runner.py.
+1. **Translation profiles have no Config section.** The card asked for a translation-profile editor
+   via the settings service; profiles are not part of `Config` (they live in
+   `config/translation_profiles.toml` + user `translation_profiles.toml`, and `dumps_toml` cannot
+   write nested tables). The settings service writes them with its own validated writer
+   (`set_profile_enabled` — user table merged over the repo file, `TranslationProfile(name=…)`
+   validates, manual nested-table TOML writer). The Settings "Translation" tab edits `enabled`
+   only, which is what the pipeline reads: the translate stage runs exactly the enabled profiles
+   (`pipeline/stages.py:173`).
+2. **Hardware detection is lazy** (deferred to the first time the Hardware tab is opened, or
+   `Re-detect`): it imports torch, and paying that on every Settings open wasted seconds and made
+   offscreen tests emit into deleted widgets. Behaviour is otherwise per the card.
+3. **`RunController.gpu_factory` is typed `Callable[[Config], Any]`** (like `client_factory`): the
+   real product is `WarmupVramManager`, whose `release()` is not on the `GpuScheduler` protocol in
+   `core/stage.py`. If the director wants this typed, the protocol needs a `release()` — a core
+   change, out of my hands; the Any-typing is honest about the controller passing the object
+   through to `run_pipeline` opaquely.
 
-Cancellation granularity is unchanged by design: Cancel takes effect **after the stage currently
-running finishes** (that is the mechanism's contract — a torch/LLM stage is never killed
-mid-kernel). The GUI should label the button's effect accordingly ("stops after the current stage").
+## How it was tested
 
-## How the GUI will consume it (for the next U3c launch)
+Commands (this worktree, Python 3.14 / uv):
 
-- The run worker (QThread) owns a `threading.Event`; its `after_stage` hook returns
-  `not event.is_set()`. In step mode the same event is checked inside the gate (the GUI's gate
-  answers False when the user pressed Cancel while paused, so the Abort path doubles as Cancel).
-- `RunAbortedError` never escapes the worker: `run_pipeline` folds it into
-  `PipelineResult.aborted == "stopped"`, and the worker maps that to a "cancelled" run state.
-- Everything else the card needs already exists and was read end-to-end: the library service +
-  strip/compare views (U3b), the models view + service (U3a), `set_user_setting`/`set_series_setting`/
-  `SERIES_SECTIONS` with validation and a `path` override for tests (core/config.py:317-329),
-  `describe` previews (pipeline/preview.py), and the CLI's worker-lifetime pattern to copy —
-  build `OllamaClient(cfg.ollama, get_secrets())` only when a text stage is selected,
-  `build_vram_manager(cfg)` only when `needs_gpu(...)`, release both in `finally`
-  (cli.py:760-828).
+```
+uv run --frozen pytest -m "not gpu"   → 3672 passed, 24 deselected, 1 xfailed (pre-existing)
+uv run ruff format . && uv run ruff check .  → clean
+uv run pyright                        → 0 errors, 0 warnings, 0 informations
+```
 
-## What was verified before stopping
+Test layout:
 
-- Read: `pipeline/runner.py`, `pipeline/stages.py` (`STAGE_ORDER`, `PASS_OF`, `build_stage`),
-  `pipeline/preview.py`, `core/stage.py`, `core/config.py`, `core/paths.py`, `hw/detect.py`,
-  `hw/assess.py`, the merged GUI code (`strip_view.py`, `compare_view.py`, `models_view.py`,
-  `workers.py`, `services/library.py`, `services/models.py`), `tests/gui/*` (conventions:
-  `QT_QPA_PLATFORM=offscreen` before Qt import, session-scoped `qapp`, `pytest.importorskip`),
-  `scripts/gui_compare_demo.py`, `scripts/gui_models_demo.py`, the CLI `run` command.
-- Confirmed `run_pipeline`'s full signature has no `after_stage`/cancel parameter and that auto
-  mode never reaches a `gate` call.
-- Confirmed `PySide6-Essentials` is the existing `gui` extra (pyproject.toml:38-41); no new
-  dependencies are needed for the shell itself.
+- `tests/unit/test_gui_runs_service.py` (Qt-free, 10 tests): spec validation refusals; live
+  per-stage updates; no client/GPU for vision-only stages; client built+closed for text stages;
+  failed-chapter mapping; cancel mid-run (`aborted="stopped"`, interrupted pass still reported);
+  step gate Continue/Abort over a real thread; the GPU lock taken/released.
+- `tests/unit/test_gui_settings_service.py` (11): TOML writes/rejects/clears on disk, series
+  override round-trip, JSON value parsing, model ids, profile enable round-trip (user file layout
+  `[profiles.<name>]`).
+- `tests/unit/test_gui_hardware_service.py` (2): warning filtering.
+- `tests/gui/*` (offscreen, 24): every page — library states/counts/double-click/empty-hint,
+  reader navigation/jump/zoom/sides, run progress + cancel + step gate + subset payload + inline
+  failures (fake `run_fn` injected), settings commits/rejects/resets on real TOML files +
+  series.toml + profiles + hardware tab, main-window navigation/config-reload/persistence,
+  compare-view zoom_by/sides.
+- `tests/fixtures/gui_library.py`: deterministic synthetic library (4 chapters covering every
+  stage state; artifacts only where a stage has outputs; stale produced by a later-order re-run).
+
+## Screenshot evidence (evidence 3)
+
+`uv run --frozen python scripts/gui_screenshots.py --out data/screenshots/U3c` produced:
+
+- `01-library.png` … `06-settings.png`: one per page, plus `04-run-step.png` = the Run page
+  mid-run (progress 35%, `chapter 2/4 — ocr: done (1.2s)`, `Step 5/10 — translate` preview waiting
+  on Continue/Abort, form disabled, `job: running`).
+- Self-reviewed (all six read back as images): sidebar/nav, stage-state colors, compare alignment,
+  disabled-form-while-running and enabled preview buttons all correct.
+- Left in the worktree at `data/screenshots/U3c/` (gitignored `/data/`). **For the director:** the
+  sandbox blocks writes outside the worktree — copy the folder to
+  `V:\OmniScan\data\screenshots\U3c\` for review (`cp -r V:/OmniScan-wt/U3c/data/screenshots/U3c V:/OmniScan/data/screenshots/U3c`).
+
+## Real e2e (evidence 4)
+
+Run as one offscreen script over the **real user config** (library `V:/OmniScan/data/raws`,
+models pointed at `V:/OmniScan/models` via `OMNISCAN_PATHS__MODELS_DIR` — the worktree has no
+`models/` of its own), real series **PepperCarrotKR**:
+
+- **Library**: series shown as `PepperCarrotKR (33 chapters)`; selecting it fills the real chapter
+  table; Episode 06 row states `[done, done, done, done, stale, stale, done, done, done, done]`
+  (translate/judge stale from an earlier re-run) — matches the service's manifest read.
+- **Reader**: `open_chapter("PepperCarrotKR", "Episode 06")` → `11 raw page(s), 5 output tile(s),
+  strip 1200x16392`; raw and output tiles span the same strip (0…16392) — aligned raw|output in
+  the compare view.
+- **Run**: Subset, chapters=Episode 06, stages=typeset+export, force=True, started from the GUI's
+  Start button (real run worker, real `run_pipeline`). Log:
+  `== subset run: PepperCarrotKR chapters=('Episode 06',) stages=('typeset', 'export') lama=True force=True`
+  → `[1/1] Episode 06 — typeset: done`, `export: done`, `== finished: ok, chapters run=1`, error
+  label empty, form re-enabled. Verified on disk after: the chapter manifest rewritten
+  (`finished_at 2026-09-22T18:52:37/38Z`), `layout.json` + `export.json` re-written, and the five
+  exported pages in `V:\OmniScan\data\output\PepperCarrotKR\Episode 06\` re-encoded (~50 s before
+  the check). The GPU lock path was exercised (typeset/export are GPU stages; `gpu.device=auto`).
 
 ## Open questions
 
-1. (blocking) Apply the runner change above (or the director's preferred variant), then relaunch
-   U3c as written — no other contract gap was found.
+1. Should the GUI's `omniscan gui` also be listed in the `Commands` section of the user guide, or
+   is the new "Desktop app" section enough? (I kept it self-contained.)
+2. `SeriesPaths.chapter(name)` builds chapter dirs from `sources.toml`-driven names; the Library
+   page lists chapters from the filesystem, so a chapter dir without a manifest shows every stage
+   as `not run` — intended?

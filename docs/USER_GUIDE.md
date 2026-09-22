@@ -1037,6 +1037,74 @@ update:   Bugfixes for the slicer and a faster OCR pass.
 update: staged ~/omniscan/updates/v1.2.3/omniscan-windows-x64.zip (9c1b…)
 ```
 
+## Desktop app
+
+`omniscan gui` opens a native desktop window over the same library and config the CLI uses. The GUI
+is an optional extra (PySide6); install it once with `uv sync --extra gui`, then:
+
+```bash
+uv run omniscan gui          # or: uv run python -m omniscan.gui
+```
+
+Without the extra installed the command prints one line naming the extra and exits 2.
+
+The window has five pages in the left sidebar (also `Ctrl+1`…`Ctrl+5`). The status bar shows the
+configured GPU device and the job state; window size and the last open page are remembered across
+restarts.
+
+**Library** lists every series under `paths.library_root` with its chapter count. Picking a series
+fills the chapter table with one row per chapter and one column per pipeline stage (`ingest` …
+`export`), colored by state from the chapter's manifest: green `done` (recorded with its outputs on
+disk), yellow `stale` (recorded but its output is missing, or an earlier stage re-ran after it —
+the stage would re-run), red `failed`, gray `not run`. Double-click a chapter (or pick a series and
+switch pages) to open it in the Reader. Refresh re-reads the library.
+
+**Reader** is the side-by-side raw | output compare view: prev/next chapter buttons, a chapter
+switcher, zoom −/+ (`Fit width` resets), a `Sides` selector (`Both` / `Raw only` / `Output only`),
+`Jump to slice…` to scroll both panes to one output slice, and `Linked scrolling` so the two panes
+follow each other while comparing. A chapter with no output yet shows the caption
+`Output (not translated yet)` and an empty right pane.
+
+**Run** starts pipeline runs. Pick the series and chapters (or `All chapters`), then a mode:
+
+- **Full** — every stage over every selected chapter (the CLI `run` without `--stages`).
+- **Subset** — tick exactly the stages to run (the ten checkboxes; LaMa inpainting and
+  `Force re-run` are checkboxes too). This is the CLI's `--stages`.
+- **Step** — runs the preview chapter and pauses after each of its stages: the preview panel shows
+  what the stage produced and waits for `Continue` (next stage) or `Abort` (end the run). The same
+  gate as the CLI's `run --step`.
+- **Auto** — reserved for the upcoming automatic mode; today it runs exactly like Full.
+
+One run at a time; the form is disabled while one is running and the status bar shows `job: running`.
+The progress bar counts stages across chapters, the log under it prints one line per finished stage,
+and `Cancel` stops after the current stage (the summary line ends with `aborted=stopped`). A failed
+chapter or a broken setup (e.g. no Ollama daemon) is reported inline. The run page takes the
+exclusive GPU lock for real-GPU work, so a GUI run and a CLI run queue up instead of colliding.
+
+**Models** is the `omniscan models` screen: the catalog with role/language filters, each model's fit
+on this machine, download/remove buttons and `Download required models`. Hardware detection runs in
+the background (it imports torch); the header shows the same snapshot `omniscan hardware` prints.
+
+**Settings** edits the config in place, with validation:
+
+- **Global** — paths, GPU device (`auto`, `cpu`, `mps`, `cuda[:N]`; editable), warm-up, codec, OCR
+  engine and models, translation settings, slicer strategy, the filter switch and threshold. Every
+  change is written to the user `config.toml` when it validates; a refused value shows the reason
+  inline and the editor reverts. `Reset` drops the override so the built-in default applies again.
+- **Per-series** — the same override mechanism as `series.toml` in the series' library folder: pick
+  a section and key, enter a value (bools/numbers/lists as JSON), press `Set`; existing overrides
+  are listed with `Remove` buttons.
+- **Translation** — the translation profiles from `config/translation_profiles.toml` plus the user's
+  `translation_profiles.toml`; ticking a profile enables it (written to the user file), and a
+  translate run runs exactly the enabled profiles.
+- **Hardware** — the machine snapshot from `hw detect` plus one row per catalog model that does not
+  fit (level, device, why). Detection runs when you open the tab (it imports torch) or on
+  `Re-detect`.
+
+A successful settings write reloads the config into every page (the Library re-scans, the Run page
+re-lists series). The window never touches `secrets.env`; translation runs read it exactly as the
+CLI does.
+
 ## Web viewer
 
 Start the API and the UI in two terminals:
