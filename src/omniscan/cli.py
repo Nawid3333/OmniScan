@@ -151,20 +151,20 @@ def cmd_import(
                 typer.echo(f"import:   {warning}", err=True)
             return
         result = execute_import(plan, get_config().paths.library_root, move=move)
+        for chapter_written in result.chapters_written:
+            typer.echo(f"import: {plan.series}/{chapter_written}")
+        for warning in plan.warnings:
+            typer.echo(f"import: {warning}", err=True)
+        summary = f"import: {result.files_copied} file(s) copied"
+        if result.files_converted:
+            summary += f", {result.files_converted} file(s) converted to JPEG"
+        typer.echo(summary + f", {result.files_skipped_duplicate} duplicate file(s) skipped")
     except ImportPlanError as exc:
         typer.echo(f"import: {exc}", err=True)
         raise typer.Exit(2) from exc
     finally:
         if plan is not None:
             plan.cleanup()  # archive extractions are one-shot for the CLI
-    for chapter_written in result.chapters_written:
-        typer.echo(f"import: {plan.series}/{chapter_written}")
-    for warning in plan.warnings:
-        typer.echo(f"import: {warning}", err=True)
-    summary = f"import: {result.files_copied} file(s) copied"
-    if result.files_converted:
-        summary += f", {result.files_converted} file(s) converted to JPEG"
-    typer.echo(summary + f", {result.files_skipped_duplicate} duplicate file(s) skipped")
 
 
 def _note_conversions(plan: ImportPlan, line: str) -> None:

@@ -77,9 +77,7 @@ def plan_import(source: Path, *, series: str | None = None, chapter: str | None 
     return _plan_folder(source.resolve(), series=series, chapter=chapter)
 
 
-def _plan_folder(
-    source: Path, *, series: str | None, chapter: str | None
-) -> ImportPlan:
+def _plan_folder(source: Path, *, series: str | None, chapter: str | None) -> ImportPlan:
     """The folder path: unchanged from before archives existed (all three shapes live here)."""
     source = source.resolve()
     if not source.is_dir():

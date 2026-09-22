@@ -175,8 +175,9 @@ def test_alpha_flattened_over_white(tmp_path: Path) -> None:
         assert img.format == "JPEG" and img.mode == "RGB"
         top = img.getpixel((0, 0))
         bottom = img.getpixel((0, 15))
+    assert isinstance(top, tuple) and isinstance(bottom, tuple)  # RGB pixels, not a palette index
     assert all(abs(channel - 255) <= 2 for channel in top)  # the transparent half became white
-    assert all(abs(channel - expected) <= 2 for channel, expected in zip(bottom, (10, 20, 30)))
+    assert all(abs(channel - expected) <= 2 for channel, expected in zip(bottom, (10, 20, 30), strict=True))
     assert result.files_converted == 1
 
 
@@ -194,7 +195,10 @@ def test_gif_uses_first_frame(tmp_path: Path) -> None:
     dest = tmp_path / "library" / "Solo Leveling" / "Chapter 2" / "p1.jpg"
     with Image.open(dest) as img:
         assert img.format == "JPEG" and img.size == (4, 4)
-        mean = sum(sum(img.getpixel((x, y))[:3]) / 3 for x in range(4) for y in range(4)) / 16
+        pixels = [img.getpixel((x, y)) for x in range(4) for y in range(4)]
+    values = [pixel[:3] for pixel in pixels if isinstance(pixel, tuple)]
+    assert len(values) == len(pixels)  # every pixel is an RGB tuple
+    mean = sum(sum(value) / 3 for value in values) / 16
     assert mean < 32  # the black first frame, not the white second one
     assert result.converted == ["p1.gif"]
 
@@ -282,7 +286,7 @@ def test_progress_reports_every_file(tmp_path: Path) -> None:
     _image(src / "p1.png")
     _image(src / "p2.jpg", color=(2, 2, 2))
     plan = plan_import(src, series="Solo Leveling")
-    seen: list[tuple[int, int]] = []
+    seen: list[tuple[int, int | None]] = []
 
     execute_import(plan, tmp_path / "library", on_progress=lambda done, total: seen.append((done, total)))
 

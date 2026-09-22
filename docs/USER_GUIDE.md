@@ -179,26 +179,43 @@ uv run omniscan hardware --json
 
 ### `omniscan import`
 
-Import raw chapter images from a local folder into the library. The source folder can be one chapter
-folder (all images), a folder of chapter folders (each child names a chapter), or a flat dump of
-images whose filenames carry an explicit chapter marker (`Ch1`, `Chapter_02`, `ep3`, …). Series and
-chapter are guessed from the folder names unless you override them.
+Import raw chapter images from a local folder or a `.zip`/`.cbz` archive into the library. The
+source can be one chapter folder (all images), a folder of chapter folders (each child names a
+chapter), or a flat dump of images whose filenames carry an explicit chapter marker (`Ch1`,
+`Chapter_02`, `ep3`, …). Archives are extracted to a temporary directory and planned with the same
+three shapes; a lone top-level wrapper folder is descended into, and the series name defaults to
+the archive's own name. Series and chapter are guessed from the folder names unless you override
+them.
 
 | Argument/option | Meaning |
 |---|---|
-| `source` | directory to read (required) |
+| `source` | folder, or `.zip`/`.cbz` archive (required) |
 | `--series <str>` | override the destination series name |
 | `--chapter <str>` | override the destination chapter name |
 | `--move` | move instead of copy; delete the source after import |
 | `--dry-run` | print the plan without writing anything |
 
-Reads the source folder; writes `library_root/<series>/<chapter>/`. Exit 2 when the source cannot be
-planned unambiguously (empty folder, mixed subfolders and loose images, no parseable chapter names).
+Files whose name does not end in `.jpg`/`.jpeg` are converted to plain baseline JPEG (quality 95)
+on the way in — alpha is flattened over white and EXIF rotation is applied, exactly like the ingest
+stage, so the pipeline never re-converts them. `--dry-run` reports how many that is
+(`import:   N file(s) will be converted to JPEG`) and the commit summary adds
+`, N file(s) converted to JPEG` when it is more than zero. The conversion runs on the CPU
+(libjpeg-turbo); no hardware JPEG decoder is wired up.
+
+Reads the source; writes `library_root/<series>/<chapter>/`. Exit 2 when the source cannot be
+planned unambiguously (empty folder or archive, mixed subfolders and loose images, no parseable
+chapter names, a corrupt or encrypted archive) or when a destination file exists with different
+content.
 
 ```bash
 uv run omniscan import ~/Downloads/DemoSeries --dry-run
-uv run omniscan import ~/Downloads/DemoSeries
+uv run omniscan import ~/Downloads/DemoSeries.zip
 ```
+
+The standalone GUI import page (`ImportView`, demoed by `scripts/gui_import_demo.py`) wraps the
+same pipeline with a plan preview you can fix before committing: rename the series, move or
+reorder pages, rename/merge/split chapters, see exactly which files will be converted, then
+import with copy or move while a progress bar tracks it.
 
 ### `omniscan acquire`
 

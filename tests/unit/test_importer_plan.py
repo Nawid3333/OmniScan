@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 
 from omniscan.importer.plan import (
-    ImportPlan,
     ImportPlanError,
     ImportPlanItem,
     files_to_convert,
