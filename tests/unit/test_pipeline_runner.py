@@ -380,6 +380,44 @@ def test_auto_mode_ignores_gate_and_preview_chapter(cfg: Config, fake_stages: di
     ]
 
 
+def test_auto_mode_after_stage_cancels_after_the_current_stage(
+    cfg: Config, fake_stages: dict[str, FakeStage]
+) -> None:
+    """Regression (U3c's report): auto mode ignored `gate`, so a GUI Cancel button had nothing to hook
+    into outside step mode. `after_stage` fixes that: it is honoured in every mode, cancelling after
+    the stage that was running when it returned False — chapters finished earlier in the same pass
+    (`RunAbortedError.results`) are kept in the result, not lost."""
+    calls = wire_calls(fake_stages)
+    reports: list[tuple[str, str]] = []
+    seen: list[tuple[str, str]] = []
+
+    def after_stage(ctx: Any, outcome: Any) -> bool:
+        seen.append((ctx.paths.chapter, outcome.stage))
+        return not (ctx.paths.chapter == "B" and outcome.stage == "ingest")
+
+    result = run_pipeline(
+        cfg,
+        SERIES,
+        ["A", "B"],
+        client=FakeClient(),
+        gpu=FakeScheduler(),
+        mode="auto",
+        after_stage=after_stage,
+        report=lambda chapter, outcome: reports.append((chapter, outcome.stage)),
+    )
+    assert result.aborted == "stopped"
+    assert not result.ok
+    assert result.failed == {}
+    # chapter A's whole vision pass finished (kept via RunAbortedError.results) ...
+    assert [outcome.stage for outcome in result.outcomes["A"]] == list(STAGE_ORDER)[:4]
+    # ... chapter B stopped after its first (and only) stage ...
+    assert [outcome.stage for outcome in result.outcomes["B"]] == ["ingest"]
+    assert "C" not in result.outcomes
+    assert reports == [("A", name) for name in list(STAGE_ORDER)[:4]] + [("B", "ingest")]
+    assert calls == [f"{name}(A)" for name in list(STAGE_ORDER)[:4]] + ["ingest(B)"]  # no later stage ran
+    assert seen[-1] == ("B", "ingest")  # after_stage itself saw the cancelling call
+
+
 def test_step_mode_runs_the_preview_chapter_through_all_passes_first(
     cfg: Config, fake_stages: dict[str, FakeStage]
 ) -> None:

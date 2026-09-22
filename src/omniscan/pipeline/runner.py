@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 from omniscan.core.config import series_config
 from omniscan.core.paths import SeriesPaths
 from omniscan.core.stage import (
+    AfterStage,
     ChapterContext,
     GpuScheduler,
     RunAbortedError,
@@ -160,19 +161,23 @@ def _run_preview(
     force: bool,
     report: ReportFn | None,
     gate: Gate,
+    after_stage: AfterStage | None,
     total: int,
 ) -> bool:
     """Step-mode phase A: run the preview chapter through all passes behind `gate`; False stops the run.
 
     The preview chapter's outcomes and failures are stored into `result` exactly as the auto loop does;
-    a gate that answers False raises RunAbortedError out of `run_series` and is recorded as
-    `aborted = "stopped"`, a failed preview stage as `aborted = "preview failed"`.
+    a gate (or `after_stage`, checked first — a cancel while paused doubles as "no") that answers False
+    raises RunAbortedError out of `run_series` and is recorded as `aborted = "stopped"`, a failed preview
+    stage as `aborted = "preview failed"`.
     """
     position = 0
 
     def hook(ctx: ChapterContext, outcome: StageOutcome) -> bool:
         nonlocal position
         position += 1
+        if after_stage is not None and not after_stage(ctx, outcome):
+            return False
         return gate(
             GateEvent(
                 series=series,
@@ -251,6 +256,7 @@ def run_pipeline(
     mode: RunMode = "auto",
     preview_chapter: str | None = None,
     gate: Gate | None = None,
+    after_stage: AfterStage | None = None,
 ) -> PipelineResult:
     """Run the selected stages over the chapters in passes; failed chapters skip the later passes.
 
@@ -258,6 +264,10 @@ def run_pipeline(
     passes first, with `gate` asked after every stage; when it gets through, the remaining chapters
     run automatically as before. The caller owns `client` and `gpu`: the runner never builds either.
     `report` is called once per outcome after its pass finished (in chapter order, then stage order).
+    `after_stage`, when given, is checked after every stage in every mode (in step mode, before the
+    gate): it returning False cancels the run (`PipelineResult.aborted == "stopped"`) after the stage
+    that just finished — the same one-stage-granularity cancellation `core.stage.run_series` already
+    gives step mode, now available to a plain run too (a GUI Cancel button's hook, for example).
     """
     cfg = series_config(cfg, SeriesPaths.from_config(cfg, series).library_dir)
     names = list(stages) if stages is not None else list(STAGE_ORDER)
@@ -297,6 +307,7 @@ def run_pipeline(
             force=force,
             report=report,
             gate=step_gate,
+            after_stage=after_stage,
             total=len(names),
         )
         if not completed:
@@ -306,7 +317,18 @@ def run_pipeline(
         active = all_chapters
     for _label, pass_stages in passes:
         stage_objects = _timed(pass_stages, cfg, client)
-        pass_results = run_series(stage_objects, cfg, series, active, gpu=gpu, force=force)
+        try:
+            pass_results = run_series(
+                stage_objects, cfg, series, active, gpu=gpu, force=force, after_stage=after_stage
+            )
+        except RunAbortedError as error:
+            for chapter, outcomes in {**error.results, error.chapter: error.outcomes}.items():
+                result.outcomes.setdefault(chapter, []).extend(outcomes)
+                if report is not None:
+                    for outcome in outcomes:
+                        report(chapter, outcome)
+            result.aborted = "stopped"
+            break
         _record_pass_results(result, pass_results, report)
         if result.aborted is not None:
             break
