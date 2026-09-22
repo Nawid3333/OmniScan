@@ -16,7 +16,7 @@ from rich.console import Console
 from rich.table import Table
 
 from omniscan.acquire.cli import acquire_app
-from omniscan.core.config import Config, get_config, get_secrets
+from omniscan.core.config import Config, get_config, get_secrets, series_config
 from omniscan.core.paths import ChapterPaths, SeriesPaths, chapter_number, list_chapters, list_images
 from omniscan.core.schemas import GlossaryEntry, IngestArtifact, SlicesArtifact
 from omniscan.doctor import run_all_checks
@@ -231,6 +231,9 @@ def _run_stages(
     if chapters is None and not SeriesPaths.from_config(cfg, series).chapters():
         typer.echo(f"{name}: no chapters found for series {series!r}", err=True)
         raise typer.Exit(2)
+    # merge series.toml before building the VRAM manager: it decides which OCR/detect/inpaint
+    # models to load, and make_context() below would otherwise merge it too late for that choice
+    cfg = series_config(cfg, SeriesPaths.from_config(cfg, series).library_dir)
     gpu = None
     if any(stage.gpu_group is not None for stage in stages):
         from omniscan.gpu.groups import build_vram_manager
@@ -752,6 +755,9 @@ def cmd_run(
     if chapter is None and not SeriesPaths.from_config(cfg, series).chapters():
         typer.echo(f"run: no chapters found for series {series!r}", err=True)
         raise typer.Exit(2)
+    # merge series.toml before building the VRAM manager: it decides which OCR/detect/inpaint
+    # models to load, and make_context() inside run_pipeline would otherwise merge it too late
+    cfg = series_config(cfg, SeriesPaths.from_config(cfg, series).library_dir)
     names = list(stage) if stage else list(STAGE_ORDER)
     unknown = next((name for name in names if name not in STAGE_ORDER), None)
     if unknown is not None:

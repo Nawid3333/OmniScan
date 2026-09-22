@@ -226,6 +226,44 @@ def test_run_rate_limit_exits_3(patched_cfg: Config, fake_pipeline: dict[str, An
     assert not any(call.startswith("translate(") for call in fake_pipeline["calls"])
 
 
+def test_run_builds_the_vram_manager_from_series_merged_config(
+    patched_cfg: Config, fake_pipeline: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: `omniscan run` used to call `build_vram_manager` with the un-merged user config,
+    so a per-series `ocr.engine` override picked the right stage behaviour (via make_context, which
+    does merge) but the wrong model group — the OCR stage then crashed with KeyError('reader')
+    because the VRAM manager had loaded ppocr's models, not the crop reader the override asked for."""
+    make_chapter(patched_cfg)
+    series_dir = patched_cfg.paths.library_root / SERIES
+    (series_dir / "series.toml").write_text('[ocr]\nengine = "manga_ocr"\n', encoding="utf-8")
+    seen: list[Config] = []
+    monkeypatch.setattr(
+        "omniscan.gpu.groups.build_vram_manager", lambda cfg: seen.append(cfg) or SpyManager()
+    )
+    result = runner.invoke(app, ["run", SERIES, "-s", "detect"])
+    assert result.exit_code == 0
+    assert seen and seen[0].ocr.engine == "manga_ocr"
+
+
+def test_run_stages_subcommand_builds_the_vram_manager_from_series_merged_config(
+    patched_cfg: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same regression as above, for the `_run_stages` path used by `omniscan detect`/`ocr`/etc.
+
+    `detect` wires real Stage objects (not the `fake_pipeline` fixture's fakes), so it fails past
+    `ingest` on this empty chapter — irrelevant here: `build_vram_manager` is called, with the
+    series-merged config, before any stage runs."""
+    make_chapter(patched_cfg)
+    series_dir = patched_cfg.paths.library_root / SERIES
+    (series_dir / "series.toml").write_text('[ocr]\nengine = "manga_ocr"\n', encoding="utf-8")
+    seen: list[Config] = []
+    monkeypatch.setattr(
+        "omniscan.gpu.groups.build_vram_manager", lambda cfg: seen.append(cfg) or SpyManager()
+    )
+    runner.invoke(app, ["detect", SERIES])
+    assert seen and seen[0].ocr.engine == "manga_ocr"
+
+
 # ---------------------------------------------------------------- step mode
 
 
