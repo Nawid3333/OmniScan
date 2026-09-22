@@ -292,8 +292,8 @@ def test_series_toml_strategy_reaches_stage(tmp_path: Path) -> None:
     assert artifact.params["strategy"] == "fixed"
 
 
-def test_stage_version_is_3_and_config_hash_tracks_strategy() -> None:
-    assert SliceStage.version == 3
+def test_stage_version_is_4_and_config_hash_tracks_strategy() -> None:
+    assert SliceStage.version == 4
     plain = SliceStage().config_subset(Config(slicer=SlicerConfig()))
     paged = SliceStage().config_subset(Config(slicer=SlicerConfig(strategy="page")))
     assert plain != paged

@@ -164,6 +164,27 @@ def test_page_out_of_range_or_missing_ingest_returns_404(tmp_path: Path) -> None
     assert client.get(f"{base}/0").status_code == 404
 
 
+def test_page_resolves_by_source_file_index_with_gaps(tmp_path: Path) -> None:
+    """ingest.files may have gaps (promo-filtered raws keep their original index): pages/N must
+    resolve by `SourceFile.index`, never by list position (regression for card F2a)."""
+    write_chapter(tmp_path)
+    work = tmp_path / "work" / SERIES / CHAPTER
+    ingest = IngestArtifact.load(work / "ingest.json")
+    gapped = IngestArtifact(
+        series=ingest.series,
+        chapter=ingest.chapter,
+        strip_width=ingest.strip_width,
+        strip_height=ingest.strip_height,
+        files=[f.model_copy(update={"index": f.index * 2}) for f in ingest.files],  # indices 0 and 2
+    )
+    gapped.save(work / "ingest.json")
+    client = make_client(tmp_path)
+    base = f"/api/series/{quote(SERIES)}/chapters/{quote(CHAPTER)}/pages"
+    assert client.get(f"{base}/0").status_code == 200
+    assert client.get(f"{base}/2").status_code == 200
+    assert client.get(f"{base}/1").status_code == 404  # the gap 404s, it does not return the next page
+
+
 def test_traversal_cannot_escape_roots(tmp_path: Path) -> None:
     """`..` / absolute segments in series/chapter must yield a clean 404, never outside files."""
     write_chapter(tmp_path)

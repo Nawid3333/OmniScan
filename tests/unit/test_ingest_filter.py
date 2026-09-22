@@ -1,18 +1,23 @@
-"""Tests for ingest_chapter's file-level promo filter (card F2a)."""
+"""Tests for ingest_chapter's file-level promo filter and the IngestStage wiring (card F2a)."""
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import numpy as np
 import pytest
 from PIL import Image
 
+from omniscan.core.config import Config, FilterConfig, GpuConfig, PathsConfig
 from omniscan.core.schemas import IngestArtifact
+from omniscan.core.stage import make_context, run_stage
+from omniscan.filter.apply import record_override
 from omniscan.filter.decide import load_examples
 from omniscan.filter.hashing import dhash, hamming, similarity
 from omniscan.gpu.codec.turbo import TurboCodec
 from omniscan.ingest import ingest_chapter
+from omniscan.ingest.stage import IngestStage
 from omniscan.ingest.strip import build_strip, jpeg_paths
 from tests.fixtures import images
 
@@ -170,3 +175,92 @@ def test_ingest_dhash_similarity_of_noise_pages_stays_low(tmp_path: Path) -> Non
         noise = Image.fromarray(rng.integers(0, 256, (300, 400, 3), dtype=np.uint8))
         assert hamming(example_hash, dhash(noise)) > 6
         assert similarity(example_hash, dhash(noise)) < 0.90
+
+
+# ---------------------------------------------------------------- IngestStage wiring
+
+
+def stage_cfg(tmp_path: Path, enabled: bool = True) -> Config:
+    return Config(
+        gpu=GpuConfig(device="cpu"),
+        paths=PathsConfig(
+            library_root=tmp_path / "library",
+            work_root=tmp_path / "work",
+            output_root=tmp_path / "output",
+            promo_examples=tmp_path / "promo",
+            models_dir=tmp_path / "models",
+        ),
+        filter=FilterConfig(enabled=enabled),
+    )
+
+
+def test_ingest_stage_filters_and_reports_metrics(tmp_path: Path) -> None:
+    cfg = stage_cfg(tmp_path)
+    raw = cfg.paths.library_root / SERIES / CHAPTER
+    write_chapter(raw, cfg.paths.promo_examples)
+
+    ctx = make_context(cfg, SERIES, CHAPTER)
+    outcome = run_stage(IngestStage(), ctx)
+    assert outcome.status == "done"
+    assert outcome.metrics["filtered_files"] == 2.0
+    art = IngestArtifact.load(ctx.paths.artifact("ingest.json"))
+    assert art.filtered_files == ["002.jpg", "004.jpg"]
+    for name in art.filtered_files:
+        assert (ctx.paths.filtered_dir / name).read_bytes() == (raw / name).read_bytes()
+
+    assert run_stage(IngestStage(), make_context(cfg, SERIES, CHAPTER)).status == "skipped"
+
+
+def test_ingest_stage_reruns_when_an_example_is_added(tmp_path: Path) -> None:
+    cfg = stage_cfg(tmp_path)
+    raw = cfg.paths.library_root / SERIES / CHAPTER
+    raw.mkdir(parents=True)
+    example = images.gradient_jpeg(tmp_path / "end_card.jpg", invert=True)
+    with Image.open(example) as img:
+        resized = img.convert("RGB").resize((384, 290))
+    rng = np.random.default_rng(0)
+    pixels = np.asarray(resized, dtype=np.int16) + rng.integers(-3, 4, (290, 384, 3), dtype=np.int16)
+    Image.fromarray(pixels.clip(0, 255).astype(np.uint8)).save(raw / "002.jpg", format="JPEG")
+    images.plain_jpeg(raw / "001.jpg", color=(200, 60, 60))
+
+    ctx = make_context(cfg, SERIES, CHAPTER)
+    assert run_stage(IngestStage(), ctx).status == "done"
+    assert IngestArtifact.load(ctx.paths.artifact("ingest.json")).filtered_files == []
+    assert run_stage(IngestStage(), make_context(cfg, SERIES, CHAPTER)).status == "skipped"
+
+    cfg.paths.promo_examples.joinpath("global").mkdir(parents=True)
+    shutil.copy2(example, cfg.paths.promo_examples / "global" / "end_card.jpg")
+    assert run_stage(IngestStage(), make_context(cfg, SERIES, CHAPTER)).status == "done"
+    assert IngestArtifact.load(ctx.paths.artifact("ingest.json")).filtered_files == ["002.jpg"]
+    assert run_stage(IngestStage(), make_context(cfg, SERIES, CHAPTER)).status == "skipped"
+
+
+def test_ingest_stage_reruns_when_filter_json_changes(tmp_path: Path) -> None:
+    cfg = stage_cfg(tmp_path)
+    raw = cfg.paths.library_root / SERIES / CHAPTER
+    write_chapter(raw, cfg.paths.promo_examples)
+
+    ctx = make_context(cfg, SERIES, CHAPTER)
+    assert run_stage(IngestStage(), ctx).status == "done"
+    assert run_stage(IngestStage(), make_context(cfg, SERIES, CHAPTER)).status == "skipped"
+
+    record_override(ctx.paths, "file", 1, "restored")  # 002.jpg is raw index 1
+    assert run_stage(IngestStage(), make_context(cfg, SERIES, CHAPTER)).status == "done"
+    art = IngestArtifact.load(ctx.paths.artifact("ingest.json"))
+    assert [f.index for f in art.files] == [0, 1, 2, 4]
+    assert art.filtered_files == ["004.jpg"]
+    assert run_stage(IngestStage(), make_context(cfg, SERIES, CHAPTER)).status == "skipped"
+
+
+def test_ingest_stage_filter_disabled_ignores_examples(tmp_path: Path) -> None:
+    cfg = stage_cfg(tmp_path, enabled=False)
+    raw = cfg.paths.library_root / SERIES / CHAPTER
+    write_chapter(raw, cfg.paths.promo_examples)
+
+    ctx = make_context(cfg, SERIES, CHAPTER)
+    outcome = run_stage(IngestStage(), ctx)
+    assert outcome.status == "done"
+    assert outcome.metrics["filtered_files"] == 0.0
+    art = IngestArtifact.load(ctx.paths.artifact("ingest.json"))
+    assert art.filtered_files == []
+    assert [f.index for f in art.files] == [0, 1, 2, 3, 4]

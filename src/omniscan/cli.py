@@ -213,9 +213,18 @@ def _stub(name: str, series: str | None) -> None:
 
 
 def _run_stages(
-    name: str, stages: Sequence[Any], series: str, chapters: list[str] | None, force: bool
+    name: str,
+    stages: Sequence[Any],
+    series: str,
+    chapters: list[str] | None,
+    force: bool,
+    *,
+    progress: bool = True,
 ) -> None:
-    """Run a pipeline over a series' chapters, printing one line per stage outcome (exit 1 if any failed)."""
+    """Run a pipeline over a series' chapters, printing one line per stage outcome (exit 1 if any failed).
+
+    With `progress=False` (machine-readable output) nothing is printed unless a stage fails, and
+    failures go to stderr instead of stdout."""
     from omniscan.core.stage import run_series
 
     cfg = get_config()
@@ -235,10 +244,15 @@ def _run_stages(
     failed = False
     for chapter, outcomes in results.items():
         for outcome in outcomes:
-            typer.echo(f"{series}/{chapter} {outcome.stage}: {outcome.status} ({outcome.seconds:.2f}s)")
+            if outcome.status != "failed" and not progress:
+                continue
+            typer.echo(
+                f"{series}/{chapter} {outcome.stage}: {outcome.status} ({outcome.seconds:.2f}s)",
+                err=not progress,
+            )
             if outcome.status == "failed":
                 failed = True
-                typer.echo(f"    {outcome.error}")
+                typer.echo(f"    {outcome.error}", err=not progress)
     if failed:
         raise typer.Exit(1)
 
@@ -882,7 +896,7 @@ def filter_run(
     from omniscan.ingest.stage import IngestStage
     from omniscan.slicer.stage import SliceStage
 
-    _run_stages("filter", [IngestStage(), SliceStage()], series, chapter, force=False)
+    _run_stages("filter", [IngestStage(), SliceStage()], series, chapter, force=False, progress=not as_json)
     sp = SeriesPaths.from_config(get_config(), series)
     chapters = list(chapter) if chapter is not None else sp.chapters()
     per_chapter: list[tuple[str, list[str], list[int]]] = []
