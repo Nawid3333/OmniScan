@@ -69,6 +69,11 @@ def build_vram_manager(cfg: Config) -> WarmupVramManager:
     manager.register(VISION_GROUP, load_vision, est_gib=est_gib)
     manager.register(INPAINT_GROUP, load_inpaint, est_gib=2.0)
     # The warm-up runs on its own daemon thread and must not block the caller; resolve_device is the
-    # same call VramManager makes, so both always land on the same device.
-    manager.warmup = start_warmup(device) if cfg.gpu.warmup and device.type == "cuda" else None
+    # same call VramManager makes, so both always land on the same device. The gate keeps its MIOpen
+    # find off the pipeline's startup decode: the first acquire happens right after the slice stage.
+    manager.warmup = (
+        start_warmup(device, gate=manager.first_acquire_event)
+        if cfg.gpu.warmup and device.type == "cuda"
+        else None
+    )
     return manager

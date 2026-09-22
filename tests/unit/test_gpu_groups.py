@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -197,10 +198,10 @@ def test_build_vram_manager_starts_warmup_once_on_cuda(
     from omniscan.gpu.groups import build_vram_manager
     from omniscan.gpu.warmup import GpuWarmup
 
-    started: list[torch.device] = []
+    started: list[tuple[torch.device, threading.Event | None]] = []
 
-    def fake_start_warmup(device: torch.device) -> GpuWarmup:
-        started.append(device)
+    def fake_start_warmup(device: torch.device, gate: threading.Event | None = None) -> GpuWarmup:
+        started.append((device, gate))
         return GpuWarmup(torch.device("cpu"))  # an already-done stand-in handle
 
     monkeypatch.setattr(groups_module, "start_warmup", fake_start_warmup)
@@ -212,16 +213,19 @@ def test_build_vram_manager_starts_warmup_once_on_cuda(
 
     cfg = cli_cfg(tmp_path).model_copy(update={"gpu": GpuConfig(device="cuda")})
     manager = build_vram_manager(cfg)
-    assert started == [torch.device("cuda")]  # exactly one start_warmup call for the resolved device
+    assert started == [
+        (torch.device("cuda"), manager.first_acquire_event)
+    ]  # one call, gated on first acquire
     assert manager.warmup is not None and manager.warmup.done
     assert manager.device.type == "cuda"
 
+    first_gate = manager.first_acquire_event
     manager = build_vram_manager(cfg.model_copy(update={"gpu": GpuConfig(device="cuda", warmup=False)}))
-    assert started == [torch.device("cuda")]  # warm-up disabled: not called again
+    assert started == [(torch.device("cuda"), first_gate)]  # warm-up disabled: not called again
     assert manager.warmup is None
 
     manager = build_vram_manager(cli_cfg(tmp_path))  # cpu device: nothing starts
-    assert started == [torch.device("cuda")]
+    assert len(started) == 1  # still only the first build started a warm-up
     assert manager.warmup is None
 
 

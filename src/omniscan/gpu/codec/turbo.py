@@ -18,6 +18,7 @@ from PIL import Image, ImageOps, JpegImagePlugin
 
 from omniscan.gpu.codec.base import JpegInfo, Subsampling
 from omniscan.gpu.device import resolve_device
+from omniscan.gpu.timeline import mark
 
 # PIL hands out read-only arrays and the codec only ever reads them (copy into a tensor), so torch's
 # "array is not writable" warning is noise that would otherwise appear once in every CLI run.
@@ -82,26 +83,25 @@ class TurboCodec:
         """
         pool = self._ensure_pool()
         arrs = list(pool.map(self._decode_cpu, datas))
+        mark(f"turbo decoded {len(arrs)} pages")
         width = out.shape[2]
-        staging: torch.Tensor | None = (
-            torch.empty((3, max(arr.shape[0] for arr in arrs), width), dtype=torch.uint8, pin_memory=True)
-            if self.device.type == "cuda"
-            else None
-        )
-        for i, (arr, y) in enumerate(zip(arrs, y_offsets, strict=True)):
+        for i, (arr, _y) in enumerate(zip(arrs, y_offsets, strict=True)):
             if arr.shape[1] != width:
                 msg = f"image {i} width {arr.shape[1]} != strip width {width}"
                 raise ValueError(msg)
-            h = arr.shape[0]
-            tensor = torch.from_numpy(arr).permute(2, 0, 1)
-            if staging is not None:
-                stage = staging[:, :h, :]
-                stage.copy_(tensor)
-                # blocking on purpose: `staging` is reused for the next page, so an async copy would let that
-                # page overwrite the buffer before this one has been transferred (pages ended up duplicated)
-                out[:, y : y + h, :].copy_(stage)
-            else:
-                out[:, y : y + h, :].copy_(tensor.to(self.device))
+        if self.device.type != "cuda":
+            for arr, y in zip(arrs, y_offsets, strict=True):
+                out[:, y : y + arr.shape[0], :].copy_(torch.from_numpy(arr).permute(2, 0, 1))
+            mark("turbo copies done")
+            return
+        # One pinned mirror of the whole strip + a single H2D copy: during another thread's library
+        # init (MIOpen), per-page blocking H2D copies each stall behind it, while CPU memcpys do not.
+        staging = torch.empty(out.shape, dtype=torch.uint8, pin_memory=True)
+        for arr, y in zip(arrs, y_offsets, strict=True):
+            staging[:, y : y + arr.shape[0], :].copy_(torch.from_numpy(arr).permute(2, 0, 1))
+        mark("staging filled")
+        out.copy_(staging)
+        mark("turbo copies done")
 
     def _decode_cpu(self, data: bytes) -> np.ndarray:
         """Decode JPEG bytes to an (H, W, 3) uint8 RGB array on the calling thread (no GPU work)."""

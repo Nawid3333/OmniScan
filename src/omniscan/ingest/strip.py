@@ -11,6 +11,7 @@ from omniscan.core.schemas import IngestArtifact
 from omniscan.core.stage import ChapterContext
 from omniscan.gpu.codec.base import JpegCodec
 from omniscan.gpu.codec.select import get_codec
+from omniscan.gpu.timeline import mark
 
 
 def jpeg_paths(ingest: IngestArtifact, raw_dir: Path, cache_dir: Path) -> list[Path]:
@@ -29,8 +30,11 @@ def build_strip(ingest: IngestArtifact, paths: Sequence[Path], codec: JpegCodec)
         raise ValueError(f"{len(paths)} paths given for {len(ingest.files)} ingest files")
 
     strip = torch.empty((3, ingest.strip_height, ingest.strip_width), dtype=torch.uint8, device=codec.device)
+    mark("strip allocated")
     _decode_full_width(ingest, paths, strip, codec)
+    mark("strip full-width decoded")
     _resize_off_width(ingest, paths, strip, codec)
+    mark("strip resize done")
     return strip
 
 
@@ -43,11 +47,9 @@ def _decode_full_width(
         for file, path in zip(ingest.files, paths, strict=True)
         if file.width == ingest.strip_width
     ]
-    codec.decode_into(
-        [path.read_bytes() for _, path in entries],
-        strip,
-        [file.y0 for file, _ in entries],
-    )
+    datas = [path.read_bytes() for _, path in entries]
+    mark(f"strip bytes read ({sum(len(d) for d in datas) // 1024} KiB)")
+    codec.decode_into(datas, strip, [file.y0 for file, _ in entries])
 
 
 def _resize_off_width(

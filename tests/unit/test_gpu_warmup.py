@@ -210,3 +210,30 @@ def test_wait_times_out_while_a_step_is_blocked(monkeypatch: pytest.MonkeyPatch)
     release.set()
     assert warmup.wait(10.0) is True
     assert warmup.done and warmup.error is None
+
+
+def test_gate_holds_the_steps_until_it_is_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    """G3: the gate keeps the MIOpen find off the pipeline's startup decode (first acquire)."""
+    recorder = Recorder()
+    patch_ops(monkeypatch, recorder)
+    gate = threading.Event()
+
+    warmup = GpuWarmup(CUDA, gate=gate)
+    warmup.start()
+    assert warmup.wait(0.05) is False  # still waiting for the gate
+    assert recorder.names() == ["set_device"]  # set_device runs before the gate, nothing after
+
+    gate.set()
+    assert warmup.wait(10.0)
+    assert recorder.names() == EXPECTED_SEQUENCE
+    assert warmup.error is None
+
+
+def test_start_warmup_forwards_the_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    recorder = Recorder()
+    patch_ops(monkeypatch, recorder)
+    monkeypatch.setattr(warmup_module, "_instances", {})
+    gate = threading.Event()
+
+    warmup = start_warmup(torch.device("cuda", 0), gate=gate)
+    assert warmup._gate is gate

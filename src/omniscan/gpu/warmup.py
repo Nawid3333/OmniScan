@@ -23,8 +23,9 @@ log = logging.getLogger(__name__)
 class GpuWarmup:
     """Initialises the GPU libraries once per process on a daemon thread; never raises."""
 
-    def __init__(self, device: torch.device) -> None:
+    def __init__(self, device: torch.device, gate: threading.Event | None = None) -> None:
         self._device = device
+        self._gate = gate
         self._started = False
         self._start_lock = threading.Lock()
         self._seconds: float | None = None
@@ -74,6 +75,9 @@ class GpuWarmup:
         try:
             device = self._indexed()
             torch.cuda.set_device(device)  # MIOpen launches against the current device
+            if self._gate is not None:
+                self._gate.wait()  # the pipeline's startup decode needs a quiet CPU (MIOpen find hogs it)
+                mark("gpu warmup gate open")
             with torch.inference_mode():
                 self._run_steps(device)
         except Exception as exc:  # set_device itself failed; the thread must never raise
@@ -147,12 +151,12 @@ _instances: dict[str, GpuWarmup] = {}
 _lock = threading.Lock()
 
 
-def start_warmup(device: torch.device) -> GpuWarmup:
+def start_warmup(device: torch.device, gate: threading.Event | None = None) -> GpuWarmup:
     """The process-wide GpuWarmup for `device`: created and started on the first call, shared after."""
     with _lock:
         warmup = _instances.get(str(device))
         if warmup is None:
-            warmup = GpuWarmup(device)
+            warmup = GpuWarmup(device, gate=gate)
             _instances[str(device)] = warmup
     warmup.start()
     return warmup

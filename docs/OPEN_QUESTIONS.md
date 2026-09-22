@@ -7,7 +7,7 @@ Each has the **default I will use until you answer**, so nothing is blocked unle
 - At a natural pause I ask 2–3 relevant questions (not all at once), then record your answer in the *Decisions* table
   at the bottom with the date, and delete the question from the lists.
 - A "blocks" entry means real work cannot proceed or cannot be validated without your answer.
-- Ordered roughly by how soon the answer matters. Last updated 2026-09-19.
+- Ordered roughly by how soon the answer matters. Last updated 2026-09-22.
 
 ## A. Data and accounts (needed soon)
 
@@ -84,6 +84,8 @@ Each has the **default I will use until you answer**, so nothing is blocked unle
 | F9 | **Glyph rasterisation on the CPU.** Everything pixel-heavy stays on the GPU, but drawing English text needs FreeType (PIL), which is CPU-only: the plan renders each text block into a small RGBA patch on the CPU and composites it on the GPU. Measured cost is expected to be tiny (a few hundred patches per chapter) — OK to accept this exception to "GPU end-to-end" until a benchmark says otherwise? | The typeset renderer design (C7b) | Yes; benchmark in C7b and report the numbers |
 | F10 | **Korean OCR default.** Korean stays on PP-OCRv5 until a v6 model beats it on the qualification suite (card O1c). OK? | OCR default per language | Yes: per-language default, v6 only where measured better |
 | F11 | **Public repo or a separate `OmniScan-releases` repo?** Users must be able to pull the model mirror (`models-v1` release assets) and app updates (GitHub Releases) without a token; a private repo blocks that. | Model download, auto-update (B9/B12/B13) | Repo stays private; upstream Hugging Face is the fallback for models |
+| F12 | **JA full-pipeline check.** PepperCarrotJA's `paddleocr_vl` engine needs `ocr.rec_model` (O1d's rec-model wiring is not on this branch), so card G3 could verify JA only through `ingest/slice/detect` artifacts (see `docs/reports/G3.md`). Re-run the full 6-stage JA hash check once O1d lands? | Completing the bit-identicality evidence for JA | KR export slices verified fully; JA's three runnable stages verified |
+| F13 | **MIOpen pre-seed.** The ~28 s MIOpen find chain (library load + finds) floors the chapter wall at ~33 s; cutting it needs a shipped/kernel-db change (`MIOPEN_USER_DB_PATH` per GPU). Worth a card, with a bit-identicality check? | The 25 s stretch target | Not pursued: selection-affecting changes are forbidden under G3's constraints |
 
 ## Decisions (answered)
 

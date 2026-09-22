@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 from omniscan.core.config import series_config
 from omniscan.core.paths import SeriesPaths
@@ -25,6 +25,7 @@ from omniscan.core.stage import (
     run_series,
 )
 from omniscan.gpu.timeline import mark
+from omniscan.gpu.vram import OLLAMA_GROUP
 from omniscan.pipeline.stages import PASS_OF, STAGE_ORDER, build_stage
 
 if TYPE_CHECKING:
@@ -34,6 +35,13 @@ if TYPE_CHECKING:
 ReportFn = Callable[[str, StageOutcome], None]
 
 type RunMode = Literal["auto", "step"]
+
+
+@runtime_checkable
+class PrefetchScheduler(Protocol):
+    """A GpuScheduler that can preload a group's models on a background thread (omniscan.gpu.vram.VramManager)."""
+
+    def prefetch(self, group: str) -> bool: ...
 
 
 class TimedStage:
@@ -197,6 +205,38 @@ def _run_preview(
     return True
 
 
+def _prefetch_groups(
+    gpu: GpuScheduler | None, passes: list[tuple[str, list[str]]], cfg: Config, client: ChatClient | None
+) -> None:
+    """Queue background loads for every GPU model group except the first, unless `gpu.warmup` is off.
+
+    The first group loads synchronously at its acquire: started early it competes with the pipeline's own
+    startup work (strip decode, GPU library init) and slows both. Later groups hide behind the vision pass
+    instead. A scheduler without prefetch (e.g. a test double) is skipped; OLLAMA_GROUP is not a registered
+    torch group, and a prefetch that would not fit free VRAM is skipped inside the scheduler anyway; failed
+    prefetches fall back to the synchronous load in `acquire`.
+    """
+    if gpu is None or not cfg.gpu.warmup:
+        return
+    seen: set[str] = set()
+    first = True
+    for _label, pass_stages in passes:
+        for name in pass_stages:
+            group = build_stage(name, cfg, client=client).gpu_group
+            if (
+                group is None
+                or group == OLLAMA_GROUP
+                or group in seen
+                or not isinstance(gpu, PrefetchScheduler)
+            ):
+                continue
+            seen.add(group)
+            if first:
+                first = False
+                continue
+            gpu.prefetch(group)
+
+
 def run_pipeline(
     cfg: Config,
     series: str,
@@ -242,6 +282,7 @@ def run_pipeline(
     )
     if needs_client is not None and client is None:
         raise ValueError(f"stage {needs_client!r} needs a chat client")
+    _prefetch_groups(gpu, passes, cfg, client)
 
     result = PipelineResult()
     if preview is not None and step_gate is not None:

@@ -44,6 +44,10 @@ class LamaInpainter:
         image = torch.zeros((1, 3, window, window), device=device)
         mask = torch.zeros((1, 1, window, window), device=device)
         log.info("warming up LaMa (one-time, ~10-25 s)")
+        # The forwards' MIOpen find is the pipeline's critical path (~15-28 s): it starts as early as
+        # possible (the prefetch worker runs this loader once the first stage acquired) and overlaps the
+        # vision pass. No lock vs the warm-up thread: concurrent find phases stretch each other but end
+        # at nearly the same time as serialized ones, so a lock only delays the start (G3 measurement).
         with torch.inference_mode():
             model(image, mask)
             model(image, mask)
