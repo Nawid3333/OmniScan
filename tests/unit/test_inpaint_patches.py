@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -60,3 +63,23 @@ def test_orphan_key_is_dropped(tmp_path: Path) -> None:
     path = tmp_path / "patches.npz"
     np.savez_compressed(path, **{"r0001.pixels": np.zeros((2, 2, 3), dtype=np.uint8)})  # type: ignore[arg-type]
     assert load_patches(path) == {}
+
+
+def test_module_import_is_torch_free() -> None:
+    """A fresh interpreter importing the module must not pull torch in (web server's read path, card F14)."""
+    script = "import sys; import omniscan.inpaint.patches; assert 'torch' not in sys.modules, 'torch leaked'"
+    env = {
+        **os.environ,
+        # the shared .venv's editable install may point at another worktree: pin the code under test
+        "PYTHONPATH": os.pathsep.join(
+            [str(Path(__file__).resolve().parents[2] / "src"), os.environ.get("PYTHONPATH", "")]
+        ),
+    }
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
