@@ -111,17 +111,29 @@ torchvision = [
 ]
 # mps has no entry above on purpose: macOS wheels come from the default `pypi` index below, already MPS-capable
 
-# rocm10 also happens to bundle its own builds of ordinary packages that have nothing to do with ROCm
-# (alongside torch's other SDK packages) with incomplete platform coverage — no macOS wheel for either.
-# Plain "first index that has it wins" search kept silently picking rocm10's copy over PyPI's for every
-# extra, not just rocm-gfx1201, breaking `uv sync --extra cpu` on macOS entirely (found by card P2's CI
-# matrix, twice: numpy, then pillow). Pin each to PyPI unconditionally as it's discovered. An attempt to
-# close this whole bug class at once, by fully enumerating rocm10's transitive packages and marking the
-# index `explicit = true`, was tried and reverted: it silently swapped the Linux fork's `triton` from AMD's
-# ROCm-specific build to a generic PyPI one (unverifiable on this Windows-only machine, too risky to ship
-# blind) — see git history on this file for what that looked like if revisiting the idea.
+# rocm10 mirrors the *entire* pure-Python dependency closure needed to build torch/torchvision, not just
+# their genuinely ROCm-specific packages — every one of torch's own declared dependencies below is really
+# hosted there (confirmed directly: `uv pip install "<pkg>===9999" --index-url .../rocm/whl-next/` reports
+# "found on" for each), each with incomplete platform coverage (no macOS wheel for any of them, discovered
+# one CI failure at a time: numpy, then pillow, then markupsafe). "First index that has it wins" general
+# search kept silently picking rocm10's copy over PyPI's for every extra, not just rocm-gfx1201, breaking
+# `uv sync --extra cpu` on macOS entirely. Pin the whole closure to PyPI at once instead of continuing to
+# discover the rest one CI run at a time. `rocm10` deliberately stays non-explicit and `triton` is
+# deliberately untouched here (see the override-dependencies comment above): an earlier attempt to instead
+# mark rocm10 `explicit = true` and enumerate every transitive package (including triton) silently swapped
+# the Linux fork's triton from AMD's ROCm-specific build to a generic PyPI one — unverifiable on this
+# Windows-only machine and too risky to ship blind. This narrower fix touches only the pure-Python packages
+# actually confirmed to collide, leaves rocm10's own general-search behaviour (and triton) exactly as before.
 numpy = [{ index = "pypi" }]
 pillow = [{ index = "pypi" }]
+filelock = [{ index = "pypi" }]
+typing-extensions = [{ index = "pypi" }]
+sympy = [{ index = "pypi" }]
+mpmath = [{ index = "pypi" }]
+networkx = [{ index = "pypi" }]
+jinja2 = [{ index = "pypi" }]
+markupsafe = [{ index = "pypi" }]
+fsspec = [{ index = "pypi" }]
 
 # AMD ROCm 10 wheel index first (torch, torchvision, triton, rocm-sdk-*, amd-*-device-gfx1201) — this
 # project's own dev machine (RX 9070 XT / gfx1201). Not `explicit`, same as before this table existed: its
