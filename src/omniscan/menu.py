@@ -510,7 +510,7 @@ def _story_summarize(cfg: Config, *, read: Callable[[str], str]) -> None:
     if series is None:
         return
     chapters = pick_chapters(SeriesPaths.from_config(cfg, series), read=read)
-    model = pick_text("Chat model", "gemma4:31b-cloud", read=read)
+    model = pick_text("Chat model", "gemma4:31b-cloud", read=read) or "gemma4:31b-cloud"
     force = pick_bool("Re-summarize chapters that already have a summary?", False, read=read)
     _run_action(
         "story",
@@ -585,7 +585,7 @@ def _glossary_propose(cfg: Config, *, read: Callable[[str], str]) -> None:
     if series is None:
         return
     chapters = pick_chapters(SeriesPaths.from_config(cfg, series), read=read)
-    model = pick_text("Chat model", "gemma4:31b-cloud", read=read)
+    model = pick_text("Chat model", "gemma4:31b-cloud", read=read) or "gemma4:31b-cloud"
     min_chapters = pick_int("Minimum chapters a term must recur in", 2, read=read)
     dry_run = pick_bool("Dry run (scan and extract, write nothing)?", False, read=read)
     _run_action(
@@ -608,7 +608,7 @@ def _reference_bootstrap(cfg: Config, *, read: Callable[[str], str]) -> None:
     if series is None:
         return
     min_locks = pick_int("Distinct reference chapters a pair must recur in to lock", 3, read=read)
-    model = pick_text("Chat model", "gemma4:31b-cloud", read=read)
+    model = pick_text("Chat model", "gemma4:31b-cloud", read=read) or "gemma4:31b-cloud"
     dry_run = pick_bool("Dry run (match/OCR/extract, write nothing)?", False, read=read)
     force = pick_bool("Force re-run OCR stages even if up to date?", False, read=read)
     _run_action(
@@ -616,6 +616,237 @@ def _reference_bootstrap(cfg: Config, *, read: Callable[[str], str]) -> None:
         lambda: cmd_reference(series=series, min_locks=min_locks, model=model, dry_run=dry_run, force=force),
         read=read,
     )
+
+
+def menu_watermark(cfg: Config, *, read: Callable[[str], str] = input) -> None:
+    """Watermark submenu: add, list and remove a series' fixed-position watermark regions."""
+    options = ("Add region", "List regions", "Remove region")
+    while True:
+        index = pick_from(options, "Watermark", read=read)
+        if index is None:
+            return
+        try:
+            if index == 0:
+                _watermark_add(cfg, read=read)
+            elif index == 1:
+                _watermark_list(cfg, read=read)
+            else:
+                _watermark_remove(cfg, read=read)
+        except EOFError:  # input ended mid-flow: cancel the flow, redraw this submenu
+            pass
+
+
+def _watermark_add(cfg: Config, *, read: Callable[[str], str]) -> None:
+    """Watermark leaf 1: record one region from four edge fractions (0-1 of page width/height)."""
+    series = pick_series(cfg, read=read)
+    if series is None:
+        return
+    x0 = pick_float("Left edge (0-1, fraction of page width)", 0.0, read=read)
+    y0 = pick_float("Top edge (0-1, fraction of page height)", 0.0, read=read)
+    x1 = pick_float("Right edge (0-1)", 1.0, read=read)
+    y1 = pick_float("Bottom edge (0-1)", 1.0, read=read)
+    note = pick_text("Note (optional)", None, read=read)
+    _run_action(
+        "watermark",
+        lambda: watermark_add(series=series, x0=x0, y0=y0, x1=x1, y1=y1, note=note),
+        read=read,
+    )
+
+
+def _watermark_list(cfg: Config, *, read: Callable[[str], str]) -> None:
+    """Watermark leaf 2: the series' regions table (index, edges, note)."""
+    series = pick_series(cfg, read=read)
+    if series is None:
+        return
+    _run_action("watermark", lambda: watermark_list(series=series), read=read)
+
+
+def _watermark_remove(cfg: Config, *, read: Callable[[str], str]) -> None:
+    """Watermark leaf 3: remove one region by index (remaining indices keep their values)."""
+    series = pick_series(cfg, read=read)
+    if series is None:
+        return
+    index = pick_int("Region index to remove", 0, read=read)
+    _run_action("watermark", lambda: watermark_remove(series=series, index=index), read=read)
+
+
+def menu_filter(cfg: Config, *, read: Callable[[str], str] = input) -> None:
+    """Filter submenu: run the promo filter over a series, restore or force-filter one file/slice."""
+    options = (
+        "Run filter over a series",
+        "Add a promo example image",
+        "Restore a filtered file/slice",
+        "Force-filter a file/slice",
+    )
+    while True:
+        index = pick_from(options, "Filter", read=read)
+        if index is None:
+            return
+        try:
+            if index == 0:
+                _filter_run(cfg, read=read)
+            elif index == 1:
+                _filter_add(cfg, read=read)
+            elif index == 2:
+                _filter_restore(cfg, read=read)
+            else:
+                _filter_force(cfg, read=read)
+        except EOFError:  # input ended mid-flow: cancel the flow, redraw this submenu
+            pass
+
+
+def _filter_run(cfg: Config, *, read: Callable[[str], str]) -> None:
+    """Filter leaf 1: re-run ingest+slice with the promo filter and report what was filtered."""
+    series = pick_series(cfg, read=read)
+    if series is None:
+        return
+    chapters = pick_chapters(SeriesPaths.from_config(cfg, series), read=read)
+    _run_action("filter", lambda: filter_run(series=series, chapter=chapters, as_json=False), read=read)
+
+
+def _filter_add(cfg: Config, *, read: Callable[[str], str]) -> None:
+    """Filter leaf 2: copy a promo example image into the series' (or the global) examples folder."""
+    series = pick_series(cfg, read=read)
+    if series is None:
+        return
+    path_text = pick_text("Path to the example image", None, read=read)
+    if not path_text:
+        return
+    path = Path(path_text)
+    if not path.exists():
+        typer.echo(f"filter: {path} does not exist")
+        return
+    global_ = pick_bool("Add to the shared global examples instead of this series'?", False, read=read)
+    name = pick_text("Example name (blank = the file's own name)", None, read=read)
+    _run_action("filter", lambda: filter_add(series=series, path=path, global_=global_, name=name), read=read)
+
+
+def _filter_restore(cfg: Config, *, read: Callable[[str], str]) -> None:
+    """Filter leaf 3: restore one file/slice of one chapter (manual override, applied on the next run)."""
+    series = pick_series(cfg, read=read)
+    if series is None:
+        return
+    sp = SeriesPaths.from_config(cfg, series)
+    chapter_index = pick_from(sp.chapters(), "Chapter", read=read)
+    if chapter_index is None:
+        return
+    chapter = sp.chapters()[chapter_index]
+    target_index = pick_from(["file", "slice"], "Target", read=read)
+    if target_index is None:
+        return
+    target = ("file", "slice")[target_index]
+    override_index = pick_int("Index", 0, read=read)
+    _run_action(
+        "filter",
+        lambda: filter_restore(series=series, chapter=chapter, target=target, index=override_index),
+        read=read,
+    )
+
+
+def _filter_force(cfg: Config, *, read: Callable[[str], str]) -> None:
+    """Filter leaf 4: force-filter one file/slice of one chapter (applied even without examples)."""
+    series = pick_series(cfg, read=read)
+    if series is None:
+        return
+    sp = SeriesPaths.from_config(cfg, series)
+    chapter_index = pick_from(sp.chapters(), "Chapter", read=read)
+    if chapter_index is None:
+        return
+    chapter = sp.chapters()[chapter_index]
+    target_index = pick_from(["file", "slice"], "Target", read=read)
+    if target_index is None:
+        return
+    target = ("file", "slice")[target_index]
+    override_index = pick_int("Index", 0, read=read)
+    _run_action(
+        "filter",
+        lambda: filter_force(series=series, chapter=chapter, target=target, index=override_index),
+        read=read,
+    )
+
+
+def menu_queue(cfg: Config, *, read: Callable[[str], str] = input) -> None:
+    """Queue submenu: queue pipeline stages, list/drain the queue, pause/resume/cancel/retry a job."""
+    options = (
+        "Add a job",
+        "List jobs",
+        "Run the queue (drain)",
+        "Pause/resume/cancel/retry a job",
+        "Clear finished jobs",
+    )
+    while True:
+        index = pick_from(options, "Queue", read=read)
+        if index is None:
+            return
+        try:
+            if index == 0:
+                _queue_add(cfg, read=read)
+            elif index == 1:
+                _queue_list(cfg, read=read)
+            elif index == 2:
+                _queue_run(cfg, read=read)
+            elif index == 3:
+                _queue_job_action(cfg, read=read)
+            else:
+                _queue_clear(cfg, read=read)
+        except EOFError:  # input ended mid-flow: cancel the flow, redraw this submenu
+            pass
+
+
+def _queue_add(cfg: Config, *, read: Callable[[str], str]) -> None:
+    """Queue leaf 1: queue typed stages over the picked chapters (blank stages: ingest, slice)."""
+    series = pick_series(cfg, read=read)
+    if series is None:
+        return
+    stages_text = pick_text("Stage(s), comma-separated (blank = ingest, slice)", None, read=read)
+    stage = None if not stages_text else [part.strip() for part in stages_text.split(",") if part.strip()]
+    chapters = pick_chapters(SeriesPaths.from_config(cfg, series), read=read)
+    priority = pick_int("Priority (higher runs first)", 0, read=read)
+    max_attempts = pick_int("Max attempts", 2, read=read)
+    force = pick_bool("Re-run stages even if up to date?", False, read=read)
+    _run_action(
+        "queue",
+        lambda: queue_add(
+            series=series,
+            stage=stage,
+            chapter=chapters,
+            priority=priority,
+            max_attempts=max_attempts,
+            force=force,
+        ),
+        read=read,
+    )
+
+
+def _queue_list(cfg: Config, *, read: Callable[[str], str]) -> None:
+    """Queue leaf 2: the job table, narrowed to one status ("all" = every status)."""
+    index = pick_from([*STATUSES, "all"], "Status", read=read)
+    if index is None:
+        return
+    status = None if index == len(STATUSES) else STATUSES[index]
+    _run_action("queue", lambda: queue_list(status=status), read=read)
+
+
+def _queue_run(cfg: Config, *, read: Callable[[str], str]) -> None:
+    """Queue leaf 3: drain the queue one job at a time (blocks until empty; Ctrl+C returns here)."""
+    webhook = pick_text("Webhook URL (blank = none)", None, read=read)
+    raw = pick_int("Stop after this many jobs (0 = until empty)", 0, read=read)
+    _run_action("queue", lambda: queue_run(webhook=webhook, max_jobs=None if raw == 0 else raw), read=read)
+
+
+def _queue_job_action(cfg: Config, *, read: Callable[[str], str]) -> None:
+    """Queue leaf 4: one state transition (pause/resume/cancel/retry) on one job id."""
+    index = pick_from(["pause", "resume", "cancel", "retry"], "Action", read=read)
+    if index is None:
+        return
+    job_id = pick_int("Job id", 0, read=read)
+    action = (queue_pause, queue_resume, queue_cancel, queue_retry)[index]
+    _run_action("queue", lambda: action(job_id=job_id), read=read)
+
+
+def _queue_clear(cfg: Config, *, read: Callable[[str], str]) -> None:
+    """Queue leaf 5: delete done and cancelled jobs (failed jobs stay for retry)."""
+    _run_action("queue", queue_clear, read=read)
 
 
 def menu_models(cfg: Config, *, read: Callable[[str], str] = input) -> None:

@@ -13,6 +13,7 @@ import omniscan.menu as menu
 from omniscan.core.config import Config, GpuConfig, PathsConfig
 from omniscan.core.paths import SeriesPaths
 from omniscan.pipeline.stages import STAGE_ORDER
+from omniscan.queue.store import STATUSES
 
 Read = Callable[[str], str]
 
@@ -473,7 +474,9 @@ def test_menu_glossary_export_and_import(tmp_path: Path, monkeypatch: pytest.Mon
     assert imports == [{"series": "S", "mode": "merge"}, {"series": "S", "mode": "replace"}]
 
 
-def test_menu_glossary_propose_calls_glossary_propose(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_menu_glossary_propose_calls_glossary_propose(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     cfg, _sp = chapter_cfg(tmp_path)
     calls = spy(monkeypatch, "glossary_propose")
     read, remaining = make_read("4", "1", "a", "", "5", "y", "", "0")
@@ -493,7 +496,9 @@ def test_menu_glossary_propose_calls_glossary_propose(tmp_path: Path, monkeypatc
     assert remaining == []
 
 
-def test_menu_glossary_bootstrap_calls_cmd_reference_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_menu_glossary_bootstrap_calls_cmd_reference_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """No pre-check runs first — the leaf goes straight to cmd_reference and nothing else (card)."""
     cfg, _sp = chapter_cfg(tmp_path)
     calls = spy(monkeypatch, "cmd_reference")
@@ -510,4 +515,203 @@ def test_menu_glossary_bootstrap_calls_cmd_reference_once(tmp_path: Path, monkey
             "force": False,
         }
     ]
+    assert remaining == []
+
+
+# ---------------------------------------------------------------- MENU2: menu_watermark
+
+
+def test_pick_float_parses_reprompts_and_defaults() -> None:
+    read, remaining = make_read("x", "0.25")
+    assert menu.pick_float("Left edge", 0.0, read=read) == 0.25
+    assert remaining == []
+    assert menu.pick_float("Left edge", 0.5, read=make_read("")[0]) == 0.5
+    assert menu.pick_float("Right edge", 1.0, read=make_read("1")[0]) == 1.0
+
+
+def test_menu_watermark_add_calls_watermark_add(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg, _sp = chapter_cfg(tmp_path)
+    calls = spy(monkeypatch, "watermark_add")
+    read, remaining = make_read("1", "1", "0.1", "", "0.9", "", "promo banner", "", "0")
+
+    menu.menu_watermark(cfg, read=read)
+
+    assert calls == [{"series": "S", "x0": 0.1, "y0": 0.0, "x1": 0.9, "y1": 1.0, "note": "promo banner"}]
+    assert remaining == []
+
+
+def test_menu_watermark_list_and_remove(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg, _sp = chapter_cfg(tmp_path)
+    lists = spy(monkeypatch, "watermark_list")
+    removes = spy(monkeypatch, "watermark_remove")
+
+    menu.menu_watermark(cfg, read=make_read("2", "1", "", "0")[0])
+    assert lists == [{"series": "S"}]
+
+    menu.menu_watermark(cfg, read=make_read("3", "1", "2", "", "0")[0])
+    assert removes == [{"series": "S", "index": 2}]
+
+
+# ---------------------------------------------------------------- MENU2: menu_filter
+
+
+def test_menu_filter_run_calls_filter_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg, _sp = chapter_cfg(tmp_path)
+    calls = spy(monkeypatch, "filter_run")
+    read, remaining = make_read("1", "1", "a", "", "0")
+
+    menu.menu_filter(cfg, read=read)
+
+    assert calls == [{"series": "S", "chapter": None, "as_json": False}]
+    assert remaining == []
+
+
+def test_menu_filter_add_checks_path_and_adds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg, _sp = chapter_cfg(tmp_path)
+    calls = spy(monkeypatch, "filter_add")
+    example = tmp_path / "promo.jpg"
+    example.write_bytes(b"fake")  # only .exists() is checked here; filter_add validates the image
+
+    menu.menu_filter(cfg, read=make_read("2", "1", str(tmp_path / "nope.jpg"), "0")[0])
+    assert calls == []
+    assert "does not exist" in capsys.readouterr().out
+
+    menu.menu_filter(cfg, read=make_read("2", "1", str(example), "y", "", "", "0")[0])
+    assert calls == [{"series": "S", "path": example, "global_": True, "name": None}]
+
+
+def test_menu_filter_restore_picks_one_chapter_and_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Exactly one chapter name (not a list) reaches the wrapper; the two picks don't cross-wire."""
+    cfg, _sp = chapter_cfg(tmp_path)
+    calls = spy(monkeypatch, "filter_restore")
+    read, remaining = make_read("3", "1", "2", "2", "3", "", "0")
+
+    menu.menu_filter(cfg, read=read)
+
+    assert calls == [{"series": "S", "chapter": "Chapter 2", "target": "slice", "index": 3}]
+    assert remaining == []
+
+
+def test_menu_filter_force_picks_one_chapter_and_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg, _sp = chapter_cfg(tmp_path)
+    calls = spy(monkeypatch, "filter_force")
+    read, remaining = make_read("4", "1", "1", "1", "0", "", "0")
+
+    menu.menu_filter(cfg, read=read)
+
+    assert calls == [{"series": "S", "chapter": "Chapter 1", "target": "file", "index": 0}]
+    assert remaining == []
+
+
+# ---------------------------------------------------------------- MENU2: menu_queue
+
+
+def test_menu_queue_add_defaults_and_stage_list(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg, _sp = chapter_cfg(tmp_path)
+    calls = spy(monkeypatch, "queue_add")
+
+    menu.menu_queue(cfg, read=make_read("1", "1", "", "a", "", "", "y", "", "0")[0])
+    assert calls == [
+        {"series": "S", "stage": None, "chapter": None, "priority": 0, "max_attempts": 2, "force": True}
+    ]
+
+    menu.menu_queue(cfg, read=make_read("1", "1", "ingest, slice", "1", "2", "3", "n", "", "0")[0])
+    assert calls[-1] == {
+        "series": "S",
+        "stage": ["ingest", "slice"],
+        "chapter": ["Chapter 1"],
+        "priority": 2,
+        "max_attempts": 3,
+        "force": False,
+    }
+
+
+def test_menu_queue_list_passes_status(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = menu_cfg(tmp_path)
+    calls = spy(monkeypatch, "queue_list")
+
+    menu.menu_queue(cfg, read=make_read("2", "1", "", "0")[0])
+    assert calls == [{"status": "queued"}]
+
+    menu.menu_queue(cfg, read=make_read("2", str(len(STATUSES) + 1), "", "0")[0])  # last option = "all"
+    assert calls == [{"status": "queued"}, {"status": None}]
+
+
+def test_menu_queue_run_zero_means_no_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = menu_cfg(tmp_path)
+    calls = spy(monkeypatch, "queue_run")
+
+    menu.menu_queue(cfg, read=make_read("3", "", "0", "", "0")[0])
+    assert calls == [{"webhook": None, "max_jobs": None}]  # "0" is no limit, not stop-after-zero
+
+    menu.menu_queue(cfg, read=make_read("3", "http://hook", "5", "", "0")[0])
+    assert calls == [{"webhook": None, "max_jobs": None}, {"webhook": "http://hook", "max_jobs": 5}]
+
+
+def test_menu_queue_job_action_dispatches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = menu_cfg(tmp_path)
+    cancels = spy(monkeypatch, "queue_cancel")
+    pauses = spy(monkeypatch, "queue_pause")
+
+    menu.menu_queue(cfg, read=make_read("4", "3", "7", "", "0")[0])
+    assert cancels == [{"job_id": 7}]
+
+    menu.menu_queue(cfg, read=make_read("4", "1", "1", "", "0")[0])
+    assert pauses == [{"job_id": 1}]
+
+
+def test_menu_queue_clear_calls_queue_clear(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = menu_cfg(tmp_path)
+    calls = spy(monkeypatch, "queue_clear")
+
+    menu.menu_queue(cfg, read=make_read("5", "", "0")[0])
+
+    assert calls == [{}]
+
+
+# ---------------------------------------------------------------- MENU2: top-level structure
+
+
+def test_top_level_options_grow_to_ten_with_new_categories() -> None:
+    assert menu.TOP_LEVEL_OPTIONS == (
+        "Run pipeline (a series' chapters through the full pipeline, or one stage at a time)",
+        "Library (import chapters, package finished chapters, covers/metadata, match two chapter sets)",
+        "Translate (translate chapters, judge candidates, summarize story)",
+        "Glossary (list, export, import, propose terms, bootstrap from reference chapters)",
+        "Watermark (fixed-position regions excluded from translation)",
+        "Filter (promo-filter overrides: restore or force-filter a file/slice)",
+        "Queue (queue pipeline jobs, drain, pause/resume/cancel/retry)",
+        "Models (list, download, remove, verify)",
+        "Diagnostics (doctor, hardware report, check for updates)",
+        "Launch (web debug viewer, desktop app)",
+    )
+
+
+def test_run_menu_smoke_walk_reaches_each_new_submenu(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pick each new top-level entry then back out; run_menu's own dispatch reaches all five."""
+    cfg = menu_cfg(tmp_path)
+    reached: list[str] = []
+
+    def fake_submenu(name: str) -> Callable[..., None]:
+        def submenu(_cfg: Config, *, read: Callable[[str], str] = input) -> None:
+            read("")  # consume the "0" that backs out of the real submenu
+            reached.append(name)
+
+        return submenu
+
+    for name in ("menu_translate", "menu_glossary", "menu_watermark", "menu_filter", "menu_queue"):
+        monkeypatch.setattr(menu, name, fake_submenu(name))
+    read, remaining = make_read("3", "0", "4", "0", "5", "0", "6", "0", "7", "0", "0")
+
+    assert menu.run_menu(cfg, read=read) == 0
+
+    assert reached == ["menu_translate", "menu_glossary", "menu_watermark", "menu_filter", "menu_queue"]
     assert remaining == []
