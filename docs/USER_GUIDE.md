@@ -589,6 +589,34 @@ Same `series.db` requirement; exits 2 if `glossary.yaml` does not exist.
 uv run omniscan glossary import DemoSeries --mode merge
 ```
 
+### `omniscan glossary propose`
+
+Propose glossary terms from a series' own OCR text when no official English release exists to learn
+from (there is no `reference` mode without one). The chat model reads each chapter's Korean lines and
+returns (source, target) pairs with its own best English rendering; a term that recurs in at least
+`--min-chapters` distinct chapters is written to the glossary **as `proposed`, `origin="llm"` — never
+auto-locked**, because there is no official translation to agree with. Review them with
+`omniscan glossary list --status proposed` and edit them by hand (or via `glossary.yaml`) as usual.
+
+| Argument/option | Meaning |
+|---|---|
+| `series` | series name (required) |
+| `--chapter`, `-c <str>` | chapter folder name; repeatable. Default: all |
+| `--model <name>` | chat model used for term proposal. Default: `gemma4:31b-cloud` |
+| `--min-chapters <int>` | distinct chapters a term must recur in to be written at all. Default: 2 |
+| `--dry-run` | scan and extract, but write nothing to the glossary |
+| `--json` | emit one JSON object instead of text lines |
+
+Like `reference`, this never silently overwrites entries: a proposal that disagrees with a `locked`
+or `rejected` entry is flagged as a conflict and the entry is left untouched, and a row an earlier
+machine pass proposed is updated in place. This command is CPU-only (one chat request per chapter);
+it does not touch the GPU.
+
+```bash
+uv run omniscan glossary propose DemoSeries
+uv run omniscan glossary propose DemoSeries --dry-run --min-chapters 1
+```
+
 ### `omniscan reference`
 
 Bootstrap a series' glossary from its official English release (decision D7): match the raw chapters
@@ -646,6 +674,36 @@ GPU command it holds the exclusive GPU lock while the models run.
 ```bash
 uv run omniscan reference DemoSeries --dry-run
 uv run omniscan reference DemoSeries --min-locks 2 --model translategemma:12b --force
+```
+
+### `omniscan story summarize`
+
+Store a short English summary of what happens in each chapter, so the translate and judge stages of
+**later** chapters know what already happened — names, relationships and plot state stop drifting
+from chapter to chapter. Summaries live in the `chapter_summary` table of the series' `series.db`.
+
+This is a manual, explicit command (an unconditional extra LLM call per chapter would change the
+pipeline's cost profile — it is deliberately not part of `omniscan run`). Reading a summary back
+into a later chapter's prompts is free and automatic: once a chapter has a stored summary, the
+translate/judge prompts of every later chapter carry the last three prior chapters' summaries as
+"Story so far". Summaries are computed from a chapter's `final.json` (the judged English text), so
+run `omniscan translate` + `omniscan judge` for a chapter first.
+
+| Argument/option | Meaning |
+|---|---|
+| `series` | series name (required) |
+| `--chapter`, `-c <str>` | chapter folder name; repeatable. Default: all |
+| `--model <name>` | chat model used for summarisation. Default: `gemma4:31b-cloud` |
+| `--force` | re-summarize chapters that already have a summary |
+| `--json` | emit one JSON object instead of text lines |
+
+Chapters without `final.json` yet, and chapters whose reply is unusable, are skipped and reported —
+re-run later. Already-summarized chapters are skipped unless `--force`. This command is CPU-only;
+it does not touch the GPU.
+
+```bash
+uv run omniscan story summarize DemoSeries
+uv run omniscan story summarize DemoSeries -c "Chapter 3" --force
 ```
 
 ### `omniscan translate`

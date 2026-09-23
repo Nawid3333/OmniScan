@@ -441,3 +441,18 @@ def test_merge_custom_min_locks(tmp_path: Path) -> None:
         merge_into_store(s, [terms("민준", "Minjun", 2)], min_locks=2)
         row = s.find_by_source("민준")
         assert row is not None and row.status == "locked"
+
+
+# ---------------------------------------------------------------- origin parameter (card C5c)
+
+
+def test_merge_origin_llm_writes_llm_rows_in_both_branches(tmp_path: Path) -> None:
+    entry = {"source": "서윤", "target": "Seo-yun", "status": "proposed", "origin": "reference"}
+    with make_store(tmp_path, entry) as s:
+        report = merge_into_store(s, [terms("민준", "Minjun", 2), terms("서윤", "Seoyun", 2)], origin="llm")
+        rows = {row.source: row for row in s.list()}
+    assert report.conflicts == ()
+    new_row = rows["민준"]  # new-entry branch
+    assert (new_row.origin, new_row.status) == ("llm", "proposed")
+    updated = rows["서윤"]  # existing machine-proposed update branch
+    assert (updated.origin, updated.target) == ("llm", "Seoyun")

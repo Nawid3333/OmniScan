@@ -269,12 +269,14 @@ def merge_into_store(
     *,
     min_locks: int = DEFAULT_MIN_LOCKS,
     write: bool = True,
+    origin: Literal["llm", "reference"] = "reference",
 ) -> MergeReport:
     """Write the aggregated terms into the store; existing `locked` entries are never overwritten.
 
     Agreement with a locked entry raises its `count` (never lower — idempotent under re-runs);
     disagreement is a conflict and leaves the entry untouched. Rejected entries are left alone.
     An `origin="user"` proposed entry keeps its human target: agreement bumps only its count.
+    `origin` is what the written/updated machine rows record (reference mode vs LLM proposals);
     `write=False` computes the same report without touching the store (dry runs)."""
     locked = proposed = 0
     conflicts: list[Conflict] = []
@@ -290,7 +292,7 @@ def merge_into_store(
                         target=term.target,
                         type=term.type,
                         status=want,
-                        origin="reference",
+                        origin=origin,
                         first_seen_chapter=term.first_seen_chapter,
                         count=term.occurrences,
                         notes=_entry_notes(term),
@@ -324,7 +326,7 @@ def merge_into_store(
                             "target": term.target,
                             "type": term.type,
                             "status": want,
-                            "origin": "reference",
+                            "origin": origin,
                             "first_seen_chapter": term.first_seen_chapter,
                             "count": term.occurrences,
                             "notes": _entry_notes(term, replaced=existing.target),

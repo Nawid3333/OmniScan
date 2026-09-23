@@ -130,3 +130,21 @@ def test_substitute_binding_replaces_locked_terms_only() -> None:
 def test_translategemma_prompt_appends_text_to_probe_template() -> None:
     assert translategemma_prompt("안녕") == TRANSLATEGEMMA_TEMPLATE + "안녕"
     assert TRANSLATEGEMMA_TEMPLATE.endswith(":\n\n\n")
+
+
+def test_chat_json_messages_story_summary_is_the_first_part() -> None:
+    regions = [region("r0001", text="성진이가 게이트에")]
+    entries = [entry(1, "성진", "Seong-jin", status="locked")]
+    user = chat_json_messages(regions, entries, story_summary="line 1")[1]["content"]
+    parts = user.split("\n\n")
+    assert parts[0] == "Story so far:\nline 1"
+    assert parts[1].startswith("Glossary (binding):")
+    assert parts[2].startswith("Regions (reading order):")
+
+
+def test_chat_json_messages_none_and_empty_story_summary_are_identical_to_omitting_it() -> None:
+    regions = [region("r0001", text="성진이가 게이트에"), region("r0002", text="쿵!", kind="sfx")]
+    entries = [entry(1, "성진", "Seong-jin", status="locked")]
+    plain = chat_json_messages(regions, entries)
+    assert chat_json_messages(regions, entries, story_summary=None) == plain
+    assert chat_json_messages(regions, entries, story_summary="") == plain

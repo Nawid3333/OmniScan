@@ -405,3 +405,81 @@ def test_judge_stage_rejudges_when_a_candidate_run_changed(cfg: Config) -> None:
     assert run_adapter(stage, ctx).status == "done"
     assert FinalArtifact.load(ctx.paths.artifact("final.json")).lines[0].text == "Howdy"
     assert client.calls == 2
+
+
+# ---------------------------------------------------------------- story memory (card C5c)
+
+
+def make_prior_chapters(cfg: Config) -> None:
+    """Library folders so ctx's chapter has a prior chapter in series.chapters() order."""
+    (cfg.paths.library_root / SERIES / "Chapter 0").mkdir(parents=True, exist_ok=True)
+    (cfg.paths.library_root / SERIES / CHAPTER).mkdir(parents=True, exist_ok=True)
+
+
+def test_series_story_context_joins_the_last_summaries_oldest_first(cfg: Config) -> None:
+    from omniscan.core.paths import SeriesPaths
+    from omniscan.pipeline.stages import _series_story_context
+    from omniscan.story.store import SummaryStore
+
+    sp = SeriesPaths.from_config(cfg, "S")
+    for name in ("Chapter 1", "Chapter 2", "Chapter 3", "Chapter 4", "Chapter 5"):
+        (sp.library_dir / name).mkdir(parents=True, exist_ok=True)
+    sp.work_dir.mkdir(parents=True, exist_ok=True)  # a db only ever exists beside a work dir
+    assert _series_story_context(sp, "Chapter 5") is None  # no db yet
+    with SummaryStore(sp.db) as store:
+        for name, text in (
+            ("Chapter 1", "One."),
+            ("Chapter 2", "Two."),
+            ("Chapter 3", "Three."),
+            ("Chapter 4", "Four."),
+        ):
+            store.set(name, text, "m")
+    # more than max_chapters exist: only the most recent three, still oldest-first
+    assert (
+        _series_story_context(sp, "Chapter 5") == "- Chapter 2: Two.\n- Chapter 3: Three.\n- Chapter 4: Four."
+    )
+    # a prior chapter with no summary is skipped without breaking the order of the others
+    with SummaryStore(sp.db) as store:
+        assert store.delete("Chapter 3")
+    assert (
+        _series_story_context(sp, "Chapter 5") == "- Chapter 1: One.\n- Chapter 2: Two.\n- Chapter 4: Four."
+    )
+    assert _series_story_context(sp, "Chapter 99") is None  # chapter not in series.chapters()
+    assert _series_story_context(sp, "Chapter 1") is None  # no prior chapters
+
+
+def test_translate_stage_passes_stored_story_summaries_through(cfg: Config) -> None:
+    ctx = make_context(cfg, SERIES, CHAPTER)
+    make_prior_chapters(cfg)
+    write_ocr(ctx.paths, ("r0001", "안녕"))
+    from omniscan.story.store import SummaryStore
+
+    with SummaryStore(ctx.series.db) as store:
+        store.set("Chapter 0", "The previous chapter.", "m")
+    client = FakeClient([json_reply({"r0001": "Hello"})])
+    run_adapter(TranslateStage(client, [cloud_profile()]), ctx, force=True)
+    assert "Story so far:\n- Chapter 0: The previous chapter." in client.messages[0][1]["content"]
+
+
+def test_judge_stage_passes_stored_story_summaries_through(cfg: Config) -> None:
+    ctx = make_context(cfg, SERIES, CHAPTER)
+    make_prior_chapters(cfg)
+    write_ocr(ctx.paths, ("r0001", "안녕"), ("r0002", "반가워"))
+    write_run(ctx.paths, "run1", {"r0001": "Hello", "r0002": "Hi"})
+    write_run(ctx.paths, "run2", {"r0001": "Goodbye"})
+    from omniscan.story.store import SummaryStore
+
+    with SummaryStore(ctx.series.db) as store:
+        store.set("Chapter 0", "The previous chapter.", "m")
+    client = FakeClient([judgements_reply({"id": "r0001", "decision": "pick", "pick": "A"})])
+    run_adapter(JudgeStage(client, JudgeConfig(model=f"{MODEL}:cloud")), ctx)
+    assert "Story so far:\n- Chapter 0: The previous chapter." in client.messages[0][1]["content"]
+
+
+def test_stages_pass_none_without_a_db_and_never_create_it(cfg: Config) -> None:
+    ctx = make_context(cfg, SERIES, CHAPTER)
+    write_ocr(ctx.paths, ("r0001", "안녕"))
+    client = FakeClient([json_reply({"r0001": "Hello"})])
+    run_adapter(TranslateStage(client, [cloud_profile()]), ctx, force=True)
+    assert "Story so far" not in client.messages[0][1]["content"]
+    assert not ctx.series.db.exists()  # mirrors _series_entries' own "never created here" rule

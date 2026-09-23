@@ -131,3 +131,20 @@ def test_items_are_used_in_the_order_given() -> None:
 def test_empty_items_still_produce_an_empty_regions_list() -> None:
     messages = judge_messages([], [])
     assert messages[1]["content"] == "Regions (reading order):\n[]"
+
+
+def test_judge_messages_story_summary_is_the_first_part() -> None:
+    item = JudgeItem(region=region("r0001", "성진이가 간다"), candidates={"A": "Seong-jin goes"})
+    entries = [entry(1, "성진", "Seong-jin", "locked")]
+    user = judge_messages([item], entries, story_summary="line 1")[1]["content"]
+    parts = user.split("\n\n")
+    assert parts[0] == "Story so far:\nline 1"
+    assert parts[1].startswith("Glossary (binding):")
+    assert parts[2].startswith("Regions (reading order):")
+
+
+def test_judge_messages_none_and_empty_story_summary_are_identical_to_omitting_it() -> None:
+    item = JudgeItem(region=region("r0001", "안녕"), candidates={"A": "Hello"})
+    plain = judge_messages([item], [])
+    assert judge_messages([item], [], story_summary=None) == plain
+    assert judge_messages([item], [], story_summary="") == plain

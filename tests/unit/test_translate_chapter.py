@@ -158,3 +158,44 @@ def test_leftover_partial_is_ignored_and_removed_when_forced(paths: ChapterPaths
     assert run is not None and [c.text for c in run.candidates] == ["fresh", "run"]
     assert client.calls == 1  # both regions requested again
     assert not partial.exists()
+
+
+class RecordingClient:
+    """FakeClient that also records the messages of every chat call."""
+
+    def __init__(self, replies: list[str]) -> None:
+        self.replies = list(replies)
+        self.messages: list[list[dict[str, Any]]] = []
+
+    def chat(
+        self,
+        model: str,
+        messages: list[dict[str, Any]],
+        *,
+        cloud: bool = False,
+        format: dict[str, Any] | str | None = None,
+        options: dict[str, Any] | None = None,
+        keep_alive: str | int | None = None,
+        think: bool | None = None,
+        max_retries: int = 5,
+    ) -> ChatResponse:
+        self.messages.append(messages)
+        return ChatResponse(
+            content=self.replies.pop(0),
+            model=model,
+            done=True,
+            total_duration_ns=None,
+            prompt_eval_count=1,
+            eval_count=1,
+            raw={},
+        )
+
+
+def test_translate_chapter_passes_the_story_summary_to_the_model(paths: ChapterPaths) -> None:
+    write_ocr(paths)
+    client = RecordingClient([json_reply({"r0001": "Hello", "r0002": "Hi"})])
+    translate_chapter(client, paths, profile(), [], story_summary="ctx")
+    assert "Story so far:\nctx" in client.messages[0][1]["content"]
+    plain = RecordingClient([json_reply({"r0001": "Hello", "r0002": "Hi"})])
+    translate_chapter(plain, paths, profile(), [], force=True)  # no story summary
+    assert "Story so far" not in plain.messages[0][1]["content"]

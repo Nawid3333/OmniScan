@@ -193,3 +193,51 @@ def test_empty_candidate_texts_are_dropped(paths: ChapterPaths) -> None:
     ]
     assert artifact.lines[1].flags == ["untranslated"]
     assert stats.untranslated == 1
+
+
+class RecordingClient:
+    """FakeClient that also records the messages of every chat call."""
+
+    def __init__(self, replies: list[str]) -> None:
+        self.replies = list(replies)
+        self.messages: list[list[dict[str, Any]]] = []
+
+    def chat(
+        self,
+        model: str,
+        messages: list[dict[str, Any]],
+        *,
+        cloud: bool = False,
+        format: dict[str, Any] | str | None = None,
+        options: dict[str, Any] | None = None,
+        keep_alive: str | int | None = None,
+        think: bool | None = None,
+        max_retries: int = 5,
+    ) -> ChatResponse:
+        self.messages.append(messages)
+        return ChatResponse(
+            content=self.replies.pop(0),
+            model=model,
+            done=True,
+            total_duration_ns=None,
+            prompt_eval_count=1,
+            eval_count=1,
+            raw={},
+        )
+
+
+def disagreeing_runs(paths: ChapterPaths) -> None:
+    """Two runs for r0001 (the judge is asked) and one agreeing pair for r0003 (auto-picked)."""
+    write_run(paths, "run1", {"r0001": "Hello", "r0003": "Hi"})
+    write_run(paths, "run2", {"r0001": "Goodbye"})
+
+
+def test_judge_chapter_passes_the_story_summary_to_the_model(paths: ChapterPaths) -> None:
+    write_ocr(paths)
+    disagreeing_runs(paths)
+    client = RecordingClient([judgements_reply({"id": "r0001", "decision": "pick", "pick": "A"})])
+    judge_chapter(client, paths, CFG, [], story_summary="ctx")
+    assert "Story so far:\nctx" in client.messages[0][1]["content"]
+    plain = RecordingClient([judgements_reply({"id": "r0001", "decision": "pick", "pick": "A"})])
+    judge_chapter(plain, paths, CFG, [], force=True)  # no story summary
+    assert "Story so far" not in plain.messages[0][1]["content"]

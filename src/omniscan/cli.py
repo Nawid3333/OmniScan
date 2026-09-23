@@ -1203,7 +1203,153 @@ def glossary_import(
     typer.echo(f"glossary: wrote {written} entries ({mode}) from {paths.glossary_yaml}")
 
 
+@glossary_app.command("propose")
+def glossary_propose(
+    series: Annotated[str, typer.Argument()],
+    chapter: Annotated[
+        list[str] | None,
+        typer.Option("--chapter", "-c", help="Chapter folder name; repeatable. Default: all."),
+    ] = None,
+    model: Annotated[
+        str, typer.Option("--model", help="Chat model used for term proposal.")
+    ] = "gemma4:31b-cloud",
+    min_chapters: Annotated[
+        int,
+        typer.Option("--min-chapters", help="Distinct chapters a term must recur in to be written."),
+    ] = 2,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Scan and extract, but write nothing to the glossary.")
+    ] = False,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Emit one JSON object instead of text lines.")
+    ] = False,
+) -> None:
+    """Propose glossary terms from the series' own OCR text (always proposed, never auto-locked)."""
+    from omniscan.glossary.proposals import run_proposals
+
+    cfg = get_config()
+    sp = SeriesPaths.from_config(cfg, series)
+    if not sp.chapters():
+        typer.echo(f"glossary: no chapters found for series {series!r}", err=True)
+        raise typer.Exit(2)
+    client = OllamaClient(cfg.ollama, get_secrets())
+    try:
+        summary = run_proposals(
+            cfg,
+            series,
+            client=client,
+            chapters=chapter,
+            model=model,
+            min_chapters=min_chapters,
+            dry_run=dry_run,
+        )
+    except OllamaRateLimitError:
+        typer.echo("glossary: Ollama rate limit reached — re-run later", err=True)
+        raise typer.Exit(3) from None
+    finally:
+        client.close()
+    if as_json:
+        typer.echo(
+            json.dumps(
+                {
+                    "chapters_scanned": list(summary.chapters_scanned),
+                    "chapters_with_lines": summary.chapters_with_lines,
+                    "lines_scanned": summary.lines_scanned,
+                    "aggregated_above_threshold": summary.aggregated_above_threshold,
+                    "merge": {
+                        "locked": summary.merge.locked,
+                        "proposed": summary.merge.proposed,
+                        "conflicts": [asdict(conflict) for conflict in summary.merge.conflicts],
+                        "rejected": list(summary.merge.rejected),
+                    },
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        return
+    typer.echo(
+        f"glossary: {len(summary.chapters_scanned)} chapter(s) scanned, {summary.chapters_with_lines} with"
+        f" OCR text, {summary.lines_scanned} line(s), {summary.aggregated_above_threshold} term(s) above"
+        f" --min-chapters"
+    )
+    typer.echo(f"glossary: {summary.merge.proposed} term(s) proposed, {summary.merge.locked} locked")
+    for conflict in summary.merge.conflicts:
+        typer.echo(
+            f"glossary:   conflict: {conflict.source}: store has {conflict.existing_target!r}"
+            f" ({conflict.existing_status}), proposal says {conflict.extracted_target!r} — entry left untouched"
+        )
+    for name in summary.merge.rejected:
+        typer.echo(f"glossary:   rejected entry still proposed (left untouched): {name}")
+    if dry_run:
+        typer.echo("glossary: dry run — nothing written")
+
+
 app.add_typer(glossary_app, name="glossary")
+
+story_app = typer.Typer(no_args_is_help=True, help="Per-series story memory: chapter summaries in series.db.")
+
+
+@story_app.command("summarize")
+def story_summarize(
+    series: Annotated[str, typer.Argument()],
+    chapter: Annotated[
+        list[str] | None,
+        typer.Option("--chapter", "-c", help="Chapter folder name; repeatable. Default: all."),
+    ] = None,
+    model: Annotated[
+        str, typer.Option("--model", help="Chat model used for summarisation.")
+    ] = "gemma4:31b-cloud",
+    force: Annotated[
+        bool, typer.Option("--force", help="Re-summarize chapters that already have a summary.")
+    ] = False,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Emit one JSON object instead of text lines.")
+    ] = False,
+) -> None:
+    """Summarise each chapter's judged English text into the series db (feeds later chapters' prompts)."""
+    from omniscan.story.summarize import run_summarize
+
+    cfg = get_config()
+    sp = SeriesPaths.from_config(cfg, series)
+    if not sp.chapters():
+        typer.echo(f"story: no chapters found for series {series!r}", err=True)
+        raise typer.Exit(2)
+    client = OllamaClient(cfg.ollama, get_secrets())
+    try:
+        summary = run_summarize(cfg, series, client=client, chapters=chapter, model=model, force=force)
+    except OllamaRateLimitError:
+        typer.echo("story: Ollama rate limit reached — re-run later", err=True)
+        raise typer.Exit(3) from None
+    finally:
+        client.close()
+    if as_json:
+        typer.echo(
+            json.dumps(
+                {
+                    "series": series,
+                    "done": list(summary.done),
+                    "skipped_no_final": list(summary.skipped_no_final),
+                    "skipped_existing": list(summary.skipped_existing),
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        return
+    for name in summary.done:
+        typer.echo(f"story: {name}: summarized")
+    for name in summary.skipped_no_final:
+        typer.echo(f"story: {name}: skipped (no final.json yet)")
+    for name in summary.skipped_existing:
+        typer.echo(f"story: {name}: skipped (already summarized, use --force)")
+    typer.echo(
+        f"story: {len(summary.done)} summarized, {len(summary.skipped_no_final)} without final.json,"
+        f" {len(summary.skipped_existing)} already summarized"
+    )
+
+
+app.add_typer(story_app, name="story")
 
 watermark_app = typer.Typer(no_args_is_help=True, help="Per-series fixed-position watermark regions.")
 
