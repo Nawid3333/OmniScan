@@ -301,7 +301,17 @@ class PaddleOcrVlReader:
         return readings
 
     def _readings(self, out: Any, n_prompt: int) -> list[tuple[str, float]]:
-        """(text, score) per row of the batch: exp of the mean non-pad generated-token log-prob."""
+        """(text, score) per row of the batch: exp of the mean non-pad generated-token log-prob.
+
+        A row that generates `self._max_new_tokens` real (non-pad) tokens without the model choosing
+        to stop is almost never a coincidence -- it means the text was longer than the budget and got
+        cut off mid-read (measured on a real 391-character credits block: only the first ~35
+        characters came out, silently, with no other signal anything was wrong). Score such a row
+        0.0, the same convention already used for an empty read, so the existing `ocr.drop_conf`
+        filtering keeps a confidently-wrong truncated fragment out of translation instead of treating
+        it as a complete, trustworthy line. The text itself is kept (not blanked) for a human/log to
+        inspect; only the confidence changes.
+        """
         try:
             transition = self.model.compute_transition_scores(
                 out.sequences, out.scores, normalize_logits=True
@@ -319,14 +329,16 @@ class PaddleOcrVlReader:
                 readings.append(("", 0.0))
                 continue
             if transition is None:
-                score = 1.0
-            else:
-                generated = sequence[len(sequence) - transition.shape[1] :]
-                log_probs = transition[index][generated != pad_id]
-                score = (
-                    round(min(max(math.exp(float(log_probs.mean())), 0.0), 1.0), 4)
-                    if log_probs.numel()
-                    else 0.0
-                )
+                readings.append((text, 1.0))
+                continue
+            generated = sequence[len(sequence) - transition.shape[1] :]
+            non_pad = generated != pad_id
+            if int(non_pad.sum()) >= self._max_new_tokens:
+                readings.append((text, 0.0))  # truncated: hit the ceiling, never chose to stop
+                continue
+            log_probs = transition[index][non_pad]
+            score = (
+                round(min(max(math.exp(float(log_probs.mean())), 0.0), 1.0), 4) if log_probs.numel() else 0.0
+            )
             readings.append((text, score))
         return readings

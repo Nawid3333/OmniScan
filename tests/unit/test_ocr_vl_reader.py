@@ -285,6 +285,18 @@ def test_read_scores_are_per_row() -> None:
     assert reader.read(zero_crops(2)) == [("fast", 0.9512), ("slow", 0.1353)]  # exp(-0.05); exp(-2.0)
 
 
+def test_read_scores_0_when_generation_hits_the_max_new_tokens_ceiling() -> None:
+    # row 0 generates exactly max_new_tokens=3 real tokens (never chose to stop -> truncated, likely
+    # incomplete, per a real 391-char credits block that was cut off after ~35 characters); row 1
+    # stops naturally after 2 (its output-side pad, id 0, carries a -9.0 log-prob that must not
+    # count) and keeps its normally-computed score.
+    calls = [{"gen": [[100, 101, 102], [200, 201, 0]], "logs": [[-0.1, -0.1, -0.1], [-0.2, -0.2, -9.0]]}]
+    cfg = OcrConfig(engine="paddleocr_vl", vl_max_new_tokens=3)
+    reader, _model, _processor = make_reader(calls, ["cut off", "complete"], cfg=cfg)
+
+    assert reader.read(zero_crops(2)) == [("cut off", 0.0), ("complete", 0.8187)]  # exp(-0.2)
+
+
 def test_read_left_pads_the_prompt_and_offsets_the_tail_by_one_shared_length() -> None:
     # real prompt lengths 2 and 4: row 0 is left-padded to 4, so decoding must start at the shared
     # width — slicing at row 0's own shorter prompt would bleed its prompt tokens into the decode
