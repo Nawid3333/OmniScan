@@ -47,19 +47,21 @@ rocm-gfx1201 = [
     "torchvision[device-gfx1201]==0.28.0+rocm10.0.0",
 ]
 cpu = [
-    "torch>=2.9,<3",
-    "torchvision>=0.24,<1",
+    "torch>=2.13,<3",
+    "torchvision>=0.28,<1",
 ]
 cuda = [
-    # NVIDIA, CUDA 12.8 wheels (the "pytorch-cuda" index below); a different driver/toolkit version may
-    # need a different index tag (e.g. .../whl/cu126) — change that one URL, nothing else
-    "torch>=2.9,<3",
-    "torchvision>=0.24,<1",
+    # NVIDIA, CUDA 12.9 wheels (the "pytorch-cuda" index below); a different driver/toolkit version may
+    # need a different index tag (e.g. .../whl/cu126) — change that one URL, nothing else. >=2.13 (not a
+    # looser floor): torch<=2.12.1 has a known torch.jit.script memory-corruption CVE, fixed in 2.13.0
+    # (cu128 tops out at 2.11.0, which is why cu129 is the index used here, not cu128).
+    "torch>=2.13,<3",
+    "torchvision>=0.28,<1",
 ]
 mps = [
     # Apple Silicon: the default PyPI wheel already includes MPS support, no special index needed
-    "torch>=2.9,<3",
-    "torchvision>=0.24,<1",
+    "torch>=2.13,<3",
+    "torchvision>=0.28,<1",
 ]
 
 [build-system]
@@ -73,6 +75,11 @@ packages = ["src/omniscan"]
 # not need it (only torch.compile does), so require it on Linux only. Keeps uv.lock installable on Windows.
 [tool.uv]
 override-dependencies = ["triton; sys_platform == 'linux'"]
+# setuptools: every torch build resolves it to 81.0.0 (GHSA-5rjg-fvgr-3xxf, a MANIFEST.in exclusion bypass
+# on macOS sdists, patched in 83.0.0) — NOT overridden here. AMD's rocm10 index only carries 81.0.0 itself,
+# so forcing >=83.0.0 makes omniscan[rocm-gfx1201] (this project's own machine) unresolvable entirely; the
+# advisory only matters when *building/publishing* an sdist on a case-insensitive-normalizing macOS
+# filesystem, which this project never does (no sdist is ever published). Accepted, not fixed.
 
 # Exactly one torch backend at a time — see the comment on [project.optional-dependencies] above. uv
 # refuses a sync/lock that asks for more than one of these together instead of silently picking one.
@@ -104,6 +111,12 @@ torchvision = [
 ]
 # mps has no entry above on purpose: macOS wheels come from the default `pypi` index below, already MPS-capable
 
+# rocm10 also happens to host its own numpy build (bundled alongside torch's other ROCm SDK packages) with
+# no macOS wheel at all — plain "first index that has it wins" search picked that one over PyPI's numpy for
+# every extra, not just rocm-gfx1201, breaking `uv sync --extra cpu` on macOS entirely (found by card P2's
+# CI matrix). Pin numpy to PyPI unconditionally; nothing about it is actually ROCm-specific.
+numpy = [{ index = "pypi" }]
+
 # AMD ROCm 10 wheel index first (torch, torchvision, triton, rocm-sdk-*, amd-*-device-gfx1201) — this
 # project's own dev machine (RX 9070 XT / gfx1201). Not `explicit`, same as before this table existed: its
 # transitive ROCm SDK/device packages have no direct entry in [project.optional-dependencies] to attach an
@@ -119,7 +132,7 @@ explicit = true
 
 [[tool.uv.index]]
 name = "pytorch-cuda"
-url = "https://download.pytorch.org/whl/cu128"
+url = "https://download.pytorch.org/whl/cu129"
 explicit = true
 
 [[tool.uv.index]]

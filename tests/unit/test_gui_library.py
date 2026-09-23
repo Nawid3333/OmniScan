@@ -239,6 +239,7 @@ def test_neither_dir_raises(cfg: Config) -> None:
 
 def test_demo_script_screenshot_and_unknown_series(tmp_path: Path) -> None:
     """gui_compare_demo.py renders a chapter headless and exits 1 on an unknown series."""
+    pytest.importorskip("PySide6")  # the subprocess below needs it in the same shared venv as this process
     config = _config(tmp_path)
     for sub in ("library", "work", "output"):
         (tmp_path / sub).mkdir()

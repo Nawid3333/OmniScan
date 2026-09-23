@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import psutil
 import pytest
 
-from omniscan.hw.detect import classify_vendor, detect_hardware, is_integrated
+from omniscan.hw.detect import _os_name, classify_vendor, detect_hardware, is_integrated
 
 
 class FakeDevice:
@@ -156,7 +156,7 @@ def test_detect_nvidia_cuda_build_sorts_discrete_first(monkeypatch: pytest.Monke
     )
     fake_psutil(monkeypatch, ram_gb=32.0)
     hw = detect_hardware()
-    assert hw.os == "windows"
+    assert hw.os == _os_name()  # this test runs on whatever OS CI/the developer's machine actually is
     assert hw.arch == (
         "x64" if platform.machine().lower() in ("amd64", "x86_64") else platform.machine().lower()
     )
