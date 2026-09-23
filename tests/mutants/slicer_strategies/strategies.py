@@ -225,4 +225,65 @@ MUTANTS = [
         "cuts=tuple(s.y1 for s in artifact.slices)",
         "cuts include last slice",
     ),
+    # ---- round 2 (card Q6, added after the first pass was classified) --------
+    (
+        "src/omniscan/slicer/strategies.py",
+        "starts = torch.nonzero(change == 1).squeeze(1).tolist()",
+        "starts = torch.nonzero(change == -1).squeeze(1).tolist()",
+        "starts from run ends",
+    ),
+    (
+        "src/omniscan/slicer/strategies.py",
+        "if f.y0 < y1 and f.y1 > y0]",
+        "if f.y0 < y1 and f.y1 >= y0]",
+        "file end > -> >=",
+    ),
+    (
+        "src/omniscan/slicer/compare.py",
+        "cuts=tuple(s.y1 for s in artifact.slices[:-1])",
+        "cuts=tuple(s.y0 for s in artifact.slices[:-1])",
+        "cuts use y0",
+    ),
+    (
+        "src/omniscan/slicer/strategies.py",
+        "pages = slice_by_pages(source_files or [], width, height)",
+        "pages = slice_by_pages(source_files or [], height, width)",
+        "page mode dims swapped",
+    ),
+    (
+        "src/omniscan/slicer/strategies.py",
+        "boundaries = [(s.y0, s.y1, s.forced_cut) for s in pages.slices]",
+        "boundaries = [(s.y1, s.y0, s.forced_cut) for s in pages.slices]",
+        "page y0/y1 swapped",
+    ),
+    (
+        "src/omniscan/slicer/strategies.py",
+        "stats = row_stats(strip, cfg.uniform_tol)",
+        "stats = row_stats(strip, cfg.uniform_tol + 1)",
+        "uniform_tol + 1",
+    ),
+    (
+        "src/omniscan/slicer/compare.py",
+        "strategies: Sequence[str] = STRATEGIES,",
+        "strategies: Sequence[str] = (),",
+        "default strategies empty",
+    ),
+    (
+        "src/omniscan/slicer/strategies.py",
+        'if name == "smart":',
+        'if name != "smart":',
+        "smart branch inverted",
+    ),
+    (
+        "src/omniscan/slicer/strategies.py",
+        'artifact.params = {**artifact.params, "strategy": name}',
+        "artifact.params = {**artifact.params}",
+        "smart branch drops strategy param",
+    ),
+    (
+        "src/omniscan/slicer/strategies.py",
+        "pos + cfg.max_height, pos + cfg.target_height",
+        "pos + cfg.max_height, pos + cfg.max_height",
+        "target uses max_height",
+    ),
 ]

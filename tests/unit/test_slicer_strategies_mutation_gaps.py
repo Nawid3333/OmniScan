@@ -124,3 +124,19 @@ def test_finalize_records_the_strip_dimensions() -> None:
     for name in ("fixed", "simple_gutter"):
         artifact = slice_with_strategy(strip, FIXED_CFG, strategy=name)
         assert (artifact.strip_width, artifact.strip_height) == (W, 2000)
+
+
+# mutant "file end > -> >=": a file ending exactly at a slice's y0 belongs to later slices only
+def test_source_file_ending_exactly_at_slice_start_is_excluded() -> None:
+    cfg = SlicerConfig(min_height=1500, target_height=2000, max_height=6000)
+    files = [_page(0, 0, 2000), _page(1, 2000, 4000)]
+    artifact = slice_fixed(art(4000, W, 0), cfg, files)
+    assert [s.source_files for s in artifact.slices] == [[0], [1]]
+
+
+# mutant "uniform_tol + 1": blankness honours the configured tolerance exactly
+def test_blank_flag_uses_the_configured_tolerance() -> None:
+    strip = solid(6000, W, (100, 100, 100))
+    strip[:, 1000, 0] = 111  # 11 above the row median: outside tol=10, inside tol=11
+    artifact = slice_fixed(strip, FIXED_CFG)
+    assert [(s.y0, s.y1, s.blank) for s in artifact.slices] == [(0, 3000, False), (3000, 6000, True)]
