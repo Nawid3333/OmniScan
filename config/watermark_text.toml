@@ -1,0 +1,12 @@
+# Text patterns that mark a detected region as a source-injected ad/watermark, never translated or
+# typeset (docs/OPEN_QUESTIONS.md E4: watermarks are not removed, only excluded from translation).
+# Patterns are matched as a case-insensitive substring of the region's OCR'd text (whitespace collapsed
+# the same way translate.prompts.source_text does). Keep entries specific (brand/site names), not
+# generic words, so real dialogue is never misclassified.
+[watermark_text]
+patterns = [
+    "구글검색",       # "Google search" — found injected in Solo Leveling raws (card F2b)
+    "라이브스코어",   # "LiveScore" (gambling/sports-betting brand)
+    "가상토토",       # "virtual toto" (a Korean sports-betting product)
+    "스포위키",       # "SpoWiki" (a specific ad-site brand)
+]

@@ -544,6 +544,25 @@ Refuses to overwrite an existing example and rejects anything that is not a read
 uv run omniscan filter add DemoSeries ~/Downloads/end_card.jpg --name end_card.jpg
 ```
 
+### Watermark text patterns
+
+Aggregator-injected ads are often plain text on the page rather than a repeated banner, so the promo
+filter above cannot catch them. The OCR stage therefore reclassifies a detected region as a
+`watermark` when its read text contains one of the patterns in `config/watermark_text.toml`
+(plus your own `~/.config/omniscan/watermark_text.toml`; both files' lists are combined, edits take
+effect on the next OCR run). Watermarked regions are excluded from translation, scoring and
+evaluation like the fixed-position ones — they are **not** removed from the image, so the original
+ad text stays on the page. To teach the filter a new site, append its specific brand or site name to
+the user file (a pattern is matched as a case-insensitive substring of the OCR'd text):
+
+```toml
+[watermark_text]
+patterns = [
+    "구글검색",
+    "먹튀위키",
+]
+```
+
 ### `omniscan glossary list`
 
 Print the glossary of a series as a table (source, target, type, status, count).

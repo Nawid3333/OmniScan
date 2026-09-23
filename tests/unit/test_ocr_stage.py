@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ from omniscan.ingest.stage import IngestStage
 from omniscan.ocr.lines import LineBox
 from omniscan.ocr.stage import OcrStage
 from omniscan.slicer.stage import SliceStage
+from tests.fixtures.korean_pages import KOREAN_LINES
 
 SERIES = "S"
 CHAPTER = "Chapter 1"
@@ -327,3 +329,100 @@ def test_paddleocr_vl_stage_drops_regions_without_text(cfg: Config) -> None:
 
     assert outcome.metrics["regions_empty"] == 1.0 and outcome.metrics["regions_dropped"] == 1.0
     assert RegionsArtifact.load(ctx.paths.artifact("ocr.json")).regions == []
+
+
+# ---------------------------------------------------------------- watermark text reclassification (F2b)
+
+AD_1 = '구글검색 "먹튀검증 스포위키"'
+AD_2 = "라이브스코어 스포츠중계 가상토토 전문가 정기/오목 웹툰"
+
+
+def write_patterns(path: Path, *patterns: str) -> Path:
+    """A watermark_text.toml with `patterns` (created on demand)."""
+    entries = ", ".join(f'"{pattern}"' for pattern in patterns)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"[watermark_text]\npatterns = [{entries}]\n", encoding="utf-8")
+    return path
+
+
+class FakeCropReader:
+    """Scripted crop-reading engine: one reading per region crop, in region order."""
+
+    def __init__(self, readings: list[tuple[str, float]]) -> None:
+        self.readings = readings
+
+    def read(self, crops: list[torch.Tensor]) -> list[tuple[str, float]]:
+        return [self.readings[index] for index in range(len(crops))]
+
+
+def write_mixed_regions(ctx: ChapterContext) -> None:
+    """Four regions: dialogue bubble, two ad regions and an sfx whose text happens to be an ad."""
+    RegionsArtifact(
+        regions=[
+            Region(id="r0001", slice_index=0, kind="bubble_text", bbox=BBox(x0=10, y0=30, x1=390, y1=120)),
+            Region(id="r0002", slice_index=0, kind="bubble_text", bbox=BBox(x0=10, y0=180, x1=390, y1=270)),
+            Region(id="r0003", slice_index=0, kind="free_text", bbox=BBox(x0=10, y0=330, x1=390, y1=420)),
+            Region(id="r0004", slice_index=0, kind="sfx", bbox=BBox(x0=10, y0=480, x1=390, y1=560)),
+        ]
+    ).save(ctx.paths.artifact("regions.json"))
+
+
+def test_ocr_stage_reclassifies_ad_text_as_watermark(
+    cfg: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    shipped = write_patterns(
+        tmp_path / "config" / "watermark_text.toml", "구글검색", "라이브스코어", "스포위키"
+    )
+    user = tmp_path / "user" / "watermark_text.toml"  # missing on purpose: skipped by the loader
+    monkeypatch.setattr("omniscan.ocr.stage.default_watermark_text_paths", lambda: [shipped, user])
+    manga = cfg.model_copy(update={"ocr": MANGA_CFG})
+    ctx = prepared(manga)
+    write_mixed_regions(ctx)
+    ctx.gpu = FakeScheduler(
+        {"reader": FakeCropReader([(KOREAN_LINES[0], 0.95), (AD_1, 0.9), (AD_2, 0.85), ("쾅!", 0.9)])}
+    )
+
+    outcome = run_stage(OcrStage(), ctx)
+
+    assert outcome.status == "done"
+    assert outcome.metrics["watermarked"] == 2.0
+    regions = RegionsArtifact.load(ctx.paths.artifact("ocr.json")).regions
+    assert [r.kind for r in regions] == ["bubble_text", "watermark", "watermark", "sfx"]
+    assert regions[1].text == AD_1 and regions[2].text == AD_2  # watermark regions keep their OCR text
+
+
+def test_ocr_stage_reruns_when_the_watermark_patterns_change(
+    cfg: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    shipped = write_patterns(tmp_path / "config" / "watermark_text.toml", "라이브스코어")
+    user = tmp_path / "user" / "watermark_text.toml"
+    monkeypatch.setattr("omniscan.ocr.stage.default_watermark_text_paths", lambda: [shipped, user])
+    manga = cfg.model_copy(update={"ocr": MANGA_CFG})
+    ctx = prepared(manga)
+    ctx.gpu = FakeScheduler({"reader": FakeReader((AD_1, 0.9))})  # the ad text, no pattern matches it yet
+
+    assert run_stage(OcrStage(), ctx).status == "done"
+    assert RegionsArtifact.load(ctx.paths.artifact("ocr.json")).regions[0].kind == "bubble_text"
+    assert run_stage(OcrStage(), make_context(manga, SERIES, CHAPTER, ctx.gpu)).status == "skipped"
+
+    write_patterns(user, "스포위키")  # AD_1 contains "스포위키": editing the user file must re-run the stage
+    rerun = run_stage(OcrStage(), make_context(manga, SERIES, CHAPTER, ctx.gpu))
+    assert rerun.status == "done"
+    assert RegionsArtifact.load(ctx.paths.artifact("ocr.json")).regions[0].kind == "watermark"
+    assert run_stage(OcrStage(), make_context(manga, SERIES, CHAPTER, ctx.gpu)).status == "skipped"
+
+
+def test_config_subset_fingerprints_the_loaded_patterns(
+    cfg: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    shipped = write_patterns(tmp_path / "config" / "watermark_text.toml", "구글검색", "스포위키")
+    user = tmp_path / "user" / "watermark_text.toml"
+    monkeypatch.setattr("omniscan.ocr.stage.default_watermark_text_paths", lambda: [shipped, user])
+    stage = OcrStage()
+
+    expected = hashlib.sha256("구글검색\n스포위키".encode()).hexdigest()
+    assert stage.config_subset(cfg)["watermark_patterns"] == expected
+
+    write_patterns(user, "라이브스코어")  # the user file contributes too: the fingerprint follows it
+    expected = hashlib.sha256("구글검색\n스포위키\n라이브스코어".encode()).hexdigest()
+    assert stage.config_subset(cfg)["watermark_patterns"] == expected

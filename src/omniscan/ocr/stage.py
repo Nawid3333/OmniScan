@@ -9,6 +9,7 @@ no line detection runs.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, ClassVar
@@ -21,15 +22,18 @@ from omniscan.gpu.groups import VISION_GROUP
 from omniscan.ingest.strip import load_strip
 from omniscan.ocr.engines import engine_rec_model
 from omniscan.ocr.pipeline import read_region_crops, read_regions
+from omniscan.ocr.watermark_text import (
+    default_watermark_text_paths,
+    load_watermark_patterns,
+    reclassify_watermark_regions,
+)
 
 
 class OcrStage:
     """Read the text of detected regions (ppocr or a crop-reading engine; satisfies core.stage.Stage)."""
 
     name: ClassVar[str] = "ocr"
-    version: ClassVar[int] = (
-        2  # 2: strips decoded before the CUDA staging-buffer fix (2026-09-19) held duplicated pages
-    )
+    version: ClassVar[int] = 3  # 3: watermark text reclassification
     gpu_group: ClassVar[str | None] = VISION_GROUP
 
     def inputs(self, ctx: ChapterContext) -> list[Path]:
@@ -47,7 +51,13 @@ class OcrStage:
 
     def config_subset(self, cfg: Config) -> Mapping[str, Any]:
         """Only the config values that affect this stage's output (hashed for invalidation)."""
-        return {**cfg.ocr.model_dump(), "reading_direction": cfg.detect.reading_direction}
+        patterns = load_watermark_patterns(default_watermark_text_paths())
+        return {
+            **cfg.ocr.model_dump(),
+            "reading_direction": cfg.detect.reading_direction,
+            # fingerprint of the watermark text patterns (card F2b): editing either TOML re-runs the stage
+            "watermark_patterns": hashlib.sha256("\n".join(patterns).encode("utf-8")).hexdigest(),
+        }
 
     def run(self, ctx: ChapterContext, models: Mapping[str, Any]) -> Mapping[str, float]:
         """Do the work, write outputs, return metrics (seconds are added by the runner)."""
@@ -81,5 +91,8 @@ class OcrStage:
         # false-positive detections read as junk with a low score (or nothing at all): leave those pixels alone
         kept = [r for r in ocr_regions if r.lines and r.confidence >= ctx.cfg.ocr.drop_conf]
         metrics["regions_dropped"] = float(len(ocr_regions) - len(kept))
+        # OCR'd ad/spam text is a source-injected watermark (card F2b): excluded downstream, not removed
+        kept = reclassify_watermark_regions(kept, load_watermark_patterns(default_watermark_text_paths()))
+        metrics["watermarked"] = float(sum(1 for r in kept if r.kind == "watermark"))
         RegionsArtifact(regions=kept).save(ctx.paths.artifact("ocr.json"))
         return metrics
