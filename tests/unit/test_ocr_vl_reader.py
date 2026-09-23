@@ -243,6 +243,9 @@ def test_read_sends_the_card_messages_and_generate_arguments() -> None:
     for kwargs in model.generate_calls:
         assert kwargs["max_new_tokens"] == 99  # cfg.vl_max_new_tokens of make_reader's cfg
         assert kwargs["do_sample"] is False
+        assert (
+            kwargs["use_cache"] is True
+        )  # the shipped generation_config.json's use_cache: false is overridden
         assert kwargs["output_scores"] is True
         assert kwargs["return_dict_in_generate"] is True
 
@@ -403,16 +406,18 @@ def test_load_installed_model_uses_its_folder_fp32(monkeypatch, tmp_path, patche
     assert model.to_devices == [torch.device("cpu")] and model.evaled
     assert reader.model is model and reader.processor is processor
     assert reader._max_new_tokens == 192  # cfg.vl_max_new_tokens default
-    assert reader.batch_size == 16  # cfg.crop_batch_size default
+    assert reader.batch_size == 1  # forced regardless of cfg.crop_batch_size (see .load()'s comment)
 
 
-def test_load_threads_cfg_crop_batch_size(monkeypatch, patched_transformers) -> None:
+def test_load_ignores_cfg_crop_batch_size(monkeypatch, patched_transformers) -> None:
+    """Unlike MangaOcrReader, this reader's `.load()` always forces batch_size=1: measured on real
+    hardware, batching this model is 9x-32x slower regardless of caching or crop-length uniformity."""
     monkeypatch.setattr("omniscan.ocr.engines.load_catalog", lambda: [vl_entry()])
     _seen, _model, _processor = patched_transformers
 
     reader = PaddleOcrVlReader.load(OcrConfig(engine="paddleocr_vl", crop_batch_size=7), torch.device("cpu"))
 
-    assert reader.batch_size == 7
+    assert reader.batch_size == 1
 
 
 def test_load_missing_model_falls_back_to_the_pinned_hub(
