@@ -49,13 +49,25 @@ Changes to the plan:
    encodes. Glyph rasterisation (FreeType) runs on the CPU into small patches; compositing is on the GPU (question F9).
 7. **Judge economics:** the judge only sees lines where candidates disagree (agreement below 0.9) or a locked term is violated,
    with one repair round for violations (question D5).
-8. **Portability (P1 done 2026-09-23):** `pyproject.toml` now selects the torch backend per machine via
+8. **Portability (P1+P2 done 2026-09-23):** `pyproject.toml` selects the torch backend per machine via
    `[project.optional-dependencies]` (`rocm-gfx1201` / `cuda` / `cpu` / `mps`) with `[tool.uv.conflicts]`
    refusing more than one at a time — `uv sync --extra <name>` (no safe default; only the operator knows
    their own GPU). `rocm-gfx1201` is the only one verified on real hardware (byte-identical `uv pip list`
-   and a full GPU test pass before/after); cuda/cpu/mps resolve cleanly (`uv lock`) but are otherwise
-   untested. The runtime-download model of question B4 is separate, still open. **P2 (a CI matrix testing
-   `uv sync --extra cpu` on Windows/Linux/macOS) is not done yet.**
+   and a full GPU test pass before/after); cuda/cpu/mps resolve cleanly and now have real CI evidence
+   (below), though no GPU hardware backs cuda/mps in CI. The runtime-download model of question B4 is
+   separate, still open. **P2 (`.github/workflows/ci.yml`, a matrix testing `uv sync --extra cpu` +
+   the CPU-only suite + lint + pyright on ubuntu-latest/windows-latest/macos-latest) is merged and green
+   on all three OSes** — it took 5 iterative real-CI rounds to get there, each catching a genuine bug no
+   local (Windows-only) run could see: a `check_locked_terms` fallout was unrelated, but four were the
+   same root cause recurring — AMD's rocm10 wheel index mirrors torch's *entire* pure-Python dependency
+   closure (numpy, pillow, markupsafe, jinja2, sympy, mpmath, networkx, filelock, typing-extensions,
+   fsspec), each missing macOS wheels, and uv's "first index with the package wins" search kept picking
+   rocm10's copy for every extra, not just rocm-gfx1201; plus a discovery that a `tool.uv.sources` index
+   pin is silently ignored for a package that isn't a direct project dependency somewhere, even one only
+   ever needed transitively (fixed by listing all ten in `[project.dependencies]` with floors matching
+   what's already resolved, purely so the pins have something to attach to); plus an ungated
+   PySide6-subprocess test, a hardcoded-Windows-OS test, and pyright needing the `gui` extra synced first.
+   See `pyproject.toml`'s `[tool.uv.sources]` comments for the full empirically-verified account.
 9. **QA loop:** every logic card gets a mutation check; mutation-review cards hand that job to builders; one large Claude
    verification pass at the end (question F7). Every Hugging Face model is pinned by `revision` in config once validated
    (`DetectConfig.revision` is the pattern), and a stage's `version` is bumped when its model changes.
