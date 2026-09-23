@@ -22,15 +22,18 @@ from PySide6.QtWidgets import (
 )
 
 from omniscan.core.config import Config, load_config
+from omniscan.gui.import_view import ImportView
 from omniscan.gui.library_view import LibraryView
 from omniscan.gui.models_view import ModelsView
 from omniscan.gui.reader_view import ReaderView
 from omniscan.gui.run_view import RunView
 from omniscan.gui.services.hardware import HardwareService
+from omniscan.gui.services.importer import ImporterService
 from omniscan.gui.services.models import ModelsService
 from omniscan.gui.settings_view import SettingsView
 
-PAGES = ("Library", "Reader", "Run", "Models", "Settings")
+# "Import" is last so the other four keep their existing indices (scripts/gui_screenshots.py hard-codes them).
+PAGES = ("Library", "Reader", "Run", "Models", "Settings", "Import")
 
 
 class MainWindow(QMainWindow):
@@ -42,6 +45,7 @@ class MainWindow(QMainWindow):
         *,
         models_service: Any | None = None,
         hardware_service: HardwareService | None = None,
+        importer_service: Any | None = None,
         qsettings: QSettings | None = None,
         config_loader: Callable[[], Config] | None = None,
     ) -> None:
@@ -57,6 +61,7 @@ class MainWindow(QMainWindow):
         self.run_view = RunView(self._cfg)
         self.models_view = ModelsView(models_service or ModelsService(self._cfg))
         self.settings_view = SettingsView(self._cfg, hardware=hardware_service)
+        self.import_view = ImportView(importer_service or ImporterService(self._cfg))
 
         self.stack = QStackedWidget()
         for view in (
@@ -65,6 +70,7 @@ class MainWindow(QMainWindow):
             self.run_view,
             self.models_view,
             self.settings_view,
+            self.import_view,
         ):
             self.stack.addWidget(view)
         self.sidebar = QListWidget()
@@ -126,6 +132,7 @@ class MainWindow(QMainWindow):
         self.reader_view.reconfigure(self._cfg)
         self.run_view.reconfigure(self._cfg)
         self.settings_view.reconfigure(self._cfg)
+        self.import_view.reconfigure(ImporterService(self._cfg))
         self._show_device()
 
     # ------------------------------------------------------------------ internals

@@ -1129,7 +1129,7 @@ uv run omniscan gui          # or: uv run python -m omniscan.gui
 
 Without the extra installed the command prints one line naming the extra and exits 2.
 
-The window has five pages in the left sidebar (also `Ctrl+1`…`Ctrl+5`). The status bar shows the
+The window has six pages in the left sidebar (also `Ctrl+1`…`Ctrl+6`). The status bar shows the
 configured GPU device and the job state; window size and the last open page are remembered across
 restarts.
 
@@ -1185,6 +1185,13 @@ the background (it imports torch); the header shows the same snapshot `omniscan 
 A successful settings write reloads the config into every page (the Library re-scans, the Run page
 re-lists series). The window never touches `secrets.env`; translation runs read it exactly as the
 CLI does.
+
+**Import** is the same import the CLI's `omniscan import` does, with an editable preview first:
+browse or drag-and-drop a folder or `.zip`/`.cbz` archive, pick a series name, then adjust the
+detected chapter grouping — move pages between chapters, reorder, rename, merge or split chapters —
+before committing. Non-JPEG pages are flagged for conversion (quality 95, on the CPU) in the
+preview. `Move instead of copy` deletes the source pages as they're imported (disabled for
+archives, since there both extraction and the archive itself would need separate handling).
 
 ## Web viewer
 

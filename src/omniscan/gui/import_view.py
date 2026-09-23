@@ -68,6 +68,14 @@ class ImportView(QWidget):
         except Exception as exc:  # a broken hardware probe must not take the page down
             self.context_label.setText(f"machine: {type(exc).__name__}: {exc}")
 
+    def reconfigure(self, service: ImporterService | Any) -> None:
+        """Swap the importer service (a settings change: the library root may differ) and refresh."""
+        self._service = service
+        try:
+            self.context_label.setText(self._service.hardware_line())
+        except Exception as exc:  # a broken hardware probe must not take the page down
+            self.context_label.setText(f"machine: {type(exc).__name__}: {exc}")
+
     # ------------------------------------------------------------------ widgets
 
     def _build_ui(self) -> None:

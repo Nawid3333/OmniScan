@@ -45,6 +45,13 @@ class FakeHardware:
         )
 
 
+class FakeImporterService:
+    """ImporterService stand-in for the import page: no real hardware probe."""
+
+    def hardware_line(self) -> str:
+        return "machine: fake — no probe"
+
+
 @pytest.fixture()
 def cfg(tmp_path: Path) -> Config:
     """Config over the synthetic fixture library."""
@@ -59,18 +66,19 @@ def _window(
         cfg,
         models_service=FakeModelsService(),  # type: ignore[arg-type]
         hardware_service=FakeHardware(),  # type: ignore[arg-type]
+        importer_service=FakeImporterService(),
         qsettings=qsettings,
         config_loader=config_loader,
     )
 
 
-def test_five_pages_in_sidebar_order(qapp: QApplication, cfg: Config, tmp_path: Path) -> None:
-    """The sidebar holds the five pages and the stack follows the selection."""
+def test_six_pages_in_sidebar_order(qapp: QApplication, cfg: Config, tmp_path: Path) -> None:
+    """The sidebar holds the six pages and the stack follows the selection."""
     qsettings = QSettings(str(tmp_path / "gui.ini"), QSettings.Format.IniFormat)
     window = _window(cfg, qsettings)
 
-    assert window.sidebar.count() == 5
-    for index, name in enumerate(("Library", "Reader", "Run", "Models", "Settings")):
+    assert window.sidebar.count() == 6
+    for index, name in enumerate(("Library", "Reader", "Run", "Models", "Settings", "Import")):
         window.show_page(index)
         assert window.stack.currentIndex() == index
         assert window.sidebar.item(index).text() == name
@@ -116,6 +124,7 @@ def test_settings_change_reloads_the_config(qapp: QApplication, cfg: Config, tmp
     assert loads, "the loader ran once"
     assert window.library_view._cfg is loads[0]
     assert window.run_view._cfg is loads[0]
+    assert window.import_view._service._cfg is loads[0]  # a fresh real ImporterService, not the fake
 
 
 def test_geometry_and_last_page_are_remembered(qapp: QApplication, cfg: Config, tmp_path: Path) -> None:

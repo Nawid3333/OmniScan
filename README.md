@@ -31,7 +31,7 @@ packaged into CBZ/PDF.
 | models | working — `omniscan models list` / `download` / `remove` / `verify` |
 | hardware | working — `omniscan hardware [--json]` |
 | web viewer | working — `omniscan serve` + `npm run dev` (Slicer, OCR, Translation, Reader and Filtered views — read-only except the Filtered view's Restore button; the OCR/Translation views need an `ocr.json`) |
-| desktop app | working — `omniscan gui` (PySide6: Library, Reader, Run, Models, Settings; import is still CLI-only, not yet wired into the sidebar) |
+| desktop app | working — `omniscan gui` (PySide6: Library, Reader, Run, Models, Settings, Import) |
 | update | working — `omniscan update check` / `download` |
 
 "working" = usable from the CLI today. "module only" = the code and its own sub-commands exist, but no

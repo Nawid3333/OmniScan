@@ -2,7 +2,7 @@
 
 Usage: `uv run --frozen python scripts/gui_screenshots.py --out data/screenshots/U3c`
 [--size 1300x800] [--series NAME] [--chapter NAME]. Writes `01-library.png` …
-`06-settings.png` into `--out` (created); the run page is also captured mid-run with a
+`07-import.png` into `--out` (created); the run page is also captured mid-run with a
 step-mode preview waiting (04). Services that would touch Ollama/the GPU are faked, so the
 script needs no daemon and never takes GPU time. Exits 1 for a bad `--size`.
 """
@@ -72,6 +72,15 @@ class FakeHardware:
         )
 
 
+def _fake_importer_service(cfg: Any) -> Any:
+    """ImporterService with a faked hardware probe (its `plan`/`execute` are real, but never called here)."""
+    from tests.unit.test_gui_hardware_service import _hw
+
+    from omniscan.gui.services.importer import ImporterService
+
+    return ImporterService(cfg, hardware=_hw)
+
+
 def main(argv: list[str] | None = None) -> int:
     """Render the screenshots; returns the process exit code."""
     args = _parse_args(argv)
@@ -104,8 +113,12 @@ def main(argv: list[str] | None = None) -> int:
     with tempfile.TemporaryDirectory(prefix="omniscan-gui-shots-") as tmp:
         cfg = build_library(Path(tmp) / "lib")
         qsettings = QSettings(str(Path(tmp) / "gui.ini"), QSettings.Format.IniFormat)
-        window = MainWindow(  # type: ignore[arg-type]
-            cfg, models_service=FakeModels(), hardware_service=FakeHardware(), qsettings=qsettings
+        window = MainWindow(
+            cfg,
+            models_service=FakeModels(),
+            hardware_service=FakeHardware(),  # type: ignore[arg-type]
+            importer_service=_fake_importer_service(cfg),
+            qsettings=qsettings,
         )
         window.resize(width, height)
         window.show()
@@ -178,6 +191,11 @@ def main(argv: list[str] | None = None) -> int:
         window.show_page(4)
         app.processEvents()
         shot("06-settings.png")
+
+        # 07 Import: source picker, empty (no source chosen yet)
+        window.show_page(5)
+        app.processEvents()
+        shot("07-import.png")
     return 0
 
 
