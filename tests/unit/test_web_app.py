@@ -1069,6 +1069,68 @@ def test_inpaint_patch_item_without_npz_entry_returns_404(tmp_path: Path) -> Non
         assert response.json() == {"detail": "no patch stored for this region"}, region_id
 
 
+def write_lama_pass(work: Path, *, region_id: str = "r0003") -> None:
+    """A LaMa pass over `region_id` (a flat "none" item in `write_inpaint_chapter`'s fixture):
+    inpaint_lama.json overrides it to method "lama", patches_lama.npz holds the real cleaned pixels
+    (distinct from patches.npz's, so a test can tell which file a response came from)."""
+    InpaintArtifact(
+        items=[
+            InpaintItem(
+                region_id=region_id,
+                box=BBox(x0=30, y0=130, x1=34, y1=134),
+                method="lama",
+                needs_lama=False,
+                mask_px=8,
+            )
+        ]
+    ).save(work / "inpaint_lama.json")
+    lama_pixels = torch.zeros((3, 4, 4), dtype=torch.uint8)
+    lama_pixels[0], lama_pixels[1], lama_pixels[2] = 40, 50, 60
+    save_patches(work / "patches_lama.npz", {region_id: (lama_pixels, _patch_mask())})
+
+
+def test_inpaint_merges_in_a_lama_pass_when_present(tmp_path: Path) -> None:
+    work = write_inpaint_chapter(tmp_path)
+    write_lama_pass(work)
+    client = make_client(tmp_path)
+    response = client.get(inpaint_url())
+    assert response.status_code == 200
+    items = {item["region_id"]: item for item in response.json()["items"]}
+    assert items["r0003"]["method"] == "lama"  # overridden from the flat pass's "none"
+    assert items["r0001"]["method"] == "lama" and items["r0002"]["method"] == "flat"  # untouched
+
+
+def test_inpaint_without_a_lama_pass_is_still_byte_exact(tmp_path: Path) -> None:
+    """No inpaint_lama.json: the merge path is skipped entirely, same as before this fix."""
+    write_inpaint_chapter(tmp_path)
+    client = make_client(tmp_path)
+    response = client.get(inpaint_url())
+    on_disk = (tmp_path / "work" / SERIES / CHAPTER / "inpaint.json").read_bytes()
+    assert response.content == on_disk
+
+
+def test_inpaint_patch_prefers_the_lama_pixels_over_the_flat_placeholder(tmp_path: Path) -> None:
+    work = write_inpaint_chapter(tmp_path)
+    write_lama_pass(work, region_id="r0003")
+    client = make_client(tmp_path)
+    response = client.get(patch_url("r0003"))
+    assert response.status_code == 200
+    img = Image.open(io.BytesIO(response.content))
+    assert img.convert("RGB").getpixel((0, 0)) == (40, 50, 60)  # patches_lama.npz's pixels
+
+
+def test_inpaint_patch_falls_back_to_flat_for_a_region_lama_did_not_touch(tmp_path: Path) -> None:
+    """A LaMa pass exists for the chapter, but not every region needed it: r0001 still comes from
+    patches.npz."""
+    work = write_inpaint_chapter(tmp_path)
+    write_lama_pass(work, region_id="r0003")
+    client = make_client(tmp_path)
+    response = client.get(patch_url("r0001"))
+    assert response.status_code == 200
+    img = Image.open(io.BytesIO(response.content))
+    assert img.convert("RGB").getpixel((0, 0)) == (10, 20, 30)  # patches.npz's pixels, unchanged
+
+
 # ---------------------------------------------------------------- edit final line + on-demand run
 
 

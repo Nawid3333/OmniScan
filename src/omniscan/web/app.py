@@ -150,6 +150,21 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"{name} not found")
         return Response(content=path.read_bytes(), media_type="application/json")
 
+    def _merged_inpaint(paths: ChapterPaths) -> InpaintArtifact:
+        """inpaint.json with inpaint_lama.json's items overriding the matching flat ones by
+        region_id, when a LaMa pass exists. The flat inpaint stage writes one item per cleaned
+        region, flagging any it could not clean as `needs_lama`; LaMa re-cleans only that subset
+        into its own inpaint_lama.json/patches_lama.npz rather than rewriting the flat pass's files
+        (so re-running the cheap flat pass alone never invalidates LaMa's expensive output). Assumes
+        inpaint.json exists (callers check first)."""
+        artifact = InpaintArtifact.load(paths.artifact("inpaint.json"))
+        lama_path = paths.artifact("inpaint_lama.json")
+        if not lama_path.is_file():
+            return artifact
+        lama_by_id = {item.region_id: item for item in InpaintArtifact.load(lama_path).items}
+        items = [lama_by_id.get(item.region_id, item) for item in artifact.items]
+        return artifact.model_copy(update={"items": items})
+
     def glossary_entries(series: SeriesPaths) -> list[GlossaryEntry]:
         """All store entries in store order; [] when series.db does not exist (never creates the db)."""
         if not series.db.is_file():
@@ -222,8 +237,16 @@ def create_app(
 
     @app.get("/api/series/{series}/chapters/{chapter}/inpaint")
     def get_inpaint(series: str, chapter: str) -> Response:
-        """The chapter's inpaint.json, byte-for-byte as written by the inpaint stage."""
-        return artifact_bytes(chapter_paths(series, chapter), "inpaint.json")
+        """The chapter's inpaint.json; when inpaint_lama.json also exists, its items override the
+        matching flat ones by region_id (the same override export/stage.py applies at export time),
+        so this reflects the chapter as actually cleaned instead of the flat pass's placeholder.
+        Byte-for-byte the file on disk when there is no LaMa pass yet."""
+        paths = chapter_paths(series, chapter)
+        if not paths.artifact("inpaint.json").is_file():
+            raise HTTPException(status_code=404, detail="inpaint.json not found")
+        if not paths.artifact("inpaint_lama.json").is_file():
+            return artifact_bytes(paths, "inpaint.json")
+        return Response(content=_merged_inpaint(paths).model_dump_json(), media_type="application/json")
 
     @app.get("/api/series/{series}/chapters/{chapter}/layout")
     def get_layout(series: str, chapter: str) -> Response:
@@ -232,23 +255,30 @@ def create_app(
 
     @app.get("/api/series/{series}/chapters/{chapter}/inpaint/patches/{region_id}.png")
     def get_inpaint_patch(series: str, chapter: str, region_id: str) -> Response:
-        """One region's inpaint patch as an RGBA PNG (alpha = the patch's mask, scaled 0/255)."""
+        """One region's inpaint patch as an RGBA PNG (alpha = the patch's mask, scaled 0/255);
+        prefers patches_lama.npz over patches.npz for a region LaMa has re-cleaned (mirrors the
+        override export/stage.py applies at export time)."""
         paths = chapter_paths(series, chapter)
         inpaint_path = paths.artifact("inpaint.json")
         if not inpaint_path.is_file():
             raise HTTPException(status_code=404, detail="inpaint.json not found")
-        artifact = InpaintArtifact.load(inpaint_path)
+        artifact = _merged_inpaint(paths)
         # region_id is never used to build a filesystem path, only as a lookup key; validating it
         # against the known list is this route's traversal guard in place of the usual _under/`..` check.
         if all(item.region_id != region_id for item in artifact.items):
             raise HTTPException(status_code=404, detail="region not found")
-        patches_path = paths.artifact("patches.npz")
-        if not patches_path.is_file():
-            raise HTTPException(status_code=404, detail="patches.npz not found")
-        patches = load_patches(patches_path)
-        if region_id not in patches:
-            raise HTTPException(status_code=404, detail="no patch stored for this region")
-        pixels, mask = patches[region_id]
+        lama_npz = paths.artifact("patches_lama.npz")
+        lama_patches = load_patches(lama_npz) if lama_npz.is_file() else {}
+        if region_id in lama_patches:
+            pixels, mask = lama_patches[region_id]
+        else:
+            patches_path = paths.artifact("patches.npz")
+            if not patches_path.is_file():
+                raise HTTPException(status_code=404, detail="patches.npz not found")
+            patches = load_patches(patches_path)
+            if region_id not in patches:
+                raise HTTPException(status_code=404, detail="no patch stored for this region")
+            pixels, mask = patches[region_id]
         img = Image.fromarray(pixels, mode="RGB").convert("RGBA")
         alpha = Image.fromarray(mask.astype(np.uint8) * 255, mode="L")
         img.putalpha(alpha)
