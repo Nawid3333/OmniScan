@@ -336,9 +336,7 @@ def spy_build_stage(spy: ConfigSpyStage) -> Any:
     return lambda name, stage_cfg, *, client=None: spy
 
 
-def test_run_pipeline_merges_the_series_toml_by_default(
-    cfg: Config, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_run_pipeline_merges_the_series_toml_by_default(cfg: Config, monkeypatch: pytest.MonkeyPatch) -> None:
     """Default (no argument): the series' own series.toml reaches the stages, as `omniscan run` does."""
     write_series_toml(cfg, "[detect]\nthreshold = 0.9\n")
     spy = ConfigSpyStage("detect", lambda stage_cfg: stage_cfg.detect.threshold)

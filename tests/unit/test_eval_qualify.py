@@ -11,7 +11,8 @@ from typing import Any
 import pytest
 
 import omniscan.eval.qualify as qual
-from omniscan.core.config import Config, GpuConfig, OcrConfig, PathsConfig
+import omniscan.pipeline.runner as runner_module
+from omniscan.core.config import Config, GpuConfig, OcrConfig, PathsConfig, SeriesConfigError
 from omniscan.core.schemas import BBox, IngestArtifact, Region, RegionsArtifact, SourceFile
 from omniscan.eval.qualify import (
     Candidate,
@@ -30,7 +31,7 @@ from omniscan.eval.qualify import (
 )
 from omniscan.eval.truth import TruthBox, TruthStats
 from omniscan.models.catalog import ModelEntry, default_catalog_path, load_catalog
-from omniscan.pipeline.runner import PipelineResult
+from omniscan.pipeline.runner import PipelineResult, run_pipeline
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PLAN_PATH = REPO_ROOT / "config" / "qualification.toml"
@@ -54,6 +55,13 @@ def make_cfg(tmp_path: Path, *, work_root: str = "work") -> Config:
             models_dir=tmp_path / "models",
         ),
     )
+
+
+def write_series_toml(tmp_path: Path, series: str, body: str) -> None:
+    """A series.toml for `series` under the tmp library root."""
+    series_dir = tmp_path / "library" / series
+    series_dir.mkdir(parents=True)
+    (series_dir / "series.toml").write_text(body, encoding="utf-8")
 
 
 def write_plan(tmp_path: Path, body: str) -> Path:
@@ -251,6 +259,29 @@ def test_candidate_config_keeps_its_lang_when_the_dataset_language_is_unknown(tm
     out = candidate_config(cfg, Candidate("m", "manga_ocr", None, "rec", ("fr",)), dataset, tmp_path)
     assert out.ocr.engine == "manga_ocr" and out.ocr.rec_model == "rec"
     assert out.ocr.lang == "ko"  # untouched default: fr is not an OcrConfig language
+
+
+def test_candidate_config_merges_the_series_toml_then_applies_the_candidate(tmp_path: Path) -> None:
+    """Bug O1e: the series' own [ocr] engine must not win over the candidate; its other sections still apply."""
+    write_series_toml(
+        tmp_path, "PepperCarrotJA", '[ocr]\nengine = "paddleocr_vl"\n\n[detect]\nthreshold = 0.9\n'
+    )
+    cfg = make_cfg(tmp_path)
+    cfg.ocr.engine = "manga_ocr"
+    dataset = Dataset("ja", "PepperCarrotJA", ("Episode 06",), "ja")
+    cand = Candidate("ppocr-v5-server-multi", "ppocr", "det-id", "rec-id", ("ja",))
+    out = candidate_config(cfg, cand, dataset, tmp_path / "qual")
+    assert out.ocr.engine == "ppocr"  # the candidate wins over the series' own engine
+    assert out.detect.threshold == 0.9  # the series' other sections still apply
+    assert (out.ocr.det_model, out.ocr.rec_model, out.ocr.lang) == ("det-id", "rec-id", "ja")
+    assert out.paths.work_root == tmp_path / "qual"
+    assert cfg.ocr.engine == "manga_ocr" and cfg.detect.threshold == 0.3  # the input config is untouched
+
+
+def test_candidate_config_propagates_a_broken_series_toml(tmp_path: Path) -> None:
+    write_series_toml(tmp_path, "PepperCarrotKR", "not toml ][\n")
+    with pytest.raises(SeriesConfigError):
+        candidate_config(make_cfg(tmp_path), C1, D_KO, tmp_path / "qual")
 
 
 # ---------------------------------------------------------------- missing_models
@@ -622,9 +653,17 @@ def test_default_run_candidate_measures_one_chapter(tmp_path: Path, monkeypatch:
     seen: dict[str, Any] = {}
 
     def fake_pipeline(
-        run_cfg: Config, series: str, chapters: Any, *, stages: Any, gpu: Any, force: bool
+        run_cfg: Config,
+        series: str,
+        chapters: Any,
+        *,
+        stages: Any,
+        gpu: Any,
+        force: bool,
+        merge_series_config: bool,
     ) -> Any:
         seen["call"] = (series, list(chapters), list(stages), force, gpu, run_cfg.paths.work_root)
+        seen["merge_series_config"] = merge_series_config
         return PipelineResult()
 
     def fake_load_truth(check_dir: Path, truth: str, ingest: Any) -> Any:
@@ -660,6 +699,7 @@ def test_default_run_candidate_measures_one_chapter(tmp_path: Path, monkeypatch:
         manager,
         tmp_path / "work",
     )
+    assert seen["merge_series_config"] is False  # run_pipeline must not re-merge (bug O1e)
     assert seen["check_dir"] == tmp_path / "translated-check" / "PepperCarrotKR" / "Episode 06" / "truth"
     assert seen["truth"] == "kr"
     assert manager.released
@@ -699,6 +739,58 @@ def test_default_run_candidate_reports_a_failed_stage(
     m = default_run_candidate(cfg, C1, D_KO, "Episode 06")
     assert m.error == "RuntimeError: pipeline failed: ocr: model missing"
     assert manager.released
+
+
+def test_o1e_regression_the_stage_still_sees_the_series_engine_until_the_core_fix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The O1e bug chain, pinned at both layers with a real Config/SeriesPaths/run_pipeline.
+
+    candidate_config already prepares the right config: pair_cfg.ocr.engine is the candidate's
+    "ppocr" although the series' own series.toml forces "paddleocr_vl". But run through the real
+    pipeline (merge_series_config=False) the ocr stage STILL sees "paddleocr_vl", because
+    core.stage.make_context re-merges the series' series.toml per chapter and OcrStage.run
+    dispatches on ctx.cfg — the runner-side flag alone does not fix the live KeyError: 'reader'.
+    The core-side fix sketched in docs/reports/O1e.md threads the flag into run_series/make_context;
+    when it lands, flip the stage-level assertion below to ["ppocr"].
+    """
+    write_series_toml(tmp_path, "PepperCarrotJA", '[ocr]\nengine = "paddleocr_vl"\n')
+    dataset = Dataset("ja", "PepperCarrotJA", ("Episode 06",), "ja")
+    pair_cfg = candidate_config(
+        make_cfg(tmp_path),
+        Candidate("ppocr-v5-server-multi", "ppocr", "det-id", "rec-id", ("ja",)),
+        dataset,
+        tmp_path / "work_qual",
+    )
+    assert pair_cfg.ocr.engine == "ppocr"  # the candidate_config level: correct already
+
+    seen: list[str] = []
+
+    class SpyOcrStage:
+        """A minimal ocr stage double recording the engine each run actually dispatched on."""
+
+        name = "ocr"
+        version = 1
+        gpu_group = None
+
+        def inputs(self, ctx: Any) -> list[Path]:
+            return []
+
+        def outputs(self, ctx: Any) -> list[str]:
+            return ["ocr.out.json"]
+
+        def config_subset(self, stage_cfg: Any) -> dict[str, str]:
+            return {"name": "ocr"}
+
+        def run(self, ctx: Any, models: Any) -> dict[str, float]:
+            seen.append(ctx.cfg.ocr.engine)
+            ctx.paths.artifact("ocr.out.json").write_text("{}", encoding="utf-8")
+            return {"n": 1.0}
+
+    monkeypatch.setattr(runner_module, "build_stage", lambda name, stage_cfg, *, client=None: SpyOcrStage())
+    result = run_pipeline(pair_cfg, dataset.series, ["Episode 06"], stages=["ocr"], merge_series_config=False)
+    assert result.ok
+    assert seen == ["paddleocr_vl"]  # THE GAP: make_context re-merged; flip to ["ppocr"] with the core fix
 
 
 # ---------------------------------------------------------------- scripts/qualify_ocr.py

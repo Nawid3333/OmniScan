@@ -23,7 +23,7 @@ from typing import Any, Literal, Protocol, cast
 
 import torch
 
-from omniscan.core.config import Config
+from omniscan.core.config import Config, series_config
 from omniscan.core.paths import SeriesPaths
 from omniscan.core.schemas import IngestArtifact, RegionsArtifact
 from omniscan.eval.score import score_chapter
@@ -231,8 +231,17 @@ def select(
 
 
 def candidate_config(cfg: Config, cand: Candidate, dataset: Dataset, work_root: Path) -> Config:
-    """A deep copy of `cfg` pointed at the qualification work root and the candidate's OCR settings."""
-    out = cfg.model_copy(deep=True)
+    """A deep copy of `cfg` at the qualification work root, the series' settings then the candidate's OCR applied.
+
+    The series' own `series.toml` is merged first (its non-OCR sections — slicer, detect, … — must
+    apply exactly as a normal `omniscan run` on that series would see them), then the candidate's
+    OCR overrides are the last word: a series' `[ocr]` section must never beat the candidate under
+    test (bug O1e). A broken `series.toml` raises `SeriesConfigError`. Run the pipeline on the
+    result with `merge_series_config=False` (see `default_run_candidate`) — note `core.stage.
+    make_context` still re-merges per chapter until the core-side half of the fix recorded in
+    docs/reports/O1e.md lands.
+    """
+    out = series_config(cfg, SeriesPaths.from_config(cfg, dataset.series).library_dir).model_copy(deep=True)
     out.paths.work_root = work_root
     out.ocr.engine = cand.engine
     out.ocr.det_model = cand.det_model
@@ -338,9 +347,11 @@ def default_run_candidate(
 ) -> Measurement:
     """Measure one (candidate, chapter) for real: pipeline to ocr.json, then score against the truth.
 
-    `cfg` comes from `candidate_config` (its `paths.work_root` is the qualification work root). The
-    vision stages are skipped when up to date; the `ocr` stage re-runs because the candidate changes
-    the OCR config subset. Every failure — pipeline, scoring, a missing model — becomes one error
+    `cfg` comes from `candidate_config`: the series' own settings plus the candidate's OCR overrides
+    are already applied, so the pipeline runs with `merge_series_config=False` — a re-merge would
+    clobber the candidate with the series' own `[ocr]` section (bug O1e). The vision stages are
+    skipped when up to date; the `ocr` stage re-runs because the candidate changes the OCR config
+    subset. Every failure — pipeline, scoring, a missing model — becomes one error
     Measurement naming what went wrong (`omniscan models download <id>` for a missing model).
     `gpu`: pass an already-built manager to reuse it across chapters/languages of the same candidate
     (`run_qualification` does this — a candidate's model group only depends on `cand.engine`/
@@ -365,6 +376,7 @@ def default_run_candidate(
             stages=["ingest", "slice", "detect", "ocr"],
             gpu=gpu,
             force=False,
+            merge_series_config=False,
         )
         seconds = time.perf_counter() - started
         peak = torch.cuda.max_memory_allocated(device) / 2**30 if track_vram else None
