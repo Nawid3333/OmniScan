@@ -112,3 +112,26 @@ Terms of Use and require agreeing to them in the Ollama client.
 Excluded on purpose (no catalog entries): the ONNX conversions of PP-OCR models (`*_onnx` /
 `PP-OCRv*_onnx*` repos — OmniScan runs PyTorch weights; the ONNX runtime is not a supported
 backend), and third-party (non-`PaddlePaddle`) GGUF builds of PaddleOCR-VL.
+
+## Model updates
+
+The catalog must not silently fall behind upstream (card W1). The `model-watch` GitHub Action
+(`.github/workflows/model-watch.yml`) runs every Monday at 06:00 UTC and compares metadata only —
+it never downloads weights and never edits `config/models.toml`:
+
+- every `hf` (and mirrored `zip`) entry's pinned `upstream_revision` is compared with the upstream
+  repo's head commit → `updated`; a repo that answers 404 → `missing`;
+- the listing API of the watched orgs (`PaddlePaddle`, `kha-white`, `jzhang533`, `ogkalu`, with the
+  search terms and name patterns in `config/model_watch.toml`) is scanned for model repos the
+  catalog does not know yet → `new`.
+
+When something changed, the workflow posts the report (markdown + JSON) to an open issue labelled
+`model-watch`, or opens that issue. What to do with a report: run
+`uv run python scripts/qualify_ocr.py --only <candidate>` on a GPU machine, update
+`config/models.toml` only if the qualification improves, and add repos that should never be
+reported again to the `ignore` list in `config/model_watch.toml`.
+
+Run it locally with `uv run python scripts/model_watch.py --markdown model-watch.md
+--json model-watch.json --fail-on-change` (exit codes: 0 no changes, 3 changes found, 2 bad
+arguments or unreadable config; `--offline` only validates both config files). An optional
+`HF_TOKEN` environment variable raises the Hugging Face rate limit and is never printed.

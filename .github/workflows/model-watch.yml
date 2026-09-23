@@ -1,0 +1,60 @@
+# model-watch (card W1): weekly check that the catalog's pinned upstream Hugging Face repos are
+# still current and that no new model of the watched orgs appeared. The job only compares metadata —
+# it never downloads weights and never edits config/models.toml. Changes are reported on (or added
+# to) an issue labelled `model-watch`; the qualification of a candidate runs on a GPU machine
+# (scripts/qualify_ocr.py), not here.
+
+name: model-watch
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  model-watch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v6
+
+      # --fail-on-change exits 3 on changes (expected, not a failure) and 2 on bad arguments or an
+      # unreadable config (real failure). The code is captured so only 2 fails the job.
+      - name: Compare catalog pins with upstream
+        id: watch
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }} # optional; empty raises no header
+        run: |
+          set +e
+          uv run --no-project --with httpx python scripts/model_watch.py --markdown model-watch.md --json model-watch.json --fail-on-change
+          code=$?
+          set -e
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          test "$code" -ne 2
+
+      - name: Open or update the model-watch issue
+        if: steps.watch.outputs.code == '3'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create model-watch --color 5319e7 --force
+          number=$(gh issue list --label model-watch --state open --json number --jq '.[0].number')
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body-file model-watch.md
+          else
+            gh issue create --title "Model watch: upstream changes" --label model-watch --body-file model-watch.md
+          fi
+
+      - name: Upload report artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-watch
+          path: |
+            model-watch.md
+            model-watch.json
