@@ -288,7 +288,7 @@ def test_missing_models_lists_uninstalled_ids(tmp_path: Path, monkeypatch: pytes
 def test_run_qualification_runs_every_chapter_in_pair_order(tmp_path: Path) -> None:
     calls: list[tuple[str, str]] = []
 
-    def run(cfg: Config, cand: Candidate, dataset: Dataset, chapter: str) -> Measurement:
+    def run(cfg: Config, cand: Candidate, dataset: Dataset, chapter: str, *, gpu: Any = None) -> Measurement:
         calls.append((cand.id, chapter))
         return Measurement(
             candidate=cand.id,
@@ -317,7 +317,7 @@ def test_run_qualification_runs_every_chapter_in_pair_order(tmp_path: Path) -> N
 
 
 def test_run_qualification_isolates_failures(tmp_path: Path) -> None:
-    def run(cfg: Config, cand: Candidate, dataset: Dataset, chapter: str) -> Measurement:
+    def run(cfg: Config, cand: Candidate, dataset: Dataset, chapter: str, *, gpu: Any = None) -> Measurement:
         if cand.id == "manga-ocr-2025":
             raise FileNotFoundError("weights missing")
         return Measurement(
@@ -337,7 +337,7 @@ def test_run_qualification_isolates_failures(tmp_path: Path) -> None:
 def test_run_qualification_skips_pairs_with_missing_models(tmp_path: Path) -> None:
     calls: list[str] = []
 
-    def run(cfg: Config, cand: Candidate, dataset: Dataset, chapter: str) -> Measurement:
+    def run(cfg: Config, cand: Candidate, dataset: Dataset, chapter: str, *, gpu: Any = None) -> Measurement:
         calls.append(cand.id)
         return Measurement(
             candidate=cand.id, lang=dataset.lang, series=dataset.series, chapter=chapter, chrf=0.5
@@ -360,6 +360,35 @@ def test_run_qualification_skips_pairs_with_missing_models(tmp_path: Path) -> No
     assert skipped.error == "missing model: ocr-rec-manga-ocr-2025"
     assert skipped.chapter == "Episode 06"  # the dataset's first chapter stands in
     assert any("skip manga-ocr-2025/ja: missing model: ocr-rec-manga-ocr-2025" in line for line in logs)
+
+
+def test_run_qualification_shares_one_gpu_manager_per_candidate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A candidate's GPU manager is built once and reused across its chapters AND its datasets/
+    languages; only a candidate change releases it and builds a new one."""
+    built: list[FakeManager] = []
+
+    def fake_build(_cfg: Config) -> FakeManager:
+        manager = FakeManager()
+        built.append(manager)
+        return manager
+
+    monkeypatch.setattr(qual, "build_vram_manager", fake_build)
+
+    seen_gpu: list[Any] = []
+
+    def run(cfg: Config, cand: Candidate, dataset: Dataset, chapter: str, *, gpu: Any = None) -> Measurement:
+        seen_gpu.append(gpu)
+        return Measurement(candidate=cand.id, lang=dataset.lang, series=dataset.series, chapter=chapter)
+
+    # C3 (ppocr-v6-tiny) applies to both ko and ja: D_KO (2 chapters) then D_JA (1 chapter) must
+    # share one manager (3 calls, same object); C1 before and C2 after must each get their own.
+    run_qualification([(C1, D_KO), (C3, D_KO), (C3, D_JA), (C2, D_JA)], make_cfg(tmp_path), run_candidate=run)
+    assert len(built) == 3  # one per candidate (C1, C3, C2) — not one per (candidate, dataset) pair
+    # C1/D_KO: 2 chapters; C3/D_KO: 2 chapters; C3/D_JA: 1 chapter (same manager as C3/D_KO); C2/D_JA: 1 chapter
+    assert seen_gpu == [built[0], built[0], built[1], built[1], built[1], built[2]]
+    assert all(manager.released for manager in built)  # including the last one, via `finally`
 
 
 # ---------------------------------------------------------------- summarize + recommend
@@ -716,7 +745,9 @@ def script_plan(tmp_path: Path) -> Path:
 def fake_run_factory(
     seen: list[tuple[str, str, Path]],
 ) -> Any:
-    def fake_run(cfg: Config, cand: Candidate, dataset: Dataset, chapter: str) -> Measurement:
+    def fake_run(
+        cfg: Config, cand: Candidate, dataset: Dataset, chapter: str, *, gpu: Any = None
+    ) -> Measurement:
         seen.append((cand.id, chapter, cfg.paths.work_root))
         chrf = 0.5 if cand.id == "cand-a" else 0.6
         return Measurement(

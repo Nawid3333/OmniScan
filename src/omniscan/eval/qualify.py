@@ -19,7 +19,7 @@ import tomllib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, cast
+from typing import Any, Literal, Protocol, cast
 
 import torch
 
@@ -107,7 +107,15 @@ class Recommendation:
     reason: str
 
 
-type RunFn = Callable[[Config, Candidate, Dataset, str], Measurement]
+class RunFn(Protocol):
+    """One (candidate, chapter) measurement; `gpu` is a manager `run_qualification` may share
+    across a candidate's chapters/languages (see `default_run_candidate`)."""
+
+    def __call__(
+        self, cfg: Config, cand: Candidate, dataset: Dataset, chapter: str, *, gpu: Any | None = None
+    ) -> Measurement: ...
+
+
 ModelsInstalledFn = Callable[[Candidate], list[str]]
 
 
@@ -264,62 +272,91 @@ def run_qualification(
     `error="missing model: <id>"` measurement; an exception from `run_candidate` becomes an error
     Measurement and the later pairs still run. `cfg.paths.work_root` must already be the
     qualification work root; each pair runs with `candidate_config` applied on top of it.
+
+    A candidate's model group (detector + OCR engine) is loaded **once** and shared across every
+    chapter of every dataset that candidate applies to (`select()` already orders `pairs` by
+    candidate, so this is a simple boundary check) — `ocr.lang` is a per-call setting, not part of
+    which weights are loaded, so nothing is re-loaded when only the language changes. The manager is
+    released when the candidate changes and, via `finally`, after the last one.
     """
     measurements: list[Measurement] = []
-    for cand, dataset in pairs:
-        missing = models_installed(cand) if models_installed is not None else []
-        if missing:
-            ids = ", ".join(missing)
-            log(
-                f"qualify: skip {cand.id}/{dataset.lang}: missing model: {ids}"
-                f" (omniscan models download {' '.join(missing)})"
-            )
-            measurements.append(
-                Measurement(
-                    candidate=cand.id,
-                    lang=dataset.lang,
-                    series=dataset.series,
-                    chapter=dataset.chapters[0],
-                    error=f"missing model: {ids}",
+    gpu: Any | None = None
+    current_candidate: str | None = None
+    try:
+        for cand, dataset in pairs:
+            missing = models_installed(cand) if models_installed is not None else []
+            if missing:
+                ids = ", ".join(missing)
+                log(
+                    f"qualify: skip {cand.id}/{dataset.lang}: missing model: {ids}"
+                    f" (omniscan models download {' '.join(missing)})"
                 )
-            )
-            continue
-        pair_cfg = candidate_config(cfg, cand, dataset, cfg.paths.work_root)
-        for chapter in dataset.chapters:
-            try:
-                measurement = run_candidate(pair_cfg, cand, dataset, chapter)
-            except Exception as exc:  # one failed chapter must not stop the remaining pairs
-                measurement = Measurement(
-                    candidate=cand.id,
-                    lang=dataset.lang,
-                    series=dataset.series,
-                    chapter=chapter,
-                    error=f"{type(exc).__name__}: {exc}",
+                measurements.append(
+                    Measurement(
+                        candidate=cand.id,
+                        lang=dataset.lang,
+                        series=dataset.series,
+                        chapter=dataset.chapters[0],
+                        error=f"missing model: {ids}",
+                    )
                 )
-            measurements.append(measurement)
-            state = (
-                f"error: {measurement.error}" if measurement.error else f"done in {measurement.seconds:.1f}s"
-            )
-            log(f"qualify: {cand.id} {dataset.lang} {chapter}: {state}")
+                continue
+            pair_cfg = candidate_config(cfg, cand, dataset, cfg.paths.work_root)
+            if cand.id != current_candidate:
+                if gpu is not None:
+                    gpu.release()
+                    log(f"qualify: released GPU manager for {current_candidate!r}")
+                gpu = build_vram_manager(pair_cfg)
+                current_candidate = cand.id
+                log(f"qualify: loaded {cand.id} ({cand.engine})")
+            for chapter in dataset.chapters:
+                try:
+                    measurement = run_candidate(pair_cfg, cand, dataset, chapter, gpu=gpu)
+                except Exception as exc:  # one failed chapter must not stop the remaining pairs
+                    measurement = Measurement(
+                        candidate=cand.id,
+                        lang=dataset.lang,
+                        series=dataset.series,
+                        chapter=chapter,
+                        error=f"{type(exc).__name__}: {exc}",
+                    )
+                measurements.append(measurement)
+                state = (
+                    f"error: {measurement.error}"
+                    if measurement.error
+                    else f"done in {measurement.seconds:.1f}s"
+                )
+                log(f"qualify: {cand.id} {dataset.lang} {chapter}: {state}")
+    finally:
+        if gpu is not None:
+            gpu.release()
     return measurements
 
 
-def default_run_candidate(cfg: Config, cand: Candidate, dataset: Dataset, chapter: str) -> Measurement:
+def default_run_candidate(
+    cfg: Config, cand: Candidate, dataset: Dataset, chapter: str, *, gpu: Any | None = None
+) -> Measurement:
     """Measure one (candidate, chapter) for real: pipeline to ocr.json, then score against the truth.
 
     `cfg` comes from `candidate_config` (its `paths.work_root` is the qualification work root). The
     vision stages are skipped when up to date; the `ocr` stage re-runs because the candidate changes
     the OCR config subset. Every failure — pipeline, scoring, a missing model — becomes one error
-    Measurement naming what went wrong (`omniscan models download <id>` for a missing model); the
-    GPU manager is always released. The caller holds the GPU lock on real hardware.
+    Measurement naming what went wrong (`omniscan models download <id>` for a missing model).
+    `gpu`: pass an already-built manager to reuse it across chapters/languages of the same candidate
+    (`run_qualification` does this — a candidate's model group only depends on `cand.engine`/
+    `det_model`/`rec_model`, never on `dataset.lang`, so nothing needs reloading between them); the
+    caller then owns its lifecycle and this function never releases it. `gpu=None` (e.g. calling this
+    function directly) builds and releases its own manager exactly as before. The caller holds the
+    GPU lock on real hardware either way.
     """
-    gpu = None
+    owns_gpu = gpu is None
     try:
         device = resolve_device(cfg.gpu.device)
         track_vram = device.type == "cuda"
         if track_vram:
             torch.cuda.reset_peak_memory_stats(device)
-        gpu = build_vram_manager(cfg)
+        if owns_gpu:
+            gpu = build_vram_manager(cfg)
         started = time.perf_counter()
         result = run_pipeline(
             cfg,
@@ -361,8 +398,8 @@ def default_run_candidate(cfg: Config, cand: Candidate, dataset: Dataset, chapte
             error=f"{type(exc).__name__}: {exc}",
         )
     finally:
-        if gpu is not None:
-            gpu.release()  # the next candidate starts with a clean VRAM slate
+        if owns_gpu and gpu is not None:
+            gpu.release()  # only when this call built it itself; a shared manager outlives the call
 
 
 # ---------------------------------------------------------------- the verdict
