@@ -111,11 +111,17 @@ torchvision = [
 ]
 # mps has no entry above on purpose: macOS wheels come from the default `pypi` index below, already MPS-capable
 
-# rocm10 also happens to host its own numpy build (bundled alongside torch's other ROCm SDK packages) with
-# no macOS wheel at all — plain "first index that has it wins" search picked that one over PyPI's numpy for
-# every extra, not just rocm-gfx1201, breaking `uv sync --extra cpu` on macOS entirely (found by card P2's
-# CI matrix). Pin numpy to PyPI unconditionally; nothing about it is actually ROCm-specific.
+# rocm10 also happens to bundle its own builds of ordinary packages that have nothing to do with ROCm
+# (alongside torch's other SDK packages) with incomplete platform coverage — no macOS wheel for either.
+# Plain "first index that has it wins" search kept silently picking rocm10's copy over PyPI's for every
+# extra, not just rocm-gfx1201, breaking `uv sync --extra cpu` on macOS entirely (found by card P2's CI
+# matrix, twice: numpy, then pillow). Pin each to PyPI unconditionally as it's discovered. An attempt to
+# close this whole bug class at once, by fully enumerating rocm10's transitive packages and marking the
+# index `explicit = true`, was tried and reverted: it silently swapped the Linux fork's `triton` from AMD's
+# ROCm-specific build to a generic PyPI one (unverifiable on this Windows-only machine, too risky to ship
+# blind) — see git history on this file for what that looked like if revisiting the idea.
 numpy = [{ index = "pypi" }]
+pillow = [{ index = "pypi" }]
 
 # AMD ROCm 10 wheel index first (torch, torchvision, triton, rocm-sdk-*, amd-*-device-gfx1201) — this
 # project's own dev machine (RX 9070 XT / gfx1201). Not `explicit`, same as before this table existed: its

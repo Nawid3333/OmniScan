@@ -45,5 +45,13 @@ jobs:
       - name: Lint
         run: uv run ruff format --check . && uv run ruff check .
 
+      # pyright's `include` covers all of src/+tests/ regardless of what's synced, so the gui-extra-only
+      # files (src/omniscan/gui/**, tests/gui/**) need PySide6 resolvable or every one of them reports a
+      # false reportMissingImports — added only now, after Test already ran (and tests/gui already skipped
+      # itself correctly on the cpu-only sync above): this doesn't run any Qt code, just lets pyright's
+      # static import resolution see it. No virtual display needed for that.
+      - name: Sync (add gui extra for type checking)
+        run: uv sync --extra cpu --extra gui
+
       - name: Type check
         run: uv run pyright
