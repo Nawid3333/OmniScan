@@ -16,6 +16,9 @@ DetClass = Literal["bubble", "text_bubble", "text_free"]
 Box = tuple[float, float, float, float]
 
 _TEXT_IN_BUBBLE_MIN_IOA = 0.6  # a text box is inside a bubble when this share of it lies within the bubble
+_MAX_BUBBLE_TO_TEXT_AREA_RATIO = (
+    8.0  # a bubble more than this much bigger than its own text is not a real fit
+)
 _CROSS_CLASS_DUP_IOU = 0.6  # text_free and text_bubble boxes this similar are the same text
 _CROSS_CLASS_CONTAIN_IOA = (
     0.85  # a box this much inside the other (either direction) is the same text, even if IoU reads low
@@ -141,7 +144,12 @@ def _items(dets: Sequence[Det], merge_bubble_text: bool) -> list[_Item]:
     items: list[_Item] = []
     grouped: dict[int, list[Det]] = {}
     for tb in texts_bubble:
-        candidates = [(i, b) for i, b in enumerate(bubbles) if ioa(tb.box, b.box) >= _TEXT_IN_BUBBLE_MIN_IOA]
+        candidates = [
+            (i, b)
+            for i, b in enumerate(bubbles)
+            if ioa(tb.box, b.box) >= _TEXT_IN_BUBBLE_MIN_IOA
+            and area(b.box) <= _MAX_BUBBLE_TO_TEXT_AREA_RATIO * area(tb.box)
+        ]
         if not candidates:
             items.append(_Item("bubble_text", tb.box, None, tb.score))
             continue

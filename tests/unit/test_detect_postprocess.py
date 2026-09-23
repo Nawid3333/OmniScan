@@ -5,6 +5,7 @@ from __future__ import annotations
 from omniscan.core.schemas import Slice
 from omniscan.detect.postprocess import (
     Det,
+    area,
     build_regions,
     ioa,
     iou,
@@ -275,3 +276,80 @@ def test_build_regions_drops_filtered_slices_and_clamps_boxes() -> None:
     assert [(r.id, r.slice_index, r.bbox.x0, r.bbox.y0, r.bbox.x1, r.bbox.y1) for r in regions] == [
         ("r0001", 1, 10, 1100, 1000, 2000)
     ]
+
+
+# ---------------------------------------------------------------- oversized bubble pairing (card D2)
+
+
+def test_build_regions_rejects_oversized_only_bubble_solo_leveling_pair() -> None:
+    """Regression (Solo Leveling ch1): the only IoA-qualifying bubble was a panel-sized 11x giant."""
+    tb = Det("text_bubble", 0.7, (226, 11896, 539, 12010))
+    bubble = Det("bubble", 0.9, (52, 11488, 710, 12098))
+    assert ioa(tb.box, bubble.box) >= 0.6  # the old rule accepted it on IoA alone
+    assert area(bubble.box) / area(tb.box) > 8.0  # the real ratio is 11.25, above the new bar
+
+    regions = build_regions(
+        [bubble, tb],
+        [Slice(index=0, y0=11000, y1=12500)],
+        strip_width=1000,
+        strip_height=12500,
+        merge_bubble_text=True,
+        direction="ltr",
+    )
+    assert [(r.kind, r.confidence, r.bubble_bbox is None) for r in regions] == [
+        ("bubble_text", 0.7, True)  # unpaired exactly like a text with no nearby bubble
+    ]
+
+
+def test_build_regions_still_pairs_text_when_oversized_bubble_has_a_normal_rival() -> None:
+    """Rejecting the oversized bubble must not poison a pairing a legitimate candidate can still win."""
+    tb = Det("text_bubble", 0.7, (226, 11896, 539, 12010))
+    oversized = Det("bubble", 0.9, (52, 11488, 710, 12098))
+    normal = Det("bubble", 0.8, (206, 11876, 559, 12030))  # ratio 1.5, also fully contains the text
+    assert ioa(tb.box, normal.box) >= 0.6
+    assert area(normal.box) / area(tb.box) < 8.0
+
+    regions = build_regions(
+        [oversized, normal, tb],
+        [Slice(index=0, y0=11000, y1=12500)],
+        strip_width=1000,
+        strip_height=12500,
+        merge_bubble_text=True,
+        direction="ltr",
+    )
+    assert len(regions) == 1
+    (region,) = regions
+    assert (region.bbox.x0, region.bbox.y0, region.bbox.x1, region.bbox.y1) == (226, 11896, 539, 12010)
+    assert region.bubble_bbox is not None  # the normal-sized candidate won, not the rejected giant
+    assert (
+        region.bubble_bbox.x0,
+        region.bubble_bbox.y0,
+        region.bubble_bbox.x1,
+        region.bubble_bbox.y1,
+    ) == (206, 11876, 559, 12030)
+
+
+def test_build_regions_keeps_legitimate_bubble_well_under_the_area_ratio() -> None:
+    """A bubble 5x its text's area is a normal fit and still pairs (this fix is not 'prefer smaller')."""
+    tb = Det("text_bubble", 0.8, (100, 100, 200, 140))  # 100 x 40
+    bubble = Det("bubble", 0.9, (70, 80, 270, 180))  # 200 x 100 = exactly 5x
+    assert ioa(tb.box, bubble.box) >= 0.6
+    assert area(bubble.box) / area(tb.box) == 5.0
+
+    regions = build_regions(
+        [bubble, tb],
+        _slices(),
+        strip_width=1000,
+        strip_height=3000,
+        merge_bubble_text=True,
+        direction="ltr",
+    )
+    assert len(regions) == 1
+    (region,) = regions
+    assert region.bubble_bbox is not None
+    assert (
+        region.bubble_bbox.x0,
+        region.bubble_bbox.y0,
+        region.bubble_bbox.x1,
+        region.bubble_bbox.y1,
+    ) == (70, 80, 270, 180)
