@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -117,6 +118,19 @@ def wire_calls(stages: dict[str, FakeStage]) -> list[str]:
     for stage in stages.values():
         stage._calls = calls
     return calls
+
+
+class ConfigSpyStage(FakeStage):
+    """FakeStage that also records one value of the cfg each run actually received."""
+
+    def __init__(self, name: str, read: Callable[[Any], Any]) -> None:
+        super().__init__(name)
+        self._read = read
+        self.seen: list[Any] = []
+
+    def run(self, ctx: Any, models: Any) -> dict[str, float]:
+        self.seen.append(self._read(ctx.cfg))
+        return super().run(ctx, models)
 
 
 # ---------------------------------------------------------------- plan_passes
@@ -306,6 +320,73 @@ def test_missing_client_raises_before_anything_runs(cfg: Config, fake_stages: di
     with pytest.raises(ValueError, match="stage 'judge' needs a chat client"):
         run_pipeline(cfg, SERIES, ["A"], stages=["judge"])
     assert calls == []
+
+
+# ---------------------------------------------------------------- series.toml merge
+
+
+def write_series_toml(cfg: Config, body: str) -> None:
+    """A series.toml for SERIES under the tmp library root."""
+    (cfg.paths.library_root / SERIES).mkdir(parents=True)
+    (cfg.paths.library_root / SERIES / "series.toml").write_text(body, encoding="utf-8")
+
+
+def spy_build_stage(spy: ConfigSpyStage) -> Any:
+    """A build_stage stand-in returning `spy` for every stage name."""
+    return lambda name, stage_cfg, *, client=None: spy
+
+
+def test_run_pipeline_merges_the_series_toml_by_default(
+    cfg: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Default (no argument): the series' own series.toml reaches the stages, as `omniscan run` does."""
+    write_series_toml(cfg, "[detect]\nthreshold = 0.9\n")
+    spy = ConfigSpyStage("detect", lambda stage_cfg: stage_cfg.detect.threshold)
+    monkeypatch.setattr(runner_module, "build_stage", spy_build_stage(spy))
+    result = run_pipeline(cfg, SERIES, ["A"], stages=["detect"], gpu=FakeScheduler())
+    assert result.ok
+    assert spy.seen == [0.9]
+
+
+def test_run_pipeline_merge_series_config_false_skips_its_own_merge(
+    cfg: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """merge_series_config=False: run_pipeline itself performs no series.toml merge (bug O1e).
+
+    Pinned at the series_config level rather than through a stage spy: core.stage.make_context
+    re-merges series.toml into ctx.cfg per chapter regardless (next test), so a stage spy cannot
+    isolate what run_pipeline itself did."""
+    write_series_toml(cfg, "[detect]\nthreshold = 0.9\n")
+    calls: list[Path] = []
+    real = runner_module.series_config
+
+    def spy(sc_cfg: Config, series_dir: Path) -> Config:
+        calls.append(series_dir)
+        return real(sc_cfg, series_dir)
+
+    monkeypatch.setattr(runner_module, "series_config", spy)
+    run_pipeline(cfg, SERIES, ["A"], stages=["detect"], gpu=FakeScheduler())
+    assert calls == [cfg.paths.library_root / SERIES]  # default: exactly one merge
+    run_pipeline(cfg, SERIES, ["A"], stages=["detect"], gpu=FakeScheduler(), merge_series_config=False)
+    assert calls == [cfg.paths.library_root / SERIES]  # unchanged: run_pipeline skipped its merge
+
+
+def test_a_stage_still_sees_the_series_toml_when_run_pipeline_skips_its_merge(
+    cfg: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """THE O1e GAP, pinned: even with merge_series_config=False a stage sees the series' values,
+    because core.stage.make_context re-merges series.toml into ctx.cfg per chapter (core/stage.py,
+    and ocr/stage.py's OcrStage.run dispatches on ctx.cfg). The runner-side flag alone therefore
+    cannot fix the qualification clobber; the core-side fix sketched in docs/reports/O1e.md must
+    thread the flag into run_series/make_context — flip this assertion to [0.3] when that lands."""
+    write_series_toml(cfg, "[detect]\nthreshold = 0.9\n")
+    spy = ConfigSpyStage("detect", lambda stage_cfg: stage_cfg.detect.threshold)
+    monkeypatch.setattr(runner_module, "build_stage", spy_build_stage(spy))
+    result = run_pipeline(
+        cfg, SERIES, ["A"], stages=["detect"], gpu=FakeScheduler(), merge_series_config=False
+    )
+    assert result.ok
+    assert spy.seen == [0.9]  # make_context's merge, not run_pipeline's
 
 
 # ---------------------------------------------------------------- needs_gpu

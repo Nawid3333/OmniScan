@@ -257,6 +257,7 @@ def run_pipeline(
     preview_chapter: str | None = None,
     gate: Gate | None = None,
     after_stage: AfterStage | None = None,
+    merge_series_config: bool = True,
 ) -> PipelineResult:
     """Run the selected stages over the chapters in passes; failed chapters skip the later passes.
 
@@ -268,8 +269,12 @@ def run_pipeline(
     gate): it returning False cancels the run (`PipelineResult.aborted == "stopped"`) after the stage
     that just finished — the same one-stage-granularity cancellation `core.stage.run_series` already
     gives step mode, now available to a plain run too (a GUI Cancel button's hook, for example).
+    `merge_series_config=False` skips the `series.toml` merge the default does first: the caller is
+    asserting it already prepared `cfg` itself (the OCR qualification suite passes the candidate's
+    OCR settings on top of the series' own settings, which a re-merge would clobber — bug O1e).
     """
-    cfg = series_config(cfg, SeriesPaths.from_config(cfg, series).library_dir)
+    if merge_series_config:
+        cfg = series_config(cfg, SeriesPaths.from_config(cfg, series).library_dir)
     names = list(stages) if stages is not None else list(STAGE_ORDER)
     if not lama:
         names = [name for name in names if name != "inpaint_lama"]
