@@ -902,12 +902,15 @@ def cmd_serve(
     port: Annotated[int, typer.Option("--port")] = 8000,
     reload: Annotated[bool, typer.Option("--reload")] = False,
 ) -> None:
-    """Run the web debug tool's API (pair with `npm run dev` in webui/ for the UI)."""
+    """Run the web debug tool's API (pair with `npm run dev` in webui/ for the UI).
+
+    Also drains the job queue in the background, so the UI's "run this" actions actually execute —
+    do not also run `omniscan queue run` against the same library while this is up."""
     import uvicorn
 
     from omniscan.web.app import create_app
 
-    uvicorn.run(create_app(get_config()), host=host, port=port, reload=reload)
+    uvicorn.run(create_app(get_config(), run_worker=True), host=host, port=port, reload=reload)
 
 
 app.command("serve")(cmd_serve)

@@ -1,10 +1,12 @@
-"""FastAPI app serving existing pipeline artifacts and raw images (read-only except filter restore)."""
+"""FastAPI app serving existing pipeline artifacts and raw images (mostly read-only; see `run_worker`)."""
 
 from __future__ import annotations
 
 import io
 import mimetypes
+import threading
 from collections.abc import Sequence
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
@@ -22,6 +24,7 @@ from omniscan.core.schemas import (
     FilterArtifact,
     FilterDecision,
     FinalArtifact,
+    FinalLine,
     GlossaryEntry,
     IngestArtifact,
     InpaintArtifact,
@@ -33,6 +36,10 @@ from omniscan.filter.decide import effective_decision, restore
 from omniscan.glossary.match import find_terms, term_present
 from omniscan.glossary.store import GlossaryStore
 from omniscan.inpaint.patches import load_patches
+from omniscan.pipeline.stages import STAGE_ORDER
+from omniscan.queue.executor import stage_executor
+from omniscan.queue.store import QueueStore, queue_db_path
+from omniscan.queue.worker import run_queue
 
 
 class RestoreBody(Model):
@@ -42,18 +49,70 @@ class RestoreBody(Model):
     index: int = Field(ge=0)
 
 
+class RunBody(Model):
+    """Body of the on-demand run POST request."""
+
+    through: str  # a STAGE_ORDER name; every stage up to and including it is queued
+
+
+class FinalEditBody(Model):
+    """Body of the manual final-line edit PUT request."""
+
+    text: str
+
+
 def _under(root: Path, candidate: Path) -> bool:
     """True if `candidate` resolves to a location inside `root` (blocks `..` / absolute escapes)."""
     return candidate.resolve().is_relative_to(root.resolve())
 
 
-def create_app(cfg: Config, *, cors_origins: Sequence[str] = ("http://localhost:5173",)) -> FastAPI:
-    """Build the debug API app: series/chapter browsing + ingest/slices artifacts + raw pages."""
-    app = FastAPI(title="OmniScan debug API")
+def _drain_loop(cfg: Config, stop: threading.Event) -> None:
+    """Run queued jobs one at a time for as long as `stop` is not set; idles 1s between empty checks.
+
+    Started as a daemon thread by `create_app(..., run_worker=True)` so the debug server can produce
+    missing artifacts on request instead of only ever reading what already exists. Exactly one such
+    loop should run against a given `queue.db` at a time (the store's own single-worker design) — do
+    not also run `omniscan queue run` against the same library while `omniscan serve` is up.
+
+    Opens its own `QueueStore` rather than reusing one built elsewhere: sqlite3 connections are only
+    usable from the thread that created them, and this loop is its own dedicated thread.
+    """
+    store = QueueStore(queue_db_path(cfg))
+    executor = stage_executor(cfg)
+    while not stop.is_set():
+        summary = run_queue(store, executor, max_jobs=1)
+        if summary.done == 0 and summary.failed == 0 and summary.retried == 0:
+            stop.wait(1.0)
+
+
+def create_app(
+    cfg: Config, *, cors_origins: Sequence[str] = ("http://localhost:5173",), run_worker: bool = False
+) -> FastAPI:
+    """Build the debug API app: series/chapter browsing + ingest/slices artifacts + raw pages.
+
+    `run_worker=True` (the real `omniscan serve` command's default, not this function's) also starts
+    a background thread that drains `queue.db`, so `POST .../run` requests actually execute instead of
+    only ever sitting queued; tests and other embedders that just want to read existing artifacts
+    should leave it `False` (the default here) to avoid touching the GPU/queue at all.
+    """
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        stop = threading.Event()
+        thread: threading.Thread | None = None
+        if run_worker:
+            thread = threading.Thread(target=_drain_loop, args=(cfg, stop), daemon=True)
+            thread.start()
+        yield
+        stop.set()
+        if thread is not None:
+            thread.join(timeout=5.0)
+
+    app = FastAPI(title="OmniScan debug API", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(cors_origins),
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "PUT"],
         allow_headers=["*"],
     )
 
@@ -221,6 +280,93 @@ def create_app(cfg: Config, *, cors_origins: Sequence[str] = ("http://localhost:
     def get_final(series: str, chapter: str) -> Response:
         """The chapter's final.json, byte-for-byte as written by the judge stage."""
         return artifact_bytes(chapter_paths(series, chapter), "final.json")
+
+    @app.put("/api/series/{series}/chapters/{chapter}/final/{region_id}")
+    async def edit_final_line(
+        series: str, chapter: str, region_id: str, request: Request
+    ) -> dict[str, object]:
+        """Overwrite one region's final line with hand-edited text; its decision becomes "manual".
+
+        A later `omniscan judge` run for this chapter skips an existing final.json entirely unless
+        run with `--force` (judge_chapter's own resumability), so this edit is safe from being
+        silently clobbered by the ordinary pipeline."""
+        content_type = request.headers.get("content-type", "")
+        if not content_type.lower().startswith("application/json"):
+            raise HTTPException(status_code=415, detail="Content-Type must be application/json")
+        paths = chapter_paths(series, chapter)
+        final_path = paths.artifact("final.json")
+        if not final_path.is_file():
+            raise HTTPException(status_code=404, detail="final.json not found")
+        try:
+            body = FinalEditBody.model_validate_json(await request.body())
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=jsonable_encoder(exc.errors())) from exc
+        try:
+            artifact = FinalArtifact.load(final_path)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=404, detail=f"final.json is not a valid final artifact: {exc}"
+            ) from exc
+        lines = list(artifact.lines)
+        index = next((i for i, line in enumerate(lines) if line.region_id == region_id), None)
+        if index is None:
+            raise HTTPException(status_code=404, detail=f"region {region_id!r} not found in final.json")
+        lines[index] = FinalLine(
+            region_id=region_id,
+            text=body.text,
+            decision="manual",
+            sources=[],
+            rationale="edited in the debug UI",
+            flags=[],
+        )
+        updated = artifact.model_copy(update={"lines": lines})
+        updated.save(final_path)
+        return lines[index].model_dump(mode="json")
+
+    @app.post("/api/series/{series}/chapters/{chapter}/run", status_code=202)
+    async def run_chapter(series: str, chapter: str, request: Request) -> dict[str, object]:
+        """Queue every stage through `through` (inclusive) for one chapter.
+
+        Actually executes only when the app was built with `run_worker=True` (`omniscan serve`'s
+        default) — its background thread drains `queue.db`; poll `GET /api/jobs/{job_id}` with the
+        returned id for progress. `through` must be one of `omniscan.pipeline.stages.STAGE_ORDER`."""
+        content_type = request.headers.get("content-type", "")
+        if not content_type.lower().startswith("application/json"):
+            raise HTTPException(status_code=415, detail="Content-Type must be application/json")
+        chapter_paths(series, chapter)  # 404s on any path-traversal attempt (existence checked next)
+        if chapter not in series_paths(series).chapters():
+            raise HTTPException(status_code=404, detail=f"unknown chapter {chapter!r} of series {series!r}")
+        try:
+            body = RunBody.model_validate_json(await request.body())
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=jsonable_encoder(exc.errors())) from exc
+        if body.through not in STAGE_ORDER:
+            raise HTTPException(
+                status_code=422,
+                detail=f"unknown stage {body.through!r} (known: {', '.join(STAGE_ORDER)})",
+            )
+        stages = STAGE_ORDER[: STAGE_ORDER.index(body.through) + 1]
+        store = QueueStore(queue_db_path(cfg))
+        job = store.add(series, list(stages), chapters=[chapter])
+        return {"job_id": job.id, "stages": list(stages)}
+
+    @app.get("/api/jobs/{job_id}")
+    def get_job(job_id: int) -> dict[str, object]:
+        """One queued job's current status ({} fields never populated -> a plain 404, never a 500)."""
+        store = QueueStore(queue_db_path(cfg))
+        job = store.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="job not found")
+        return {
+            "id": job.id,
+            "series": job.series,
+            "chapters": list(job.chapters) if job.chapters is not None else None,
+            "stages": list(job.stages),
+            "status": job.status,
+            "attempts": job.attempts,
+            "max_attempts": job.max_attempts,
+            "error": job.error,
+        }
 
     @app.get("/api/series/{series}/glossary")
     def get_glossary(series: str) -> list[dict[str, object]]:

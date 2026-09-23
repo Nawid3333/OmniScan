@@ -210,8 +210,16 @@ async function getJson<T>(path: string): Promise<T> {
 }
 
 async function postJson<T>(path: string, body: unknown): Promise<T> {
+  return sendJson<T>(path, "POST", body);
+}
+
+async function putJson<T>(path: string, body: unknown): Promise<T> {
+  return sendJson<T>(path, "PUT", body);
+}
+
+async function sendJson<T>(path: string, method: "POST" | "PUT", body: unknown): Promise<T> {
   const res = await fetch(path, {
-    method: "POST",
+    method,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
@@ -327,5 +335,45 @@ export async function restoreFiltered(
   await postJson<unknown>(
     `${BASE}/series/${encodeURIComponent(series)}/chapters/${encodeURIComponent(chapter)}/filter/restore`,
     { target, index },
+  );
+}
+
+export interface RunResult {
+  job_id: number;
+  stages: string[];
+}
+
+/** Queue every pipeline stage through `through` (inclusive, e.g. "ocr", "typeset", "export") for
+ *  one chapter. Only actually executes while the server was started with a worker (the real
+ *  `omniscan serve`); poll `getJob` with the returned id for progress. */
+export async function postRun(series: string, chapter: string, through: string): Promise<RunResult> {
+  return postJson<RunResult>(
+    `${BASE}/series/${encodeURIComponent(series)}/chapters/${encodeURIComponent(chapter)}/run`,
+    { through },
+  );
+}
+
+export type JobStatus = "queued" | "running" | "paused" | "done" | "failed" | "cancelled";
+
+export interface Job {
+  id: number;
+  series: string;
+  chapters: string[] | null;
+  stages: string[];
+  status: JobStatus;
+  attempts: number;
+  max_attempts: number;
+  error: string | null;
+}
+
+export async function getJob(jobId: number): Promise<Job> {
+  return getJson<Job>(`${BASE}/jobs/${jobId}`);
+}
+
+/** Overwrite one region's final line; the server sets its decision to "manual". */
+export async function putFinalLine(series: string, chapter: string, regionId: string, text: string): Promise<FinalLine> {
+  return putJson<FinalLine>(
+    `${BASE}/series/${encodeURIComponent(series)}/chapters/${encodeURIComponent(chapter)}/final/${encodeURIComponent(regionId)}`,
+    { text },
   );
 }

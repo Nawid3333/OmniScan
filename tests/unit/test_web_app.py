@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import io
+import time
 from pathlib import Path
 from urllib.parse import quote
 
+import pytest
 import torch
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -41,13 +43,16 @@ SERIES = "Solo Leveling"
 CHAPTER = "Chapter 1"
 
 
-def make_client(tmp_path: Path) -> TestClient:
-    cfg = Config(
+def make_cfg(tmp_path: Path) -> Config:
+    return Config(
         paths=PathsConfig(
             library_root=tmp_path / "lib", work_root=tmp_path / "work", output_root=tmp_path / "out"
         )
     )
-    return TestClient(create_app(cfg))
+
+
+def make_client(tmp_path: Path) -> TestClient:
+    return TestClient(create_app(make_cfg(tmp_path)))
 
 
 def make_jpeg(color: tuple[int, int, int]) -> bytes:
@@ -1062,3 +1067,151 @@ def test_inpaint_patch_item_without_npz_entry_returns_404(tmp_path: Path) -> Non
         response = client.get(patch_url(region_id))
         assert response.status_code == 404, region_id
         assert response.json() == {"detail": "no patch stored for this region"}, region_id
+
+
+# ---------------------------------------------------------------- edit final line + on-demand run
+
+
+def edit_url(region_id: str = "r0001") -> str:
+    return f"/api/series/{quote(SERIES)}/chapters/{quote(CHAPTER)}/final/{quote(region_id)}"
+
+
+def run_url() -> str:
+    return f"/api/series/{quote(SERIES)}/chapters/{quote(CHAPTER)}/run"
+
+
+def test_edit_final_line_overwrites_text_and_marks_it_manual(tmp_path: Path) -> None:
+    work = write_translation_chapter(tmp_path)
+    write_final(
+        work,
+        [
+            FinalLine(region_id="r0001", text="Cheolsu came", decision="pick", sources=["runA"]),
+            FinalLine(region_id="r0002", text="Whoosh", decision="pick", sources=["runA"]),
+        ],
+    )
+    client = make_client(tmp_path)
+    response = client.put(edit_url("r0001"), json={"text": "Cheolsu has arrived"})
+    assert response.status_code == 200
+    assert response.json() == {
+        "region_id": "r0001",
+        "text": "Cheolsu has arrived",
+        "decision": "manual",
+        "sources": [],
+        "rationale": "edited in the debug UI",
+        "flags": [],
+    }
+    artifact = FinalArtifact.load(work / "final.json")
+    assert [line.region_id for line in artifact.lines] == ["r0001", "r0002"]  # order preserved
+    assert artifact.lines[0].text == "Cheolsu has arrived"
+    assert artifact.lines[0].decision == "manual"
+    assert artifact.lines[1].text == "Whoosh"  # the other line is untouched
+    assert artifact.judge_model == "judge:8b"  # unrelated artifact fields untouched
+
+
+def test_edit_final_line_missing_final_or_region_returns_404(tmp_path: Path) -> None:
+    work = write_translation_chapter(tmp_path)
+    client = make_client(tmp_path)
+    response = client.put(edit_url("r0001"), json={"text": "x"})
+    assert response.status_code == 404
+    assert response.json() == {"detail": "final.json not found"}
+
+    write_final(work, [FinalLine(region_id="r0001", text="Cheolsu came", decision="pick")])
+    response = client.put(edit_url("r0002"), json={"text": "x"})
+    assert response.status_code == 404
+    assert response.json() == {"detail": "region 'r0002' not found in final.json"}
+
+
+def test_edit_final_line_rejects_non_json_content_type_and_bad_body(tmp_path: Path) -> None:
+    work = write_translation_chapter(tmp_path)
+    write_final(work, [FinalLine(region_id="r0001", text="Cheolsu came", decision="pick")])
+    client = make_client(tmp_path)
+    before = (work / "final.json").read_bytes()
+    response = client.put(edit_url(), content='{"text": "x"}', headers={"Content-Type": "text/plain"})
+    assert response.status_code == 415
+    response = client.put(edit_url(), json={"wrong_field": "x"})
+    assert response.status_code == 422
+    assert (work / "final.json").read_bytes() == before
+
+
+def test_edit_final_line_traversal_cannot_escape_roots(tmp_path: Path) -> None:
+    work = write_translation_chapter(tmp_path)
+    write_final(work, [FinalLine(region_id="r0001", text="Cheolsu came", decision="pick")])
+    client = make_client(tmp_path)
+    escapes = (
+        f"/api/series/..%2F..%2Fsecret/chapters/{quote(CHAPTER)}/final/r0001",
+        f"/api/series/{quote(SERIES)}/chapters/..%2F..%2Fsecret/final/r0001",
+    )
+    for url in escapes:
+        response = client.put(url, json={"text": "x"})
+        assert response.status_code == 404, url
+
+
+def test_run_enqueues_stages_through_the_requested_one(tmp_path: Path) -> None:
+    write_chapter(tmp_path)
+    client = make_client(tmp_path)  # run_worker defaults False: enqueues only, never executes
+    response = client.post(run_url(), json={"through": "ocr"})
+    assert response.status_code == 202
+    assert response.json() == {"job_id": 1, "stages": ["ingest", "slice", "detect", "ocr"]}
+    job = client.get("/api/jobs/1").json()
+    assert job == {
+        "id": 1,
+        "series": SERIES,
+        "chapters": [CHAPTER],
+        "stages": ["ingest", "slice", "detect", "ocr"],
+        "status": "queued",
+        "attempts": 0,
+        "max_attempts": 2,
+        "error": None,
+    }
+
+
+def test_run_rejects_unknown_stage_chapter_or_content_type(tmp_path: Path) -> None:
+    write_chapter(tmp_path)
+    client = make_client(tmp_path)
+    response = client.post(run_url(), json={"through": "nope"})
+    assert response.status_code == 422
+    response = client.post(
+        f"/api/series/{quote(SERIES)}/chapters/No%20Such%20Chapter/run", json={"through": "ocr"}
+    )
+    assert response.status_code == 404
+    response = client.post(run_url(), content='{"through": "ocr"}', headers={"Content-Type": "text/plain"})
+    assert response.status_code == 415
+
+
+def test_get_job_unknown_id_returns_404(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    response = client.get("/api/jobs/999")
+    assert response.status_code == 404
+    assert response.json() == {"detail": "job not found"}
+
+
+def test_run_worker_drains_the_queue_in_the_background(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`run_worker=True` starts a background thread that actually executes queued jobs.
+
+    The pipeline execution itself is faked out (a no-op `stage_executor`) - this test is only about
+    the app's own drain-loop wiring (lifespan -> thread -> run_queue -> QueueStore), not about
+    running real pipeline stages, which need real fixtures/GPU markers and belong elsewhere."""
+    write_chapter(tmp_path)
+    monkeypatch.setattr("omniscan.web.app.stage_executor", lambda cfg: lambda job: None)
+    with TestClient(create_app(make_cfg(tmp_path), run_worker=True)) as client:
+        response = client.post(run_url(), json={"through": "ingest"})
+        job_id = response.json()["job_id"]
+        deadline = time.monotonic() + 5.0
+        status = "queued"
+        while time.monotonic() < deadline and status != "done":
+            status = client.get(f"/api/jobs/{job_id}").json()["status"]
+            if status != "done":
+                time.sleep(0.05)
+        assert status == "done"
+
+
+def test_run_worker_off_by_default_leaves_jobs_queued(tmp_path: Path) -> None:
+    """The plain `create_app(cfg)` used by every other test in this file never runs a real job."""
+    write_chapter(tmp_path)
+    with TestClient(create_app(make_cfg(tmp_path))) as client:
+        response = client.post(run_url(), json={"through": "ingest"})
+        job_id = response.json()["job_id"]
+        time.sleep(0.2)
+        assert client.get(f"/api/jobs/{job_id}").json()["status"] == "queued"
