@@ -1,0 +1,80 @@
+# OCR qualification plan (card O1c): the candidate configurations and the ground-truth datasets
+# that scripts/qualify_ocr.py runs over. Decisions come from the measured metrics, never from
+# model names — docs/benchmarks/ocr-qualification.md holds the method and the results.
+#
+# [[candidate]]: id (unique), engine (ppocr | manga_ocr | paddleocr_vl), optional det_model /
+#   rec_model (catalog ids from config/models.toml), langs (dataset languages the candidate runs on;
+#   a language no dataset uses is allowed).
+# [[dataset]]: lang (the OcrConfig language, `cn` truth maps to `zh`), series, chapters, truth
+#   (the folder under data/translated-check/<series>/<chapter>/truth/).
+
+[[candidate]]
+id = "ppocr-v5-ko"
+engine = "ppocr"
+det_model = "ocr-det-ppocrv5-server"
+rec_model = "ocr-rec-korean-ppocrv5-mobile"
+langs = ["ko"]
+
+[[candidate]]
+id = "ppocr-v5-server-multi"
+engine = "ppocr"
+det_model = "ocr-det-ppocrv5-server"
+rec_model = "ocr-rec-ppocrv5-server"
+langs = ["zh", "en", "ja"]
+
+[[candidate]]
+id = "ppocr-v6-tiny"
+engine = "ppocr"
+det_model = "ocr-det-ppocrv6-tiny"
+rec_model = "ocr-rec-ppocrv6-tiny"
+langs = ["zh", "en", "ja", "ko"]
+
+[[candidate]]
+id = "ppocr-v6-small"
+engine = "ppocr"
+det_model = "ocr-det-ppocrv6-small"
+rec_model = "ocr-rec-ppocrv6-small"
+langs = ["zh", "en", "ja", "ko"]
+
+[[candidate]]
+id = "ppocr-v6-medium"
+engine = "ppocr"
+det_model = "ocr-det-ppocrv6-medium"
+rec_model = "ocr-rec-ppocrv6-medium"
+langs = ["zh", "en", "ja", "ko"]
+
+[[candidate]]
+id = "manga-ocr-2025"
+engine = "manga_ocr"
+rec_model = "ocr-rec-manga-ocr-2025"
+langs = ["ja"]
+
+[[candidate]]
+id = "manga-ocr-base"
+engine = "manga_ocr"
+rec_model = "ocr-rec-manga-ocr-base"
+langs = ["ja"]
+
+[[candidate]]
+id = "paddleocr-vl-1.6"
+engine = "paddleocr_vl"
+rec_model = "ocr-vl-1.6"
+langs = ["ko", "ja", "zh", "en"]
+
+[[dataset]]
+lang = "ko"
+series = "PepperCarrotKR"
+chapters = ["Episode 06", "Episode 09"]
+truth = "kr"
+
+[[dataset]]
+lang = "ja"
+series = "PepperCarrotJA"
+chapters = ["Episode 06", "Episode 09", "Episode 12", "Episode 22"]
+truth = "ja"
+
+[[dataset]]
+lang = "zh"
+series = "PepperCarrotCN"
+chapters = ["Episode 06", "Episode 09", "Episode 12", "Episode 22"]
+truth = "cn"
