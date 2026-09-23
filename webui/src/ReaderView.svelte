@@ -7,6 +7,7 @@
     MAX_COLUMN_WIDTH,
     MIN_COLUMN_WIDTH,
     fitColumnWidth,
+    layoutStack,
     scrollRatio,
     scrollTopForRatio,
   } from "./reader";
@@ -22,12 +23,20 @@
   let mode = $state<ReaderMode>("final");
   let width = $state(DEFAULT_COLUMN_WIDTH);
   let viewportWidth = $state(window.innerWidth);
+  let syncScroll = $state(true);
 
   let finalBox = $state<HTMLDivElement>();
   let rawBox = $state<HTMLDivElement>();
   let syncing = $state(false);
 
   let columnWidth = $derived(fitColumnWidth(mode, width, viewportWidth));
+  // Both columns are laid out from the SAME file list and width, so they always land on identical
+  // tops/totalHeight (page N's panel starts at the same y in both columns, even when a page in
+  // `outputNames` is missing — that page's slot in the final column is just left blank, not
+  // collapsed, so later pages never drift out of alignment). This is also what makes `scrollTop`
+  // syncing exact below: with equal scrollHeight on both sides, copying the raw value is correct.
+  let layout = $derived(rawFiles.length > 0 ? layoutStack(rawFiles, columnWidth) : null);
+  let outputNames = $derived(new Set(names));
 
   $effect(() => {
     const s = series;
@@ -76,7 +85,7 @@
   }
 
   function onScroll(source: "final" | "raw"): void {
-    if (mode !== "compare" || syncing) {
+    if (mode !== "compare" || !syncScroll || syncing) {
       return;
     }
     const sourceBox = source === "final" ? finalBox : rawBox;
@@ -114,6 +123,12 @@
       <input type="range" min={MIN_COLUMN_WIDTH} max={MAX_COLUMN_WIDTH} step={20} bind:value={width} />
       {width} px
     </label>
+    {#if mode === "compare"}
+      <label>
+        <input type="checkbox" bind:checked={syncScroll} />
+        sync scroll
+      </label>
+    {/if}
     <span>{names.length} output image(s)</span>
   </p>
   {#if rawFailed}
@@ -125,6 +140,8 @@
         <img src={outputImageUrl(series, chapter, name)} alt={name} />
       {/each}
     </div>
+  {:else if layout === null}
+    <p>loading raw pages…</p>
   {:else}
     <div class="pair" style="gap: {COLUMN_GAP}px;">
       <div
@@ -133,9 +150,15 @@
         bind:this={rawBox}
         onscroll={() => onScroll("raw")}
       >
-        {#each rawFiles as file (file.index)}
-          <img src={pageImageUrl(series, chapter, file.index)} alt={file.name} />
-        {/each}
+        <div class="stack" style="width: {columnWidth}px; height: {layout.totalHeight}px;">
+          {#each rawFiles as file, i (file.index)}
+            <img
+              src={pageImageUrl(series, chapter, file.index)}
+              alt={file.name}
+              style="top: {layout.tops[i]}px; width: {columnWidth}px; height: {layout.heights[i]}px;"
+            />
+          {/each}
+        </div>
       </div>
       <div
         class="column"
@@ -143,9 +166,17 @@
         bind:this={finalBox}
         onscroll={() => onScroll("final")}
       >
-        {#each names as name (name)}
-          <img src={outputImageUrl(series, chapter, name)} alt={name} />
-        {/each}
+        <div class="stack" style="width: {columnWidth}px; height: {layout.totalHeight}px;">
+          {#each rawFiles as file, i (file.index)}
+            {#if outputNames.has(file.name)}
+              <img
+                src={outputImageUrl(series, chapter, file.name)}
+                alt={file.name}
+                style="top: {layout.tops[i]}px; width: {columnWidth}px; height: {layout.heights[i]}px;"
+              />
+            {/if}
+          {/each}
+        </div>
       </div>
     </div>
   {/if}
@@ -173,5 +204,12 @@
     display: block;
     width: 100%;
     height: auto;
+  }
+  .stack {
+    position: relative;
+  }
+  .stack img {
+    position: absolute;
+    left: 0;
   }
 </style>

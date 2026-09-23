@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { BBox, SourceFile } from "./api";
 import {
   fileAtStripY,
+  stackTops,
   stackTotalHeight,
   stackWidth,
   stripBoxToStackBox,
@@ -87,6 +88,21 @@ describe("degenerate file (y1 === y0)", () => {
     expect(() => stripYToStackY(files, 1000)).not.toThrow();
     expect(stripYToStackY(files, 1000)).toBe(1000);
     expect(stripYToStackY(files, 5000)).toBe(1000);
+  });
+});
+
+describe("stackTops", () => {
+  it("is each file's cumulative natural height, starting at 0", () => {
+    const files = [
+      file({ index: 0, height: 1000, y0: 0, y1: 1000 }),
+      file({ index: 1, height: 2000, y0: 1000, y1: 3000 }),
+      file({ index: 2, height: 500, y0: 3000, y1: 3500 }),
+    ];
+    expect(stackTops(files)).toEqual([0, 1000, 3000]);
+  });
+
+  it("is empty for no files", () => {
+    expect(stackTops([])).toEqual([]);
   });
 });
 

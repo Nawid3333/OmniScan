@@ -1,17 +1,31 @@
 import { describe, expect, it } from "vitest";
 
+import type { SourceFile } from "./api";
 import {
   DEFAULT_COLUMN_WIDTH,
   MAX_COLUMN_WIDTH,
   MIN_COLUMN_WIDTH,
   clampColumnWidth,
   fitColumnWidth,
+  layoutStack,
   scrollRatio,
   scrollTopForRatio,
 } from "./reader";
 
 function metrics(scrollTop: number, scrollHeight: number, clientHeight: number) {
   return { scrollTop, scrollHeight, clientHeight };
+}
+
+function file(overrides: Partial<SourceFile> & { index: number }): SourceFile {
+  return {
+    name: `${overrides.index}.jpg`,
+    width: 800,
+    height: 1000,
+    y0: 0,
+    y1: 1000,
+    scale: 1.0,
+    ...overrides,
+  };
 }
 
 describe("scrollRatio", () => {
@@ -82,5 +96,44 @@ describe("fitColumnWidth", () => {
 
   it("clamps the requested width up to MIN first", () => {
     expect(fitColumnWidth("compare", 100, 2000)).toBe(MIN_COLUMN_WIDTH);
+  });
+});
+
+describe("layoutStack", () => {
+  it("scales tops/heights uniformly from the stack's natural width", () => {
+    const files = [
+      file({ index: 0, width: 800, height: 1000 }),
+      file({ index: 1, width: 800, height: 2000 }),
+    ];
+    // Natural width 800 -> display width 400: scale 0.5.
+    const layout = layoutStack(files, 400);
+    expect(layout.tops).toEqual([0, 500]);
+    expect(layout.heights).toEqual([500, 1000]);
+    expect(layout.totalHeight).toBe(1500);
+  });
+
+  it("is the identity when displayWidth equals the natural width", () => {
+    const files = [file({ index: 0, width: 800, height: 1000 }), file({ index: 1, width: 800, height: 500 })];
+    const layout = layoutStack(files, 800);
+    expect(layout).toEqual({ tops: [0, 1000], heights: [1000, 500], totalHeight: 1500 });
+  });
+
+  it("heights come from consecutive tops, never from independently rounded scaled heights", () => {
+    // Natural height 1000 at scale 1/3 rounds per-file to 333, but three of them must still sum to
+    // exactly totalHeight (1000) with no 1px gap or overlap between panels.
+    const files = [
+      file({ index: 0, width: 300, height: 1000 }),
+      file({ index: 1, width: 300, height: 1000 }),
+      file({ index: 2, width: 300, height: 1000 }),
+    ];
+    const layout = layoutStack(files, 100);
+    expect(layout.tops).toEqual([0, 333, 667]);
+    expect(layout.heights).toEqual([333, 334, 333]);
+    expect(layout.heights.reduce((a, b) => a + b, 0)).toBe(layout.totalHeight);
+  });
+
+  it("returns empty layout for no files (natural width falls back to 1, not division by zero)", () => {
+    const layout = layoutStack([], 400);
+    expect(layout).toEqual({ tops: [], heights: [], totalHeight: 0 });
   });
 });

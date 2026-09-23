@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getIngest, getLayout, pageImageUrl } from "./api";
-  import { stackTotalHeight, stackWidth, stripBoxToStackBox } from "./strip";
+  import { stackTops as computeStackTops, stackTotalHeight, stackWidth, stripBoxToStackBox } from "./strip";
   import { alignLabel, filterItems, fontRoleColor } from "./layout";
   import type { FontRole, LayoutItem, SourceFile } from "./api";
 
@@ -21,15 +21,7 @@
   let selected = $derived(items.find((item) => item.region_id === selectedId) ?? null);
 
   // Top of each file's image in the stack: sum of all earlier files' natural heights.
-  let stackTops = $derived.by(() => {
-    const tops: number[] = [];
-    let top = 0;
-    for (const file of files) {
-      tops.push(top);
-      top += file.height;
-    }
-    return tops;
-  });
+  let stackTops = $derived(computeStackTops(files));
 
   function toggleRole(role: FontRole): void {
     const next = new Set(visibleRoles);

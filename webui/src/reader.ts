@@ -1,5 +1,8 @@
 /** Pure helpers for the Reader view (no DOM, no Svelte). */
 
+import type { SourceFile } from "./api";
+import { stackTops, stackTotalHeight, stackWidth } from "./strip";
+
 export interface ScrollMetrics {
   scrollTop: number;
   scrollHeight: number;
@@ -45,4 +48,29 @@ export function clampColumnWidth(px: number): number {
 export function fitColumnWidth(mode: ReaderMode, requested: number, viewportWidth: number): number {
   const available = mode === "final" ? viewportWidth : Math.floor((viewportWidth - COLUMN_GAP) / 2);
   return clampColumnWidth(Math.min(clampColumnWidth(requested), available));
+}
+
+export interface StackLayout {
+  /** Each file's top offset, in display pixels. */
+  tops: number[];
+  /** Each file's height, in display pixels (derived from consecutive `tops`, never from a
+   *  separately-rounded scaled height, so pages never gain a gap or an overlap from rounding). */
+  heights: number[];
+  totalHeight: number;
+}
+
+/**
+ * Lay out `files` as a vertical stack scaled to `displayWidth` (uniform scale from the stack's
+ * natural width, preserving every page's own aspect ratio). Two calls with the same `files` and
+ * `displayWidth` always produce identical `tops`/`totalHeight` — this is what lets two independently
+ * rendered columns (e.g. raw vs. final pages of the same chapter) share one scrollable coordinate
+ * space and sync by copying `scrollTop` directly, with no ratio conversion.
+ */
+export function layoutStack(files: SourceFile[], displayWidth: number): StackLayout {
+  const naturalWidth = stackWidth(files) || 1;
+  const scale = displayWidth / naturalWidth;
+  const totalHeight = Math.round(stackTotalHeight(files) * scale);
+  const tops = stackTops(files).map((top) => Math.round(top * scale));
+  const heights = files.map((_file, i) => (i + 1 < tops.length ? tops[i + 1] : totalHeight) - tops[i]);
+  return { tops, heights, totalHeight };
 }

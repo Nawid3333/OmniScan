@@ -29,6 +29,17 @@ export function stackTotalHeight(files: SourceFile[]): number {
   return files.reduce((total, file) => total + file.height, 0);
 }
 
+/** Each file's top offset in the stack (cumulative sum of the earlier files' natural heights). */
+export function stackTops(files: SourceFile[]): number[] {
+  const tops: number[] = [];
+  let top = 0;
+  for (const file of files) {
+    tops.push(top);
+    top += file.height;
+  }
+  return tops;
+}
+
 /** The natural (unscaled) width to use for the stack container: the maximum `width` across `files`. */
 export function stackWidth(files: SourceFile[]): number {
   return files.reduce((max, file) => Math.max(max, file.width), 0);
