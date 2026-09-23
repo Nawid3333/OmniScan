@@ -27,7 +27,10 @@ class DetectStage:
     """Find bubbles and text regions in chapter strips (satisfies core.stage.Stage)."""
 
     name: ClassVar[str] = "detect"
-    version: ClassVar[int] = 3  # 3: fixed-position watermark reclassification (F2c)
+    version: ClassVar[int] = (
+        3  # 2: strips decoded before the CUDA staging-buffer fix (2026-09-19) held duplicated pages
+        # 3: fixed-position watermark reclassification (F2c)
+    )
     gpu_group: ClassVar[str | None] = VISION_GROUP
 
     def inputs(self, ctx: ChapterContext) -> list[Path]:
