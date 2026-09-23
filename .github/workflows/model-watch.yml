@@ -23,19 +23,18 @@ jobs:
 
       - uses: astral-sh/setup-uv@v6
 
-      # --fail-on-change exits 3 on changes (expected, not a failure) and 2 on bad arguments or an
-      # unreadable config (real failure). The code is captured so only 2 fails the job.
-      - name: Compare catalog pins with upstream
+      - name: Compare catalog against upstream model repos
         id: watch
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }} # optional; empty raises no header
         run: |
           set +e
-          uv run --no-project --with httpx python scripts/model_watch.py --markdown model-watch.md --json model-watch.json --fail-on-change
+          uv run scripts/model_watch.py
           code=$?
           set -e
           echo "code=$code" >> "$GITHUB_OUTPUT"
-          test "$code" -ne 2
+          # 0 = catalog is current, 3 = upstream changes detected; other codes fail the job
+          if [ "$code" -ne 0 ] && [ "$code" -ne 3 ]; then
+            exit "$code"
+          fi
 
       - name: Open or update the model-watch issue
         if: steps.watch.outputs.code == '3'
