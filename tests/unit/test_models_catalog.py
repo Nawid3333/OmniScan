@@ -451,12 +451,16 @@ def test_real_catalog_roles() -> None:
         assert entries[model_id].role == "llm"
 
 
-def test_real_catalog_v5_entries_are_recommended_for_korean_only() -> None:
+def test_real_catalog_recommended_for_matches_the_measured_defaults() -> None:
     entries = load_catalog()
     recommended = {e.id: e.recommended_for for e in entries if e.recommended_for}
     assert recommended == {
         "ocr-det-ppocrv5-server": ["ko"],
         "ocr-rec-korean-ppocrv5-mobile": ["ko"],
+        # card O1c, 2026-09-23: best chrF on Japanese of any candidate and faster than the prior
+        # ja default, despite the upstream model card listing only en/zh support
+        "ocr-det-ppocrv6-medium": ["ja"],
+        "ocr-rec-ppocrv6-medium": ["ja"],
     }
     korean_rec = next(e for e in entries if e.id == "ocr-rec-korean-ppocrv5-mobile")
     assert korean_rec.langs == ["ko"]

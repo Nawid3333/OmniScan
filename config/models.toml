@@ -258,6 +258,8 @@ role = "text_line_detector"
 family = "ppocrv6"
 size_class = "medium"
 langs = ["en", "zh"]
+recommended_for = ["ja"]
+notes = "measured (card O1c, 2026-09-23): best chrF on Japanese (0.832) of any candidate, and faster than the prior ja default -- despite the upstream card listing only en/zh"
 upstream_repo = "PaddlePaddle/PP-OCRv6_medium_det_safetensors"
 upstream_revision = "4236c2b61741a259c091fd879dcc4edc339e916c"
 
@@ -332,7 +334,8 @@ role = "recognizer"
 family = "ppocrv6"
 size_class = "medium"
 langs = ["en", "zh"]
-notes = "published for en+zh only; on Korean pages it scored far below the v5 Korean recogniser (docs/PRODUCT_SPEC.md)"
+recommended_for = ["ja"]
+notes = "published for en+zh only; on Korean pages it scored far below the v5 Korean recogniser (docs/PRODUCT_SPEC.md). Measured (card O1c, 2026-09-23): best chrF on Japanese (0.832) of any candidate and faster than the prior ja default -- despite the upstream card listing only en/zh"
 upstream_repo = "PaddlePaddle/PP-OCRv6_medium_rec_safetensors"
 upstream_revision = "024cad6a831de75c2c3c26e711ba8c4a82ccd24b"
 
