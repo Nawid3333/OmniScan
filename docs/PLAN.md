@@ -428,12 +428,9 @@ dependencies land. Checked against prior art (`zyddnys/manga-image-translator` i
 project — full detect/OCR/translate/inpaint/typeset pipeline, multi-backend translation, 20+ languages; it
 validates the overall pipeline shape but is CUDA/Nvidia-first and not GPU-VRAM-budgeted the way this project is).
 
-- **Export formats beyond flat JPEG slices:** CBZ (zip of the output images, what most reader apps expect) and
-  PDF, at minimum. A long-strip webtoon export (one tall image) is also worth it for manhwa specifically since
-  that's closer to how it's natively read. Candidate card: **B22**, sits right after C7/B12 (typeset + export).
-- **Job queue + notifications:** once a library has many series/chapters queued, running things one at a time
-  from the CLI doesn't scale — a persistent queue (priority, pause/resume, retry-on-failure) with a completion
-  notification (desktop toast once M13's app exists; a webhook/log line until then). Candidate card: **B23**.
+- ~~**Export formats beyond flat JPEG slices**~~ — **done** (`omniscan pack`, CBZ/PDF; card B22).
+- ~~**Job queue + notifications**~~ — **done** (`omniscan queue add/list/run/pause/resume/cancel/retry/clear`,
+  webhook notifier; card B23).
 - **Model management:** HF model downloads are currently implicit (whatever `transformers`/`huggingface-hub`
   pulls on first use). Needs explicit version pinning, an integrity check surfaced in `omniscan doctor`, and a
   documented rule that **a model upgrade bumps the owning stage's `version`** in `core/stage.py` terms (so the
@@ -448,14 +445,17 @@ validates the overall pipeline shape but is CUDA/Nvidia-first and not GPU-VRAM-b
   distribution, glossary violation count, typeset overflow count, promo-filter false-positive rate) into one
   `qa.json` per chapter, surfaced as a summary badge in the debug views (B7/B10/B11) instead of only being
   eyeballed in raw JSON.
-- **Chapter watch / incremental catch-up:** for an ongoing series, a way to say "check for new chapters since
-  last time" (re-run `acquire`'s link discovery, diff against `sources.toml` / already-ingested chapters) rather
-  than re-specifying the full chapter list each time.
-- **Edit history in the manual editor (B13):** a single incremental recompute (C8) isn't the same as being able
-  to undo a bad manual edit — worth a lightweight version history per region/slice (even just N previous
-  `final.json`/`layout.json` snapshots) before B13 ships.
-- **Duplicate/near-duplicate chapter detection:** guard against the same raw chapter being ingested twice under
-  two different folder names (e.g. re-acquired after a rename) — reuse the pHash machinery from B6.
+- **Chapter watch / incremental catch-up:** stale since RM1 removed the acquisition subsystem (raws are now
+  exclusively user-supplied via `omniscan import`) — the original framing ("re-run `acquire`'s link discovery")
+  no longer applies. If still wanted, it would mean something like "diff a folder of newly-imported chapters
+  against what's already in the library," a different, smaller shape than originally scoped.
+- **Edit history in the manual editor:** the web viewer's Edit tab (card B33) already lets you click-to-edit a
+  region's final text in place, but there's still no undo / version history per region — a bad manual edit
+  simply overwrites `final.json`'s line (marked `decision: "manual"`) with no way back except re-running judge.
+  Worth a lightweight history (even just N previous values per region) if manual edits turn out to need undo
+  in practice.
+- ~~**Duplicate/near-duplicate chapter detection**~~ — **done** (`omniscan match duplicates`, reusing CM1's own
+  page-hash quality metric self-compared rather than B6's per-file dHash directly; card B31).
 - **Privacy:** the packaged app (M13) handles copyrighted raw scans; it should not phone home any telemetry by
   default. Worth stating explicitly once M13 is picked back up.
 
