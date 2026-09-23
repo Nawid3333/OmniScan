@@ -92,12 +92,23 @@ class StageOutcome:
     error: str | None = None
 
 
-def make_context(cfg: Config, series: str, chapter: str, gpu: GpuScheduler | None = None) -> ChapterContext:
-    """Context of one chapter; the series' `series.toml` overrides are already applied to `ctx.cfg`."""
+def make_context(
+    cfg: Config,
+    series: str,
+    chapter: str,
+    gpu: GpuScheduler | None = None,
+    *,
+    merge_series_config: bool = True,
+) -> ChapterContext:
+    """Context of one chapter; the series' `series.toml` overrides are already applied to `ctx.cfg`.
+
+    `merge_series_config=False` skips that merge: the caller is asserting `cfg` is already exactly the
+    config it wants every stage to see (the OCR qualification suite needs this — see bug O1e — because a
+    series' own `series.toml` can otherwise silently overwrite the OCR engine it deliberately varies)."""
     sp = SeriesPaths.from_config(cfg, series)
     cp = sp.chapter(chapter)
     return ChapterContext(
-        cfg=series_config(cfg, sp.library_dir),
+        cfg=series_config(cfg, sp.library_dir) if merge_series_config else cfg,
         series=sp,
         paths=cp,
         manifest=load_manifest(cp.manifest, series, chapter),
@@ -216,15 +227,16 @@ def run_series(
     gpu: GpuScheduler | None = None,
     force: bool = False,
     after_stage: AfterStage | None = None,
+    merge_series_config: bool = True,
 ) -> dict[str, list[StageOutcome]]:
     """Run a pass (ordered stages) over chapters in reading order. Model groups stay loaded across chapters.
 
     Raises RunAbortedError (with `.results` = the chapters finished before it) when `after_stage` returns False.
-    """
+    `merge_series_config` is forwarded to `make_context` for every chapter (see its docstring)."""
     names = list(chapters) if chapters is not None else SeriesPaths.from_config(cfg, series).chapters()
     results: dict[str, list[StageOutcome]] = {}
     for chapter in names:
-        ctx = make_context(cfg, series, chapter, gpu)
+        ctx = make_context(cfg, series, chapter, gpu, merge_series_config=merge_series_config)
         try:
             results[chapter] = run_chapter(stages, ctx, force=force, after_stage=after_stage)
         except RunAbortedError as aborted:

@@ -741,18 +741,17 @@ def test_default_run_candidate_reports_a_failed_stage(
     assert manager.released
 
 
-def test_o1e_regression_the_stage_still_sees_the_series_engine_until_the_core_fix(
+def test_o1e_regression_the_stage_sees_the_candidate_engine_not_the_series_default(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The O1e bug chain, pinned at both layers with a real Config/SeriesPaths/run_pipeline.
+    """The O1e bug chain, fixed, pinned at both layers with a real Config/SeriesPaths/run_pipeline.
 
-    candidate_config already prepares the right config: pair_cfg.ocr.engine is the candidate's
-    "ppocr" although the series' own series.toml forces "paddleocr_vl". But run through the real
-    pipeline (merge_series_config=False) the ocr stage STILL sees "paddleocr_vl", because
-    core.stage.make_context re-merges the series' series.toml per chapter and OcrStage.run
-    dispatches on ctx.cfg — the runner-side flag alone does not fix the live KeyError: 'reader'.
-    The core-side fix sketched in docs/reports/O1e.md threads the flag into run_series/make_context;
-    when it lands, flip the stage-level assertion below to ["ppocr"].
+    candidate_config prepares the right config: pair_cfg.ocr.engine is the candidate's "ppocr"
+    although the series' own series.toml forces "paddleocr_vl". Run through the real pipeline
+    (merge_series_config=False), the ocr stage must now see "ppocr" too: core.stage.make_context/
+    run_series forward the flag, so make_context no longer re-merges the series' series.toml per
+    chapter and OcrStage.run dispatches on the candidate's own engine — the original live
+    `KeyError: 'reader'` this pins against is gone.
     """
     write_series_toml(tmp_path, "PepperCarrotJA", '[ocr]\nengine = "paddleocr_vl"\n')
     dataset = Dataset("ja", "PepperCarrotJA", ("Episode 06",), "ja")
@@ -790,7 +789,7 @@ def test_o1e_regression_the_stage_still_sees_the_series_engine_until_the_core_fi
     monkeypatch.setattr(runner_module, "build_stage", lambda name, stage_cfg, *, client=None: SpyOcrStage())
     result = run_pipeline(pair_cfg, dataset.series, ["Episode 06"], stages=["ocr"], merge_series_config=False)
     assert result.ok
-    assert seen == ["paddleocr_vl"]  # THE GAP: make_context re-merged; flip to ["ppocr"] with the core fix
+    assert seen == ["ppocr"]  # fixed: the candidate's engine survives, not the series' paddleocr_vl default
 
 
 # ---------------------------------------------------------------- scripts/qualify_ocr.py

@@ -369,14 +369,12 @@ def test_run_pipeline_merge_series_config_false_skips_its_own_merge(
     assert calls == [cfg.paths.library_root / SERIES]  # unchanged: run_pipeline skipped its merge
 
 
-def test_a_stage_still_sees_the_series_toml_when_run_pipeline_skips_its_merge(
+def test_run_pipeline_merge_series_config_false_is_honored_by_stages_too(
     cfg: Config, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """THE O1e GAP, pinned: even with merge_series_config=False a stage sees the series' values,
-    because core.stage.make_context re-merges series.toml into ctx.cfg per chapter (core/stage.py,
-    and ocr/stage.py's OcrStage.run dispatches on ctx.cfg). The runner-side flag alone therefore
-    cannot fix the qualification clobber; the core-side fix sketched in docs/reports/O1e.md must
-    thread the flag into run_series/make_context — flip this assertion to [0.3] when that lands."""
+    """The O1e fix, end to end: with merge_series_config=False a stage sees cfg's own value, not the
+    series' series.toml override. core.stage.make_context/run_series now forward the flag too, closing
+    the gap where a stage saw the series' value regardless (via make_context's own re-merge)."""
     write_series_toml(cfg, "[detect]\nthreshold = 0.9\n")
     spy = ConfigSpyStage("detect", lambda stage_cfg: stage_cfg.detect.threshold)
     monkeypatch.setattr(runner_module, "build_stage", spy_build_stage(spy))
@@ -384,7 +382,8 @@ def test_a_stage_still_sees_the_series_toml_when_run_pipeline_skips_its_merge(
         cfg, SERIES, ["A"], stages=["detect"], gpu=FakeScheduler(), merge_series_config=False
     )
     assert result.ok
-    assert spy.seen == [0.9]  # make_context's merge, not run_pipeline's
+    assert spy.seen == [cfg.detect.threshold]  # the caller's own value, not the series' 0.9
+    assert cfg.detect.threshold != 0.9  # sanity: the series.toml value really would differ if leaked
 
 
 # ---------------------------------------------------------------- needs_gpu

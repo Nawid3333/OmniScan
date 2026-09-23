@@ -163,6 +163,7 @@ def _run_preview(
     gate: Gate,
     after_stage: AfterStage | None,
     total: int,
+    merge_series_config: bool,
 ) -> bool:
     """Step-mode phase A: run the preview chapter through all passes behind `gate`; False stops the run.
 
@@ -193,7 +194,14 @@ def _run_preview(
         stage_objects = _timed(pass_stages, cfg, client)
         try:
             pass_results = run_series(
-                stage_objects, cfg, series, [preview_chapter], gpu=gpu, force=force, after_stage=hook
+                stage_objects,
+                cfg,
+                series,
+                [preview_chapter],
+                gpu=gpu,
+                force=force,
+                after_stage=hook,
+                merge_series_config=merge_series_config,
             )
         except RunAbortedError as error:
             result.outcomes.setdefault(error.chapter, []).extend(error.outcomes)
@@ -314,6 +322,7 @@ def run_pipeline(
             gate=step_gate,
             after_stage=after_stage,
             total=len(names),
+            merge_series_config=merge_series_config,
         )
         if not completed:
             return result
@@ -324,7 +333,14 @@ def run_pipeline(
         stage_objects = _timed(pass_stages, cfg, client)
         try:
             pass_results = run_series(
-                stage_objects, cfg, series, active, gpu=gpu, force=force, after_stage=after_stage
+                stage_objects,
+                cfg,
+                series,
+                active,
+                gpu=gpu,
+                force=force,
+                after_stage=after_stage,
+                merge_series_config=merge_series_config,
             )
         except RunAbortedError as error:
             for chapter, outcomes in {**error.results, error.chapter: error.outcomes}.items():

@@ -168,3 +168,38 @@ uv run pyright
    forces engine X, any candidate of engine Y≠X cannot be measured honestly on that series at all; the
    plan-level alternative is excluding such (candidate, dataset) pairs (or per-language truth series without
    `[ocr]` overrides). Not needed for this fix; flagging for the qualification-plan design.
+
+## Review addendum (director)
+
+Applied the core-side change from Q1 directly (approved) rather than spinning up a separate card — it is
+exactly the shape this report sketched, small, and this fix has already blocked two live qualification runs
+tonight:
+
+- `core/stage.py`: `make_context` gains `merge_series_config: bool = True` (keyword-only, after `gpu`);
+  `cfg=series_config(cfg, sp.library_dir) if merge_series_config else cfg`. `run_series` gains the same
+  keyword, forwarded into its per-chapter `make_context` call. Every other field/behaviour unchanged.
+- `pipeline/runner.py`: both `run_series` call sites (the step-mode preview loop and the main pass loop)
+  and `_run_preview` itself now thread `merge_series_config` through from `run_pipeline`'s own parameter
+  (already added in the WIP commit). `cli.py:352`'s direct `make_context(cfg, series, chapter)` call needs
+  no change — the new keyword defaults to `True`.
+- Flipped the two gap-pinning tests to their fixed-behaviour assertions, exactly where each one's own
+  docstring said to: `test_a_stage_still_sees_the_series_toml_when_run_pipeline_skips_its_merge` →
+  renamed `test_run_pipeline_merge_series_config_false_is_honored_by_stages_too`, now asserts
+  `spy.seen == [cfg.detect.threshold]` (not the series' `0.9`); `test_o1e_regression_the_stage_still_sees_the_series_engine_until_the_core_fix`
+  → renamed `..._the_stage_sees_the_candidate_engine_not_the_series_default`, now asserts
+  `seen == ["ppocr"]` (not `["paddleocr_vl"]`) — this is the exact live `KeyError: 'reader'` reproduction
+  from the real qualification run, now passing.
+- **Re-verified** (worktree, after the core change): targeted files (`test_pipeline_runner.py` +
+  `test_eval_qualify.py` + `test_docs.py`) all pass; full `pytest -q -m "not gpu"` all pass (no new
+  failures, same pre-existing xfail); `ruff format`/`ruff check` clean; `pyright` 0 errors.
+- **Answers**: Q1 — approved and applied as above. Q2 — moot, both halves now do real work together. Q3 —
+  actually resolved as a side effect: since the candidate's engine now survives all the way to the stage
+  regardless of the series' own `series.toml`, a `manga_ocr`/`paddleocr_vl` candidate on a series that
+  forces a different engine is now measured with *its own* engine too, not the series' default. No
+  remaining known gap for this bug.
+- Grep-audited every `run_pipeline` call site in the repo for the same clobber risk (`cli.py`,
+  `queue/executor.py`, `glossary/reference.py`, `eval/qualify.py`): only `eval/qualify.py` deliberately
+  overrides a `SERIES_SECTIONS` field the way this bug needs; the other three just want the series' normal
+  config and are unaffected by (and don't need) the new flag.
+- Final commit message corrected to the card's original: `O1e: fix qualification suite candidate config
+  clobbered by series.toml` (the STOPPED commit's message no longer describes the state of this branch).
