@@ -215,6 +215,7 @@ class FinalArtifact(Artifact):
     judge_model: str
     created_at: datetime = Field(default_factory=utcnow)
     lines: list[FinalLine]
+    usage: dict[str, float] = Field(default_factory=dict)  # mirrors CandidateRun.usage; see JudgeStats
 
 
 # ---------------------------------------------------------------- glossary
