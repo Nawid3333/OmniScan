@@ -23,7 +23,7 @@ from omniscan.core.schemas import (
 from omniscan.core.stage import ChapterContext, StageOutcome, make_context, run_stage
 from omniscan.glossary.store import GlossaryStore
 from omniscan.gpu.vram import OLLAMA_GROUP
-from omniscan.llm.ollama import ChatResponse
+from omniscan.llm.ollama import ChatResponse, OllamaRateLimitError
 from omniscan.pipeline.stages import PASS_OF, STAGE_ORDER, JudgeStage, TranslateStage, build_stage
 from omniscan.translate.judge_config import JudgeConfig
 from omniscan.translate.profiles import TranslationProfile
@@ -309,6 +309,63 @@ def test_translate_stage_makes_each_local_model_the_only_resident_one(cfg: Confi
     assert gpu.kept == ["a:12b", "b:12b"]  # the cloud profile never evicts
 
 
+def rate_limit() -> OllamaRateLimitError:
+    return OllamaRateLimitError("session cap", status_code=429)
+
+
+def test_translate_stage_falls_back_on_rate_limit_for_the_rest_of_the_pass(cfg: Config) -> None:
+    first = make_context(cfg, SERIES, "Chapter 1")
+    second = make_context(cfg, SERIES, "Chapter 2")
+    for ctx in (first, second):
+        write_ocr(ctx.paths, ("r0001", "안녕"))
+    write_run(first.paths, "test-profile", {"r0001": "stale cloud line"})
+    primary = cloud_profile(fallback="fb")
+    fallback = cloud_profile(name="fb")
+    client = FakeClient([rate_limit(), json_reply({"r0001": "Hi 1"}), json_reply({"r0001": "Hi 2"})])
+    stage = TranslateStage(client, [primary], {"test-profile": fallback})
+
+    outcome = run_adapter(stage, first, force=True)
+    assert outcome.status == "done"
+    assert outcome.metrics["fallbacks_used"] == 1.0
+    assert CandidateRun.load(first.paths.artifact("translations/fb.json")).candidates[0].text == "Hi 1"
+    assert not first.paths.artifact("translations/test-profile.json").exists()  # stale, would be judged
+
+    assert run_adapter(stage, second, force=True).status == "done"
+    assert client.calls == 3  # chapter 2 went straight to the fallback: no second rate-limited attempt
+    assert first.manifest.stages["translate"].outputs == [
+        "translations/test-profile.json"
+    ]  # retried next run
+
+
+def test_translate_stage_primary_success_removes_a_stale_fallback_run(cfg: Config) -> None:
+    ctx = make_context(cfg, SERIES, CHAPTER)
+    write_ocr(ctx.paths, ("r0001", "안녕"))
+    write_run(ctx.paths, "fb", {"r0001": "old fallback line"})
+    stage = TranslateStage(
+        FakeClient([json_reply({"r0001": "Hello"})]),
+        [cloud_profile(fallback="fb")],
+        {"test-profile": cloud_profile(name="fb")},
+    )
+    outcome = run_adapter(stage, ctx, force=True)
+    assert outcome.metrics["fallbacks_used"] == 0.0
+    assert ctx.paths.artifact("translations/test-profile.json").is_file()
+    assert not ctx.paths.artifact("translations/fb.json").exists()
+
+
+def test_translate_stage_rate_limit_without_fallback_propagates(cfg: Config) -> None:
+    ctx = make_context(cfg, SERIES, CHAPTER)
+    write_ocr(ctx.paths, ("r0001", "안녕"))
+    with pytest.raises(OllamaRateLimitError):
+        TranslateStage(FakeClient([rate_limit()]), [cloud_profile()]).run(ctx, {})
+
+
+def test_translate_stage_gpu_group_counts_a_local_fallback() -> None:
+    stage = TranslateStage(
+        FakeClient([]), [cloud_profile(fallback="fb")], {"test-profile": profile(name="fb")}
+    )
+    assert stage.gpu_group == OLLAMA_GROUP
+
+
 def test_translate_stage_client_error_propagates(cfg: Config) -> None:
     ctx = make_context(cfg, SERIES, CHAPTER)
     write_ocr(ctx.paths, ("r0001", "안녕"))
@@ -368,6 +425,7 @@ def test_judge_stage_run_writes_final_metrics_and_is_resumable(cfg: Config) -> N
         "untranslated": 0.0,
         "violations_left": 0.0,
         "requests": 1.0,
+        "rate_limited": 0.0,
     }
     assert "seconds" in outcome.metrics
     manifest = load_manifest(ctx.paths.manifest, SERIES, CHAPTER)
@@ -392,6 +450,32 @@ def test_translate_stage_sends_the_series_glossary_to_the_model(cfg: Config) -> 
     client = FakeClient([json_reply({"r0001": "Hello Sungjin"})])
     run_adapter(TranslateStage(client, [cloud_profile()]), ctx, force=True)
     assert "Sungjin" in json.dumps(client.messages[0], ensure_ascii=False)
+
+
+def test_judge_stage_judges_only_its_own_runs(cfg: Config) -> None:
+    ctx = make_context(cfg, SERIES, CHAPTER)
+    write_ocr(ctx.paths, ("r0001", "안녕"))
+    write_run(ctx.paths, "cloud", {"r0001": "Hello"})
+    write_run(ctx.paths, "old-local", {"r0001": "Not hello"})  # left by an earlier profile set
+    client = FakeClient([])
+    stage = JudgeStage(client, JudgeConfig(model=f"{MODEL}:cloud"), ["cloud", "fb"])  # fb: not on disk
+    assert run_adapter(stage, ctx).status == "done"
+    assert client.calls == 0  # one candidate left: auto-picked, the stale run never reached the judge
+    assert [line.sources for line in FinalArtifact.load(ctx.paths.artifact("final.json")).lines] == [
+        ["cloud"]
+    ]
+
+
+def test_judge_stage_rate_limit_keeps_the_deterministic_pick(cfg: Config) -> None:
+    ctx = make_context(cfg, SERIES, CHAPTER)
+    write_ocr(ctx.paths, ("r0001", "안녕"))
+    write_run(ctx.paths, "run1", {"r0001": "Hello"})
+    write_run(ctx.paths, "run2", {"r0001": "Goodbye"})
+    outcome = run_adapter(JudgeStage(FakeClient([rate_limit()]), JudgeConfig(model=f"{MODEL}:cloud")), ctx)
+    assert outcome.status == "done"
+    assert outcome.metrics["rate_limited"] == 1.0
+    line = FinalArtifact.load(ctx.paths.artifact("final.json")).lines[0]
+    assert (line.text, line.flags) == ("Hello", ["judge_failed"])
 
 
 def test_judge_stage_reports_locked_term_violations_from_the_series_glossary(cfg: Config) -> None:

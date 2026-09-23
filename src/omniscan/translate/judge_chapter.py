@@ -21,6 +21,7 @@ def judge_chapter(
     run_ids: Sequence[str] | None = None,
     force: bool = False,
     story_summary: str | None = None,
+    rate_limit_fallback: bool = False,
 ) -> tuple[Literal["done", "skipped"], FinalArtifact | None, JudgeStats | None]:
     """Judge one chapter's candidate runs into `final.json` (skipped when it exists, unless forced)."""
     output = paths.artifact("final.json")
@@ -31,7 +32,15 @@ def judge_chapter(
         raise FileNotFoundError("ocr.json missing — run the ocr stage first")
     runs = _load_runs(paths, run_ids)
     artifact = RegionsArtifact.load(ocr_path)
-    lines, stats = judge_regions(client, cfg, artifact.regions, runs, entries, story_summary=story_summary)
+    lines, stats = judge_regions(
+        client,
+        cfg,
+        artifact.regions,
+        runs,
+        entries,
+        story_summary=story_summary,
+        rate_limit_fallback=rate_limit_fallback,
+    )
     result = FinalArtifact(judge_model=cfg.model, lines=lines)
     result.save(output)
     return "done", result, stats

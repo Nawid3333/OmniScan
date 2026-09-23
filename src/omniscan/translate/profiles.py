@@ -33,6 +33,9 @@ class TranslationProfile(BaseModel):
     temperature: float = Field(default=0.3, ge=0.0, le=2.0)
     think: bool | None = None  # None = do not send the parameter at all
     chunk_regions: int = Field(default=30, ge=1)  # chat_json only: max regions per request
+    # Name of the profile that translates instead when this one hits the Ollama rate limit (cloud
+    # tokens exhausted). It may be disabled: it then only ever runs as this fallback.
+    fallback: str | None = None
 
     @field_validator("name")
     @classmethod
@@ -40,6 +43,29 @@ class TranslationProfile(BaseModel):
         if not _NAME_RE.fullmatch(value):
             raise ValueError(f"invalid profile name {value!r} (must match ^[A-Za-z0-9][A-Za-z0-9._-]*$)")
         return value
+
+
+def resolve_fallbacks(
+    profiles: Sequence[TranslationProfile], known: dict[str, TranslationProfile]
+) -> dict[str, TranslationProfile]:
+    """profile name -> its fallback profile for every profile in `profiles` that names one in `known`.
+
+    A fallback that is missing, names itself, or has a fallback of its own raises ValueError: the chain
+    is one level deep so a rate limit can never loop.
+    """
+    resolved: dict[str, TranslationProfile] = {}
+    for profile in profiles:
+        if profile.fallback is None:
+            continue
+        fallback = known.get(profile.fallback)
+        if fallback is None:
+            raise ValueError(f"profile {profile.name!r}: unknown fallback profile {profile.fallback!r}")
+        if fallback.name == profile.name or fallback.fallback is not None:
+            raise ValueError(
+                f"profile {profile.name!r}: fallback {fallback.name!r} must be another profile without a fallback"
+            )
+        resolved[profile.name] = fallback
+    return resolved
 
 
 def default_profile_paths() -> list[Path]:

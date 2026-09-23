@@ -7,12 +7,20 @@
 # needed for them. `think = false` keeps thinking models from spending the whole budget reasoning;
 # translategemma rejects `think: true`, so its profile sends nothing.
 
+#
+# Default: gemma4-31b-cloud alone, with translategemma-12b-local as its fallback when the cloud tokens
+# are exhausted (rate limit). Measured in docs/benchmarks/translation-model-comparison.md: the cloud
+# model alone scores as well as every judged ensemble and is the fastest; translategemma is the best
+# local model per second but reverses some meanings, so it only runs when the cloud cannot.
+
 [profiles.translategemma-12b-local]
+enabled = false
 endpoint = "local"
 model = "translategemma:12b"
 style = "translategemma"
 
 [profiles.gemma4-12b-local]
+enabled = false
 endpoint = "local"
 model = "gemma4:12b"
 style = "chat_json"
@@ -23,6 +31,7 @@ endpoint = "local"
 model = "gemma4:31b-cloud"
 style = "chat_json"
 think = false
+fallback = "translategemma-12b-local"
 
 [profiles.glm-5-3-flash-cloud]
 enabled = false

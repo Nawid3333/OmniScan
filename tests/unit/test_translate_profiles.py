@@ -7,7 +7,12 @@ from pathlib import Path
 import pytest
 
 from omniscan.core.config import DEFAULT_TOML, USER_TOML
-from omniscan.translate.profiles import TranslationProfile, default_profile_paths, load_profiles
+from omniscan.translate.profiles import (
+    TranslationProfile,
+    default_profile_paths,
+    load_profiles,
+    resolve_fallbacks,
+)
 
 SHIPPED = Path(DEFAULT_TOML.parent / "translation_profiles.toml")
 
@@ -33,7 +38,7 @@ def test_shipped_file_loads_the_five_documented_profiles() -> None:
         "translategemma:12b",
         "translategemma",
         None,
-        True,
+        False,  # only runs as the cloud profile's fallback
     )
     g12 = profiles["gemma4-12b-local"]
     assert (g12.endpoint, g12.model, g12.style, g12.think, g12.enabled) == (
@@ -41,15 +46,19 @@ def test_shipped_file_loads_the_five_documented_profiles() -> None:
         "gemma4:12b",
         "chat_json",
         False,
-        True,
+        False,
     )
     g31 = profiles["gemma4-31b-cloud"]
-    assert (g31.endpoint, g31.model, g31.style, g31.think) == (
+    assert (g31.endpoint, g31.model, g31.style, g31.think, g31.enabled, g31.fallback) == (
         "local",
         "gemma4:31b-cloud",
         "chat_json",
         False,
+        True,
+        "translategemma-12b-local",
     )
+    assert [p.name for p in profiles.values() if p.enabled] == ["gemma4-31b-cloud"]
+    assert resolve_fallbacks([g31], profiles) == {"gemma4-31b-cloud": tg}
     glm = profiles["glm-5-3-flash-cloud"]
     assert (glm.endpoint, glm.model, glm.style, glm.think, glm.enabled) == (
         "local",
@@ -186,3 +195,25 @@ def test_profile_defaults_and_name_validation_direct() -> None:
     assert profile.chunk_regions == 30
     with pytest.raises(ValueError, match="invalid profile name"):
         TranslationProfile(endpoint="local", model="m", style="chat_json", name="-bad")
+
+
+def _p(name: str, fallback: str | None = None) -> TranslationProfile:
+    return TranslationProfile(name=name, endpoint="local", model="m", style="chat_json", fallback=fallback)
+
+
+@pytest.mark.parametrize(
+    ("known", "match"),
+    [
+        ({"a": _p("a", "missing")}, "unknown fallback"),
+        ({"a": _p("a", "a")}, "must be another profile"),
+        ({"a": _p("a", "b"), "b": _p("b", "c"), "c": _p("c")}, "must be another profile"),
+    ],
+)
+def test_resolve_fallbacks_rejects_bad_chains(known: dict[str, TranslationProfile], match: str) -> None:
+    with pytest.raises(ValueError, match=match):
+        resolve_fallbacks([known["a"]], known)
+
+
+def test_resolve_fallbacks_skips_profiles_without_one() -> None:
+    known = {"a": _p("a"), "b": _p("b", "c"), "c": _p("c")}
+    assert resolve_fallbacks([known["a"], known["b"]], known) == {"b": known["c"]}

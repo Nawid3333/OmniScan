@@ -4,18 +4,21 @@ To save tokens the judge model is asked only about regions whose candidates disa
 locked glossary term; agreeing regions are picked deterministically. Answers that still break a
 locked term get a repair round (`max_repair_rounds`). Reply parsing is as tolerant as the
 translation runner's (cloud models fence, add prose, omit ids); anything unresolved falls back to
-the deterministic candidate choice. Client errors propagate unchanged.
+the deterministic candidate choice. Client errors propagate unchanged, except an Ollama rate limit
+when the caller asks for `rate_limit_fallback`: the judge then stops asking and every unanswered region
+gets the deterministic choice, flagged "judge_failed".
 """
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from omniscan.core.schemas import FinalLine, GlossaryEntry, Region
-from omniscan.llm.ollama import ChatResponse
+from omniscan.llm.ollama import ChatResponse, OllamaRateLimitError
 from omniscan.translate.agree import candidates_agree, normalize_line
 from omniscan.translate.judge_config import JudgeConfig
 from omniscan.translate.judge_prompts import JUDGE_SCHEMA, JudgeItem, judge_messages, label_for
@@ -23,6 +26,8 @@ from omniscan.translate.parse import extract_list
 from omniscan.translate.postcheck import check_locked_terms
 from omniscan.translate.prompts import source_text, translatable
 from omniscan.translate.run import ChatClient
+
+log = logging.getLogger(__name__)
 
 _RATIONALE_MAX = 300  # the reply's rationale, whitespace-collapsed and cut to this many characters
 
@@ -45,6 +50,7 @@ class JudgeStats:
     prompt_tokens: int
     completion_tokens: int
     seconds: float
+    rate_limited: bool = False  # the model hit the rate limit and the rest fell back (rate_limit_fallback)
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +109,7 @@ def judge_regions(
     *,
     story_summary: str | None = None,
     clock: Callable[[], float] = time.perf_counter,
+    rate_limit_fallback: bool = False,
 ) -> tuple[list[FinalLine], JudgeStats]:
     """Judge the chapter's translatable regions into final lines, asking the model only where needed."""
     start = clock()
@@ -148,16 +155,25 @@ def judge_regions(
         return _resolve([a for a, _, _ in triples], response.content)
 
     resolutions: dict[str, _Resolution | None] = {}
-    first_round: list[_Triple] = [(a, None, ()) for a in judged]
-    for chunk in _chunks(first_round, cfg.chunk_regions):
-        resolutions.update(chat(chunk, repair=False))
-    repair_rounds_used = 0
-    pending = _repair_triples(judged, resolutions, entries)
-    while pending and repair_rounds_used < cfg.max_repair_rounds:
-        for chunk in _chunks(pending, cfg.chunk_regions):
-            resolutions.update(chat(chunk, repair=True))
-        repair_rounds_used += 1
+    rate_limited = False
+    try:
+        first_round: list[_Triple] = [(a, None, ()) for a in judged]
+        for chunk in _chunks(first_round, cfg.chunk_regions):
+            resolutions.update(chat(chunk, repair=False))
+        repair_rounds_used = 0
         pending = _repair_triples(judged, resolutions, entries)
+        while pending and repair_rounds_used < cfg.max_repair_rounds:
+            for chunk in _chunks(pending, cfg.chunk_regions):
+                resolutions.update(chat(chunk, repair=True))
+            repair_rounds_used += 1
+            pending = _repair_triples(judged, resolutions, entries)
+    except OllamaRateLimitError:
+        if not rate_limit_fallback:
+            raise
+        rate_limited = True
+        log.warning(
+            "judge %s hit the Ollama rate limit; unanswered regions keep the deterministic pick", cfg.model
+        )
 
     for analysis in judged:
         decided[analysis.region.id] = _final_line(analysis, resolutions.get(analysis.region.id), entries)
@@ -173,6 +189,7 @@ def judge_regions(
         prompt_tokens=usage.prompt_tokens,
         completion_tokens=usage.completion_tokens,
         seconds=clock() - start,
+        rate_limited=rate_limited,
     )
 
 
