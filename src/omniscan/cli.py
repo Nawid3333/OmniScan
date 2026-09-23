@@ -48,18 +48,23 @@ from omniscan.update.github import DEFAULT_REPO, ReleaseInfo, UpdateError, platf
 from omniscan.update.version import current_version
 from omniscan.watermark.store import WatermarkStore
 
-app = typer.Typer(help="OmniScan — manhwa/manga translator", no_args_is_help=True)
+app = typer.Typer(help="OmniScan — manhwa/manga translator", invoke_without_command=True)
 
 STATUS_STYLES = {"OK": "green", "WARN": "yellow", "FAIL": "red"}
 
 
-@app.callback()
+@app.callback(invoke_without_command=True)
 def main(
+    ctx: typer.Context,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug log output.")] = False,
     quiet: Annotated[bool, typer.Option("--quiet", "-q", help="Warnings only.")] = False,
 ) -> None:
-    """OmniScan global options."""
+    """OmniScan global options. No subcommand: opens the interactive menu."""
     setup_logging("DEBUG" if verbose else "WARNING" if quiet else "INFO")
+    if ctx.invoked_subcommand is None:
+        from omniscan.menu import run_menu
+
+        raise typer.Exit(run_menu(get_config()))
 
 
 @app.command()

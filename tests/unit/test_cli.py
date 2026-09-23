@@ -47,6 +47,33 @@ def test_help_lists_all_commands() -> None:
         assert name in result.output
 
 
+def test_bare_cli_invocation_opens_menu(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`omniscan` with no subcommand opens the interactive menu (card MENU1)."""
+    calls: list[Config] = []
+
+    def fake_menu(cfg: Config, **_: object) -> int:
+        calls.append(cfg)
+        return 0
+
+    monkeypatch.setattr("omniscan.menu.run_menu", fake_menu)
+    result = runner.invoke(app, [])
+    assert result.exit_code == 0
+    assert len(calls) == 1
+
+
+def test_cli_help_still_works() -> None:
+    """`--help` still prints the normal Typer help despite invoke_without_command."""
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0
+    assert "Usage:" in result.output
+
+
+def test_cli_known_subcommand_unaffected() -> None:
+    """A normal subcommand invocation still reaches that command, not the menu."""
+    result = runner.invoke(app, ["version"])
+    assert result.exit_code == 0
+
+
 def test_doctor_json_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
     results = [
         CheckResult(name="python", status="OK", detail="3.14.1"),
