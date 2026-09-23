@@ -231,7 +231,8 @@ def _auto_line(analysis: _Analysis, cfg: JudgeConfig, entries: Sequence[Glossary
     if not candidates_agree([c.text for c in analysis.all_candidates], cfg.agree_threshold):
         return None
     source = source_text(analysis.region)
-    clean = [c for c in analysis.all_candidates if not check_locked_terms(source, c.text, entries)]
+    lang = analysis.region.lang
+    clean = [c for c in analysis.all_candidates if not check_locked_terms(source, c.text, entries, lang)]
     if not clean:
         return None
     first = clean[0]
@@ -290,7 +291,9 @@ def _repair_triples(
         if resolution is None:
             triples.append((analysis, "", ("the previous answer was invalid or missing",)))
             continue
-        violations = check_locked_terms(source_text(analysis.region), resolution.text, entries)
+        violations = check_locked_terms(
+            source_text(analysis.region), resolution.text, entries, analysis.region.lang
+        )
         if violations:
             problems = tuple(f"missing binding term: {v.source} -> {v.expected}" for v in violations)
             triples.append((analysis, resolution.text, problems))
@@ -302,6 +305,7 @@ def _final_line(
 ) -> FinalLine:
     """The final line of a judged region: the resolution, or the deterministic fallback."""
     source = source_text(analysis.region)
+    lang = analysis.region.lang
     if resolution is not None:
         return FinalLine(
             region_id=analysis.region.id,
@@ -309,12 +313,14 @@ def _final_line(
             decision=resolution.decision,
             sources=resolution.sources,
             rationale=resolution.rationale,
-            flags=["glossary_violation"] if check_locked_terms(source, resolution.text, entries) else [],
+            flags=["glossary_violation"]
+            if check_locked_terms(source, resolution.text, entries, lang)
+            else [],
         )
-    clean = [c for c in analysis.all_candidates if not check_locked_terms(source, c.text, entries)]
+    clean = [c for c in analysis.all_candidates if not check_locked_terms(source, c.text, entries, lang)]
     fallback = clean[0] if clean else analysis.all_candidates[0]
     flags = ["judge_failed"]
-    if check_locked_terms(source, fallback.text, entries):
+    if check_locked_terms(source, fallback.text, entries, lang):
         flags.append("glossary_violation")
     return FinalLine(
         region_id=analysis.region.id,

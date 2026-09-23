@@ -153,7 +153,7 @@ def test_find_terms_consumes_every_listed_particle() -> None:
         "를",
     )
     for particle in particles:
-        matches = find_terms("지훈" + particle + " 다음", entries)
+        matches = find_terms("지훈" + particle + " 다음", entries, lang="ko")
         assert len(matches) == 1, particle
         assert matches[0].particle == particle, particle
         assert matches[0].end == 2 + len(particle), particle
@@ -166,12 +166,12 @@ def test_find_terms_scan_resumes_after_the_particle() -> None:
         GlossaryEntry(id=1, source="학교", target="school"),
         GlossaryEntry(id=2, source="에", target="at"),
     ]
-    matches = find_terms("학교에서 갔다", entries)
+    matches = find_terms("학교에서 갔다", entries, lang="ko")
     assert matches == [Match(entry_id=1, source="학교", start=0, end=4, particle="에서")]
 
 
 def test_find_terms_reaches_a_term_at_the_last_character() -> None:
-    matches = find_terms("학교가", [GlossaryEntry(id=1, source="가", target="Ga")])
+    matches = find_terms("학교가", [GlossaryEntry(id=1, source="가", target="Ga")], lang="ko")
     assert matches == [Match(entry_id=1, source="가", start=2, end=3, particle=None)]
 
 

@@ -25,14 +25,19 @@ def normalize_for_check(text: str) -> str:
     return unicodedata.normalize("NFKC", text).casefold()
 
 
-def check_locked_terms(source: str, target: str, entries: Sequence[GlossaryEntry]) -> list[TermViolation]:
-    """Violations for locked entries hit in `source` whose target is missing from `target`, in source order."""
+def check_locked_terms(
+    source: str, target: str, entries: Sequence[GlossaryEntry], lang: str
+) -> list[TermViolation]:
+    """Violations for locked entries hit in `source` whose target is missing from `target`, in source order.
+
+    `lang` selects the particle set as in `find_terms`.
+    """
     locked = [e for e in entries if e.status == "locked"]
     if not locked:
         return []
     by_id = {e.id: e for e in locked}
     first: dict[int, GlossaryEntry] = {}  # entry id -> entry, in order of first occurrence in source
-    for match in find_terms(source, locked):
+    for match in find_terms(source, locked, lang):
         first.setdefault(match.entry_id, by_id[match.entry_id])
     norm_target = normalize_for_check(target)
     return [
@@ -51,7 +56,7 @@ def check_regions(
         text = texts.get(region.id)
         if text is None:
             continue
-        violations = check_locked_terms(source_text(region), text, entries)
+        violations = check_locked_terms(source_text(region), text, entries, region.lang)
         if violations:
             result[region.id] = violations
     return result

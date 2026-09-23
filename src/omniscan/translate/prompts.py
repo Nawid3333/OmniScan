@@ -85,12 +85,13 @@ def translatable(regions: Sequence[Region]) -> list[Region]:
 
 def glossary_subset(regions: Sequence[Region], entries: Sequence[GlossaryEntry]) -> list[GlossaryEntry]:
     """Locked/proposed entries whose source term or an alias occurs in any region's source text."""
+    lang = region_language(regions)
     texts = [source_text(r) for r in regions]
     subset: list[GlossaryEntry] = []
     for entry in entries:
         if entry.status == "rejected":
             continue
-        if any(find_terms(text, [entry]) for text in texts):
+        if any(find_terms(text, [entry], lang) for text in texts):
             subset.append(entry)
     return subset
 
@@ -120,14 +121,17 @@ def chat_json_messages(
     ]
 
 
-def substitute_binding(text: str, entries: Sequence[GlossaryEntry]) -> str:
-    """Replace locked glossary terms with their targets (right-to-left); particles stay untouched."""
+def substitute_binding(text: str, entries: Sequence[GlossaryEntry], lang: str) -> str:
+    """Replace locked glossary terms with their targets (right-to-left); particles stay untouched.
+
+    `lang` selects the particle set as in `find_terms`.
+    """
     locked = [e for e in entries if e.status == "locked"]
     if not locked:
         return text
     by_id = {e.id: e for e in locked}
     result = text
-    for match in reversed(find_terms(result, locked)):
+    for match in reversed(find_terms(result, locked, lang)):
         entry = by_id[match.entry_id]
         result = result[: match.start] + entry.target + result[match.start + len(match.source) :]
     return result

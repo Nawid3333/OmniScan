@@ -1,4 +1,4 @@
-"""Glossary term matcher: exact-string matching over Korean source text with particle (조사) stripping."""
+"""Glossary term matcher: exact-string matching over source text with language-aware particle stripping."""
 
 from __future__ import annotations
 
@@ -27,7 +27,42 @@ KOREAN_PARTICLES: tuple[str, ...] = (
     "을",
     "를",
 )
-_PARTICLES_LONGEST_FIRST = tuple(sorted(KOREAN_PARTICLES, key=len, reverse=True))
+
+# Japanese case particles that attach directly after a noun, the same way KOREAN_PARTICLES does. Longer
+# compound forms first so e.g. "とは" is tried before its component "は" (the lookup below sorts by length
+# anyway, but the tuple is written longest-first for readability, matching KOREAN_PARTICLES's style).
+JAPANESE_PARTICLES: tuple[str, ...] = (
+    "とは",
+    "には",
+    "での",
+    "から",
+    "まで",
+    "は",
+    "が",
+    "を",
+    "に",
+    "で",
+    "と",
+    "も",
+    "の",
+    "へ",
+    "や",
+)
+
+# Particle set to try after a matched term, by the text's source language. Chinese and English have no
+# equivalent attached particles, so they get an empty tuple (no stripping — always correct for them, not a
+# gap: see docs/reports/GL2.md's Why section).
+PARTICLES_BY_LANG: dict[str, tuple[str, ...]] = {
+    "ko": KOREAN_PARTICLES,
+    "ja": JAPANESE_PARTICLES,
+    "zh": (),
+    "en": (),
+}
+
+
+def _particles_longest_first(lang: str) -> tuple[str, ...]:
+    """`PARTICLES_BY_LANG[lang]` sorted longest-first; unknown `lang` -> no particles (empty tuple)."""
+    return tuple(sorted(PARTICLES_BY_LANG.get(lang, ()), key=len, reverse=True))
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,12 +85,14 @@ def _candidates(entries: Sequence[GlossaryEntry]) -> tuple[tuple[str, int], ...]
     return tuple(sorted(ordered, key=lambda candidate: -len(candidate[0])))
 
 
-def find_terms(text: str, entries: Sequence[GlossaryEntry]) -> list[Match]:
+def find_terms(text: str, entries: Sequence[GlossaryEntry], lang: str) -> list[Match]:
     """Greedy left-to-right, non-overlapping scan for glossary terms with an optional attached particle.
 
     Entries must carry an id (as returned by `GlossaryStore.add`); a None id raises ValueError.
+    `lang` selects the particle set — see PARTICLES_BY_LANG; an unrecognised code strips no particles instead of raising.
     """
     candidates = _candidates(entries)
+    particles = _particles_longest_first(lang)
     matches: list[Match] = []
     i = 0
     while i < len(text):
@@ -65,7 +102,7 @@ def find_terms(text: str, entries: Sequence[GlossaryEntry]) -> list[Match]:
             continue
         candidate, priority = hit
         term_end = i + len(candidate)
-        particle = next((p for p in _PARTICLES_LONGEST_FIRST if text.startswith(p, term_end)), None)
+        particle = next((p for p in particles if text.startswith(p, term_end)), None)
         end = term_end + len(particle) if particle else term_end
         entry_id = entries[priority].id
         if entry_id is None:

@@ -276,7 +276,7 @@ def test_translategemma_one_request_per_region_no_format() -> None:
     run = run_profile(client, profile(style="translategemma"), regions, entries)
     assert len(client.calls) == 2
     for call, reg in zip(client.calls, regions, strict=True):
-        expected = translategemma_prompt(substitute_binding(source_text(reg), entries))
+        expected = translategemma_prompt(substitute_binding(source_text(reg), entries, reg.lang))
         assert call["messages"] == [{"role": "user", "content": expected}]
         assert call["format"] is None
         assert call["think"] is None

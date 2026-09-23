@@ -218,7 +218,7 @@ def _run_translategemma(
 
 def _prompt_for(region: Region, entries: Sequence[GlossaryEntry]) -> str:
     """The translategemma prompt for one region: locked glossary terms pre-substituted."""
-    return translategemma_prompt(substitute_binding(source_text(region), entries), region.lang)
+    return translategemma_prompt(substitute_binding(source_text(region), entries, region.lang), region.lang)
 
 
 def _chat(

@@ -86,6 +86,12 @@ def test_glossary_subset_hits_aliases_and_particles_excludes_rejected_and_missin
     assert [e.id for e in subset] == [1, 2, 3, 6]  # 협회 is a proposed entry with a hit inside "헌터 협회"
 
 
+def test_glossary_subset_japanese_particle_hit() -> None:
+    regions = [region("r1", text="ユジンは来た", lang="ja")]
+    subset = glossary_subset(regions, [entry(1, "ユジン", "Yujin"), entry(2, "성진", "Seong-jin")])
+    assert [e.id for e in subset] == [1]
+
+
 def test_chat_json_messages_sections_and_regions_list() -> None:
     regions = [region("r0001", text="성진이가\n게이트에"), region("r0002", text="쿵!", kind="sfx")]
     entries = [
@@ -125,9 +131,16 @@ def test_substitute_binding_replaces_locked_terms_only() -> None:
         entry(4, "없는말", "Never", status="locked"),
     ]
     text = "성진이가 게이트에 들어간 지"
-    assert substitute_binding(text, entries) == "Seong-jin이가 Gate에 들어간 지"
-    assert substitute_binding("지훈이가 갔다", entries) == "지훈이가 갔다"  # proposed: untouched
-    assert substitute_binding("아무 용어 없는 문장", entries) == "아무 용어 없는 문장"
+    assert substitute_binding(text, entries, lang="ko") == "Seong-jin이가 Gate에 들어간 지"
+    assert substitute_binding("지훈이가 갔다", entries, lang="ko") == "지훈이가 갔다"  # proposed: untouched
+    assert substitute_binding("아무 용어 없는 문장", entries, lang="ko") == "아무 용어 없는 문장"
+
+
+def test_substitute_binding_japanese_particle_stays_put() -> None:
+    entries = [entry(1, "ユジン", "Yujin", status="locked")]
+    assert substitute_binding("ユジンは来た", entries, lang="ja") == "Yujinは来た"
+    # compound particle: the replacement span must not eat or leave behind part of とは
+    assert substitute_binding("ユジンとは違う", entries, lang="ja") == "Yujinとは違う"
 
 
 def test_translategemma_prompt_appends_text_to_probe_template() -> None:

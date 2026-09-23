@@ -420,7 +420,7 @@ def create_app(
         hits: dict[str, list[dict[str, object]]] = {}
         for region in ocr.regions:
             region_hits: list[dict[str, object]] = []
-            for match in find_terms(region.text, entries):
+            for match in find_terms(region.text, entries, region.lang):
                 entry = next(e for e in entries if e.id == match.entry_id)
                 final_text = finals.get(region.id)
                 region_hits.append(
