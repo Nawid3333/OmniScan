@@ -16,7 +16,7 @@ If you are a builder running a task card, this file plus the card are your contr
 
 ## Commands
 ```bash
-uv sync                      # install/refresh deps
+uv sync --all-extras         # install/refresh deps, including the `gui` extra (PySide6) tests/gui/** needs
 uv run pytest                # all tests (GPU tests are marked `gpu`)
 uv run pytest -m "not gpu"   # CPU-only tests
 uv run ruff format . && uv run ruff check --fix .

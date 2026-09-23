@@ -50,7 +50,7 @@ pipeline stage consumes it yet.
 ## Quickstart
 
 ```bash
-uv sync
+uv sync --all-extras  # add --extra gui if you only want the desktop app's dependency, not everything
 uv run omniscan doctor
 uv run python scripts/make_demo_chapter.py
 uv run omniscan slice DemoSeries
