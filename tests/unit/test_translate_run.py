@@ -295,3 +295,26 @@ def test_translategemma_partial_saved_after_20_regions(tmp_path: Path) -> None:
     run_profile(client, profile(style="translategemma"), regions, [], partial_path=partial)
     saved = CandidateRun.load(partial)
     assert [c.region_id for c in saved.candidates] == [f"r{i:04d}" for i in range(1, 21)]
+
+
+@pytest.mark.parametrize("style", ["chat_json", "translategemma"])
+def test_regions_without_letters_pass_through_unsent(style: str) -> None:
+    regions = [region("r0001", text="!"), region("r0002", text="안녕"), region("r0003", text="……\n?!")]
+    reply = json_reply(["r0002"]) if style == "chat_json" else "Hello"
+    client = FakeClient([reply])
+    run = run_profile(client, profile(style=style), regions, [])
+    assert len(client.calls) == 1
+    sent = client.calls[0]["messages"][-1]["content"]
+    assert "안녕" in sent and "r0001" not in sent and "r0003" not in sent and "……" not in sent
+    texts = {c.region_id: c.text for c in run.candidates}
+    assert texts["r0001"] == "!"
+    assert texts["r0003"] == "…… ?!"  # the whitespace-collapsed source text
+    assert texts["r0002"] in ("T r0002", "Hello")
+    assert run.usage["missing"] == 0.0
+
+
+def test_a_region_with_any_letter_is_still_sent() -> None:
+    client = FakeClient(["Pa!"])
+    run = run_profile(client, profile(style="translategemma"), [region("r0001", text="파!")], [])
+    assert len(client.calls) == 1
+    assert run.candidates[0].text == "Pa!"

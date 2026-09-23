@@ -2,7 +2,8 @@
 
 Errors from the chat client (including `OllamaRateLimitError`) propagate unchanged after the partial
 file has been saved, so a re-run resumes from what completed. Tolerant parsing handles the malformed
-answers cloud models produce; ids the model never returns get no candidate.
+answers cloud models produce; ids the model never returns get no candidate. A region without any letter
+(punctuation, digits, symbols only) is never sent: its source text is its candidate.
 """
 
 from __future__ import annotations
@@ -96,6 +97,9 @@ def run_profile(
     for candidate in _restored_candidates(partial_path, profile):
         if candidate.region_id in {r.id for r in targets}:
             by_id[candidate.region_id] = candidate
+    for region in targets:
+        if region.id not in by_id and not _has_letters(source_text(region)):
+            by_id[region.id] = Candidate(region_id=region.id, text=source_text(region), notes=None)
     remaining = [r for r in targets if r.id not in by_id]
     usage = _Usage()
 
@@ -230,6 +234,16 @@ def _chat(
     )
     usage.record(response, repair=False)
     return response
+
+
+def _has_letters(text: str) -> bool:
+    """True when `text` holds a letter of any script; such a region is sent to the model.
+
+    A region of only punctuation, digits or symbols ("!", "……", "?!") is its own translation. Sent to a
+    model it only invites a hallucination: translategemma:12b answered a lone "!" with "Please provide the
+    Korean text you would like me to translate." (measured on Pepper&Carrot, 6 of 14 such regions).
+    """
+    return any(char.isalpha() for char in text)
 
 
 def _unwrap_reply(text: str, source: str) -> str:
