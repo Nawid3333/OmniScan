@@ -25,6 +25,7 @@ _BACKOFF_BASE_S = 1.0
 _JITTER_FRACTION = 0.25
 _BODY_TRUNC_CHARS = 2000
 _PS_RETRIES = 5
+_REPLY_TOKENS = 4096  # room left for the answer when sizing num_ctx to a prompt
 
 
 @dataclass(slots=True)
@@ -90,6 +91,7 @@ class OllamaClient:
         body: dict[str, Any] = {"model": model, "messages": messages, "stream": False}
         if format is not None:
             body["format"] = format
+        options = self._with_num_ctx(model, messages, options, cloud=cloud)
         if options is not None:
             body["options"] = options
         if keep_alive is not None:
@@ -129,6 +131,23 @@ class OllamaClient:
 
     def __exit__(self, *exc: object) -> None:
         self.close()
+
+    def _with_num_ctx(
+        self, model: str, messages: list[dict[str, Any]], options: dict[str, Any] | None, *, cloud: bool
+    ) -> dict[str, Any] | None:
+        """`options` plus a `num_ctx` for a local model: the configured floor, or more for a long prompt.
+
+        Two tokens per prompt character (an upper bound for CJK and English alike) plus room for the reply,
+        rounded up to 4096, so a whole-chapter prompt is never truncated. Every other request gets the same
+        floor, which keeps the loaded model (Ollama reloads it when num_ctx changes)."""
+        floor = self._cfg.num_ctx
+        if floor == 0 or cloud or model.endswith((":cloud", "-cloud")):
+            return options
+        if options is not None and "num_ctx" in options:
+            return options
+        chars = sum(len(str(message.get("content", ""))) for message in messages)
+        needed = -(-(2 * chars + _REPLY_TOKENS) // 4096) * 4096
+        return {**(options or {}), "num_ctx": max(floor, needed)}
 
     def _endpoint(self, cloud: bool) -> tuple[str, dict[str, str]]:
         """Resolve base URL and auth headers; cloud requires the API key before any I/O."""

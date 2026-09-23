@@ -166,6 +166,42 @@ def test_chat_keep_alive_zero_present_and_omission_absent() -> None:
     assert "keep_alive" not in rec.bodies[0]
 
 
+def test_chat_local_model_gets_the_num_ctx_floor_merged_into_options() -> None:
+    client, rec = make_client()
+    client.chat("gemma3:27b", [{"role": "user", "content": "hi"}], options={"temperature": 0.2})
+    assert rec.bodies[0]["options"] == {"temperature": 0.2, "num_ctx": 16384}
+
+
+def test_chat_long_prompt_raises_num_ctx_to_fit_prompt_and_reply() -> None:
+    client, rec = make_client()
+    client.chat("gemma3:27b", [{"role": "user", "content": "가" * 10_000}])
+    assert rec.bodies[0]["options"] == {"num_ctx": 24576}  # 2 * 10000 + 4096 rounded up to 4096s
+
+
+def test_chat_explicit_num_ctx_is_kept() -> None:
+    client, rec = make_client()
+    client.chat("gemma3:27b", [{"role": "user", "content": "hi"}], options={"num_ctx": 2048})
+    assert rec.bodies[0]["options"] == {"num_ctx": 2048}
+
+
+@pytest.mark.parametrize(
+    ("model", "cloud"), [("gemma4:31b-cloud", False), ("kimi-k3:cloud", False), ("gemma3:27b", True)]
+)
+def test_chat_cloud_models_get_no_num_ctx(model: str, cloud: bool) -> None:
+    client, rec = make_client()
+    client.chat(model, [{"role": "user", "content": "hi"}], cloud=cloud)
+    assert "options" not in rec.bodies[0]
+
+
+def test_chat_num_ctx_0_leaves_it_to_the_server() -> None:
+    rec = Recorder([httpx.Response(200, json=CHAT_BODY)])
+    http = httpx.Client(transport=httpx.MockTransport(rec.handler))
+    secrets = Secrets.model_construct(ollama_api_key=None)
+    client = OllamaClient(OllamaConfig(num_ctx=0), secrets, http=http, sleep=rec.sleep)
+    client.chat("gemma3:27b", [{"role": "user", "content": "hi"}])
+    assert "options" not in rec.bodies[0]
+
+
 def test_ps_parses_running_models() -> None:
     client, rec = make_client([httpx.Response(200, json=PS_BODY)])
     models = client.ps()

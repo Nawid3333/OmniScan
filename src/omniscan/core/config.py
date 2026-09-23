@@ -78,6 +78,11 @@ class OllamaConfig(BaseModel):
     local_url: str = "http://localhost:11434"
     cloud_url: str = "https://ollama.com"
     request_timeout_s: float = 600.0
+    # Context (num_ctx) sent with every local-model request, raised for prompts that need more (see
+    # OllamaClient). Leaving it to the server is unsafe: the Ollama app's context slider applies to every
+    # model, and at 256K it gave translategemma:12b an 8 GiB KV cache that pushed 11 of its 49 layers to
+    # the CPU (measured: 2.6x slower per request). 0 = send nothing, use the server's setting.
+    num_ctx: int = Field(default=16384, ge=0)
 
 
 class OcrConfig(BaseModel):

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, runtime_checkable
 
 from omniscan.core.config import Config
 from omniscan.core.paths import SeriesPaths
@@ -85,6 +85,24 @@ def _needs_local_gpu(endpoint: str, model: str) -> bool:
     return endpoint == "local" and not model.endswith((":cloud", "-cloud"))
 
 
+@runtime_checkable
+class OllamaEvictor(Protocol):
+    """A GpuScheduler that can unload local Ollama models (omniscan.gpu.vram.VramManager)."""
+
+    def evict_ollama(self, keep: str | None = None) -> list[str]: ...
+
+
+def _make_sole_local_model(ctx: ChapterContext, endpoint: str, model: str) -> None:
+    """Unload every other local Ollama model before `model` is used, so only one is ever in VRAM.
+
+    Ollama keeps a second model resident whenever its estimate says both fit, and two 12B models on a
+    16 GB card then run far slower than either alone (measured: gemma4:12b 34 s -> 87 s for one chapter
+    while translategemma:12b stayed loaded). A swap costs one load, which the shared VRAM forced anyway.
+    """
+    if _needs_local_gpu(endpoint, model) and isinstance(ctx.gpu, OllamaEvictor):
+        ctx.gpu.evict_ollama(keep=model)
+
+
 class TranslateStage:
     """Run every enabled translation profile over a chapter's ocr.json (satisfies core.stage.Stage)."""
 
@@ -124,6 +142,7 @@ class TranslateStage:
         story_summary = _series_story_context(ctx.series, ctx.paths.chapter)
         regions = 0.0
         for profile in self._profiles:
+            _make_sole_local_model(ctx, profile.endpoint, profile.model)
             _status, run = translate_chapter(
                 self._client, ctx.paths, profile, entries, force=True, story_summary=story_summary
             )
@@ -172,6 +191,7 @@ class JudgeStage:
 
     def run(self, ctx: ChapterContext, models: Mapping[str, Any]) -> Mapping[str, float]:
         """Do the work, write outputs, return metrics (seconds are added by the runner)."""
+        _make_sole_local_model(ctx, self._judge_cfg.endpoint, self._judge_cfg.model)
         _status, _artifact, stats = judge_chapter(
             self._client,
             ctx.paths,

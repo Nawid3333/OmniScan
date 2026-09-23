@@ -278,6 +278,37 @@ def test_translate_stage_regenerates_an_existing_run(cfg: Config) -> None:
     assert loaded.candidates[0].text == "fresh"
 
 
+class EvictingGpu:
+    """A GpuScheduler double that records every evict_ollama(keep=...) call."""
+
+    def __init__(self) -> None:
+        self.kept: list[str | None] = []
+
+    def acquire(self, group: str) -> dict[str, Any]:
+        return {}
+
+    def reset_peak(self) -> None:
+        pass
+
+    def peak_gib(self) -> float:
+        return 0.0
+
+    def evict_ollama(self, keep: str | None = None) -> list[str]:
+        self.kept.append(keep)
+        return []
+
+
+def test_translate_stage_makes_each_local_model_the_only_resident_one(cfg: Config) -> None:
+    gpu = EvictingGpu()
+    ctx = make_context(cfg, SERIES, CHAPTER, gpu)
+    write_ocr(ctx.paths, ("r0001", "안녕"))
+    replies: list[str | Exception] = [json_reply({"r0001": "Hi"})] * 3
+    profiles = [profile(name="a", model="a:12b"), cloud_profile(name="c"), profile(name="b", model="b:12b")]
+    stage = TranslateStage(FakeClient(replies), profiles)
+    assert run_adapter(stage, ctx, force=True).status == "done"
+    assert gpu.kept == ["a:12b", "b:12b"]  # the cloud profile never evicts
+
+
 def test_translate_stage_client_error_propagates(cfg: Config) -> None:
     ctx = make_context(cfg, SERIES, CHAPTER)
     write_ocr(ctx.paths, ("r0001", "안녕"))

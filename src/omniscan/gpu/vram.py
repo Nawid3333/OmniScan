@@ -224,8 +224,8 @@ class VramManager:
             torch.cuda.empty_cache()
         mark("release done")
 
-    def evict_ollama(self) -> list[str]:
-        """Unload local (VRAM-resident) Ollama models so torch can use the GPU; returns unloaded names."""
+    def evict_ollama(self, keep: str | None = None) -> list[str]:
+        """Unload local (VRAM-resident) Ollama models except `keep`; returns the unloaded names."""
         if self._ollama_url is None:
             return []
         client = self._http or httpx.Client(timeout=10.0)
@@ -233,7 +233,7 @@ class VramManager:
         try:
             running = client.get(f"{self._ollama_url}/api/ps").json().get("models", [])
             for model in running:
-                if model.get("size_vram", 0) > 0:
+                if model.get("size_vram", 0) > 0 and model["name"] != keep:
                     client.post(
                         f"{self._ollama_url}/api/generate", json={"model": model["name"], "keep_alive": 0}
                     ).raise_for_status()

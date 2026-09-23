@@ -57,6 +57,18 @@ def wait_prefetch(vm: VramManager) -> None:
         worker.join(10.0)
 
 
+def test_evict_ollama_keeps_the_named_model() -> None:
+    calls: list[tuple[str, Any]] = []
+    ps = [
+        {"name": "a:12b", "size_vram": 5},
+        {"name": "b:12b", "size_vram": 5},
+        {"name": "c:cpu", "size_vram": 0},
+    ]
+    vm = make_manager(calls, ps)
+    assert vm.evict_ollama(keep="b:12b") == ["a:12b"]
+    assert calls[1:] == [("/api/generate", {"model": "a:12b", "keep_alive": 0})]
+
+
 def test_acquire_is_sticky_and_switches() -> None:
     loads: list[str] = []
 
