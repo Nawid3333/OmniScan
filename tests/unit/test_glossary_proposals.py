@@ -9,7 +9,7 @@ import pytest
 
 from omniscan.core.config import Config, GpuConfig, PathsConfig
 from omniscan.core.paths import SeriesPaths
-from omniscan.core.schemas import BBox, GlossaryEntry, Region, RegionsArtifact
+from omniscan.core.schemas import BBox, GlossaryEntry, Region, RegionKind, RegionsArtifact
 from omniscan.glossary.proposal_prompts import PROPOSAL_SYSTEM
 from omniscan.glossary.proposals import (
     DEFAULT_MIN_CHAPTERS,
@@ -91,6 +91,13 @@ def make_series(cfg: Config, *chapters: str) -> SeriesPaths:
 def write_ocr(cfg: Config, chapter: str) -> None:
     """One ocr.json whose region ids oppose reading_order (sort must follow the geometry)."""
     paths = SeriesPaths.from_config(cfg, "S").chapter(chapter)
+    rows: list[tuple[str, int, RegionKind, str]] = [
+        ("r0002", 1, "bubble_text", "민준이가"),
+        ("r0001", 0, "bubble_text", "안녕"),
+        ("r0003", 2, "watermark", "SCAN SITE"),
+        ("r0004", 3, "bubble_text", "  \n "),
+        ("r0005", 3, "sfx", "쿵!"),
+    ]
     regions = [
         Region(
             id=rid,
@@ -100,15 +107,7 @@ def write_ocr(cfg: Config, chapter: str) -> None:
             reading_order=order,
             text=text,
         )
-        for index, (rid, order, kind, text) in enumerate(
-            [
-                ("r0002", 1, "bubble_text", "민준이가"),
-                ("r0001", 0, "bubble_text", "안녕"),
-                ("r0003", 2, "watermark", "SCAN SITE"),
-                ("r0004", 3, "bubble_text", "  \n "),
-                ("r0005", 3, "sfx", "쿵!"),
-            ]
-        )
+        for index, (rid, order, kind, text) in enumerate(rows)
     ]
     RegionsArtifact(regions=regions).save(paths.artifact("ocr.json"))
 
