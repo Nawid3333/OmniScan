@@ -303,3 +303,40 @@ def test_ask_settings_json() -> None:
         assert tool in permissions["deny"]
     for secret in ("Read(~/.config/omniscan/**)", "Read(**/.env*)", "Read(**/secrets.env)"):
         assert secret in permissions["deny"]
+
+
+# --- 9. print_answer console-encoding fallback ------------------------------------------
+
+
+class _NarrowConsoleStdout:
+    """Fakes a console bound to a narrow codepage (e.g. Windows cp1252): `write` raises
+    UnicodeEncodeError for any character that codepage cannot represent, exactly like the real
+    stream — this is what made `ask`'s answer crash the whole command instead of printing it."""
+
+    encoding = "cp1252"
+
+    def __init__(self) -> None:
+        self.written: list[str] = []
+
+    def write(self, text: str) -> int:
+        text.encode(self.encoding)  # raises UnicodeEncodeError, same failure mode as the real console
+        self.written.append(text)
+        return len(text)
+
+    def flush(self) -> None:
+        pass
+
+
+def test_print_answer_falls_back_on_a_narrow_console_codepage(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _NarrowConsoleStdout()
+    monkeypatch.setattr(sys, "stdout", fake)
+    script.print_answer("before → after")  # the real arrow character that crashed this command
+    assert "".join(fake.written) == "before ? after\n"
+
+
+def test_print_answer_prints_unchanged_when_the_console_can_encode_it(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    script.print_answer("plain ascii answer")
+    out, _err = capsys.readouterr()
+    assert out == "plain ascii answer\n"

@@ -95,6 +95,16 @@ def say(message: str) -> None:
     print(f"omni-builder: {message}", file=sys.stderr, flush=True)
 
 
+def print_answer(answer: str) -> None:
+    """Print `ask`'s answer to stdout; falls back to a lossy re-encode on a console codepage
+    (e.g. Windows cp1252) that cannot represent one of the model's characters, instead of crashing."""
+    try:
+        print(answer)
+    except UnicodeEncodeError:
+        encoding = sys.stdout.encoding or "utf-8"
+        print(answer.encode(encoding, errors="replace").decode(encoding))
+
+
 def claude_env(workdir: Path | None = None) -> dict[str, str]:
     """Environment for the builder; `workdir` pins `import omniscan` to that worktree's src.
 
@@ -298,7 +308,7 @@ def main() -> int:
         if answer is None:
             say(f"ask produced no answer (claude exit code {code}; log: {log})")
             return 1
-        print(answer)
+        print_answer(answer)
         return 0
 
     slot = acquire_slot()  # held until the builder process exits
