@@ -47,6 +47,8 @@ pipeline stage consumes it yet.
   time — `rocm-gfx1201` (this project's own dev machine), `cuda`, `cpu` or `mps` (see Quickstart below and
   `pyproject.toml`) — never `pip install torch` from PyPI.
 - Node 24 for the web UI only (`npm run dev` in `webui/`).
+- CI (`.github/workflows/ci.yml`): every push/PR runs `uv sync --extra cpu` + the CPU-only test suite,
+  lint and type check on Windows, Linux and macOS.
 
 ## Quickstart
 

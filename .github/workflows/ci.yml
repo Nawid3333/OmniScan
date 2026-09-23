@@ -1,0 +1,49 @@
+# ci (card P2): prove, for real, that `uv sync --extra cpu` plus the CPU-only test suite works on every
+# OS PyTorch supports — not just on the one AMD ROCm dev machine the repo has always run on.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      # the whole point is comparing all three independently — a failure on one OS must not cancel the others
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    # bash on all three (Git Bash on Windows runners) so quoting and `&&` mean the same everywhere;
+    # the Windows default run shell is pwsh, which would work but is not identical
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v6
+
+      # exactly one torch backend extra — GitHub-hosted runners have no GPU of any kind, and the four
+      # backend extras conflict by design ([tool.uv.conflicts] refuses more than one at a time), so
+      # --all-extras would fail loudly. Installs from the committed uv.lock; Python 3.14 resolves itself.
+      - name: Sync (cpu backend)
+        run: uv sync --extra cpu
+
+      # no GPU hardware in CI: every @pytest.mark.gpu test is deselected (they assume real accelerated
+      # kernels, not torch.device("cpu") substitution). tests/gui skips itself when PySide6 is absent,
+      # since the gui extra is deliberately not synced here (Qt headless needs a virtual display).
+      - name: Test (CPU-only suite)
+        run: uv run pytest -m "not gpu"
+
+      - name: Lint
+        run: uv run ruff format --check . && uv run ruff check .
+
+      - name: Type check
+        run: uv run pyright
