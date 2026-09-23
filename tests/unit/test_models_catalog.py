@@ -458,9 +458,15 @@ def test_real_catalog_recommended_for_matches_the_measured_defaults() -> None:
         "ocr-det-ppocrv5-server": ["ko"],
         "ocr-rec-korean-ppocrv5-mobile": ["ko"],
         # card O1c, 2026-09-23: best chrF on Japanese of any candidate and faster than the prior
-        # ja default, despite the upstream model card listing only en/zh support
+        # ja default, despite the upstream model card listing only en/zh support -- a clean win,
+        # no tradeoff, so it replaces the ppocr ko-style recommendation for this language
         "ocr-det-ppocrv6-medium": ["ja"],
         "ocr-rec-ppocrv6-medium": ["ja"],
+        # card O1c, 2026-09-23 (post use_cache fix): best chrF on ko (0.567 vs 0.475) and zh (0.741
+        # vs 0.642) of any candidate, but slower per chapter (56-100s vs 2-17s) and, on ko, a real
+        # char-recall tradeoff (-0.056) -- unlike the ja case, this does not replace the ppocr
+        # recommendation above; both are listed so a series can pick either
+        "ocr-vl-1.6": ["ko", "zh"],
     }
     korean_rec = next(e for e in entries if e.id == "ocr-rec-korean-ppocrv5-mobile")
     assert korean_rec.langs == ["ko"]

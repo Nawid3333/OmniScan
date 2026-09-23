@@ -685,6 +685,8 @@ cpu_speed = "unusable"
 role = "vlm_ocr"
 family = "paddleocr-vl"
 langs = ["en", "zh", "multilingual"]
+recommended_for = ["ko", "zh"]
+notes = "measured (card O1c, 2026-09-23, post use_cache fix -- see docs/benchmarks/ocr-qualification-results.md): best chrF on Korean (0.567 vs 0.475) and Chinese (0.741 vs 0.642) of any candidate. Slower per chapter than ppocr (56-100s vs 2-17s) -- worth it per the qualification suite's own numbers, but confirm that trade fits your workflow before switching a series over"
 upstream_repo = "PaddlePaddle/PaddleOCR-VL-1.6"
 upstream_revision = "c5630abae1d940eafe0697512a0325494b02ab42"
 
