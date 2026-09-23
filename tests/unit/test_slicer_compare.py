@@ -63,6 +63,14 @@ def test_summarize_median_even_count() -> None:
     assert summarize("fixed", _artifact(slices)).median_height == 250  # heights 100..400: (200 + 300) / 2
 
 
+def test_summarize_median_height_is_an_int() -> None:
+    # statistics.median returns a float for an even count; the summary must keep it an int
+    slices = [(0, 100, False, False), (100, 300, False, False)]  # heights 100, 200
+    summary = summarize("fixed", _artifact(slices))
+    assert summary.median_height == 150
+    assert isinstance(summary.median_height, int)
+
+
 def test_summarize_empty_artifact() -> None:
     summary = summarize("page", _artifact([]))
     assert summary.slices == 0
