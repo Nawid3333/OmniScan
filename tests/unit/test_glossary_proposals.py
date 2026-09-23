@@ -10,7 +10,7 @@ import pytest
 from omniscan.core.config import Config, GpuConfig, PathsConfig
 from omniscan.core.paths import SeriesPaths
 from omniscan.core.schemas import BBox, GlossaryEntry, Region, RegionKind, RegionsArtifact
-from omniscan.glossary.proposal_prompts import PROPOSAL_SYSTEM
+from omniscan.glossary.proposal_prompts import PROPOSAL_SYSTEM, proposal_system
 from omniscan.glossary.proposals import (
     DEFAULT_MIN_CHAPTERS,
     chapter_lines,
@@ -88,7 +88,7 @@ def make_series(cfg: Config, *chapters: str) -> SeriesPaths:
     return sp
 
 
-def write_ocr(cfg: Config, chapter: str) -> None:
+def write_ocr(cfg: Config, chapter: str, lang: str = "ko") -> None:
     """One ocr.json whose region ids oppose reading_order (sort must follow the geometry)."""
     paths = SeriesPaths.from_config(cfg, "S").chapter(chapter)
     rows: list[tuple[str, int, RegionKind, str]] = [
@@ -106,6 +106,7 @@ def write_ocr(cfg: Config, chapter: str) -> None:
             bbox=BBox(x0=0, y0=0, x1=10, y1=10),
             reading_order=order,
             text=text,
+            lang=lang,  # type: ignore[arg-type]
         )
         for index, (rid, order, kind, text) in enumerate(rows)
     ]
@@ -158,6 +159,12 @@ def test_extract_proposals_sends_the_schema_prompt_and_tags_the_chapter() -> Non
     )
     assert call["messages"][0]["content"] == PROPOSAL_SYSTEM
     assert "민준이가 간다" in call["messages"][1]["content"]
+
+
+def test_extract_proposals_sends_the_given_language() -> None:
+    client = FakeClient([terms_reply({"source": "林轩", "target": "Lin Xuan"})])
+    extract_proposals(client, MODEL, "Chapter 1", ["林轩拔剑"], lang="zh")
+    assert client.calls[0]["messages"][0]["content"] == proposal_system("zh")
 
 
 # ---------------------------------------------------------------- run_proposals
@@ -295,6 +302,17 @@ def test_run_proposals_chapters_param_restricts(tmp_path: Path, cfg: Config) -> 
     summary = run_proposals(cfg, "S", client=FakeClient([reply]), model=MODEL, chapters=["Chapter 2"])
     assert summary.chapters_scanned == ("Chapter 2",)
     assert summary.chapters_with_lines == 1
+
+
+def test_run_proposals_sends_the_chapters_ocr_language(tmp_path: Path, cfg: Config) -> None:
+    make_series(cfg, "Chapter 1")
+    write_ocr(cfg, "Chapter 1", lang="zh")
+    client = FakeClient([terms_reply({"source": "林轩", "target": "Lin Xuan"})])
+    run_proposals(cfg, "S", client=client, model=MODEL)
+    assert client.calls[0]["messages"][0] == {  # acceptance 6
+        "role": "system",
+        "content": proposal_system("zh"),
+    }
 
 
 def test_aggregated_terms_reuse_reference_aggregation() -> None:

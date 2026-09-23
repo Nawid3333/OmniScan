@@ -14,28 +14,35 @@ from dataclasses import dataclass
 from typing import Any
 
 from omniscan.core.schemas import GlossaryEntry, Region
+from omniscan.translate.languages import region_language, source_language
 from omniscan.translate.prompts import glossary_subset, source_text
 
-JUDGE_SYSTEM = (
-    "You are the editor of an official English release of a Korean manhwa. For every numbered "
-    "region you get the Korean source text and one or more candidate English translations labelled "
-    'A, B, C. Decide per region: "pick" the best candidate unchanged; "merge" to combine the '
-    'best parts of the candidates into one line; or "rewrite" to write a better line yourself '
-    "when every candidate is wrong or unnatural. Judge the meaning against the Korean source, not "
-    "by how many candidates agree. Write natural, idiomatic English suited to comic lettering: "
-    "concise, in the character's voice, one continuous line without manual line breaks, no "
-    "translator notes. Keep Korean honorific suffixes and titles romanized when they address a "
-    "person (-nim, -ssi, hyung, noona, sunbae) unless that reads badly in English. For a region of "
-    'kind "sfx" give a short English onomatopoeia. Entries under "Glossary (binding)" are '
-    "mandatory: whenever a source term appears (with or without a particle such as "
-    "이/가/은/는/을/를/의), its target must appear in your English exactly as written. If a region "
-    'has "problems", your earlier answer was rejected: fix exactly those problems (each missing '
-    "binding target must appear verbatim in your text) and answer again. Answer with JSON only, in "
-    'exactly this shape: {"judgements":[{"id":"r0001","decision":"pick","pick":"A",'
-    '"text":"","rationale":"short reason"}]} — for "pick" set "pick" to the label and '
-    'leave "text" empty; for "merge" and "rewrite" set "text" to the final line and '
-    '"pick" to ""; one entry for every input id, no extra ids, no commentary.'
-)
+
+def judge_system(lang: str) -> str:
+    """The judge system prompt for `lang`'s source language; "ko" is the tuned original."""
+    sl = source_language(lang)
+    return (
+        f"You are the editor of an official English release of a {sl.name} {sl.work}. For every "
+        f"numbered region you get the {sl.name} source text and one or more candidate English "
+        'translations labelled A, B, C. Decide per region: "pick" the best candidate unchanged; '
+        '"merge" to combine the best parts of the candidates into one line; or "rewrite" to write '
+        "a better line yourself when every candidate is wrong or unnatural. Judge the meaning "
+        f"against the {sl.name} source, not by how many candidates agree. Write natural, idiomatic "
+        "English suited to comic lettering: concise, in the character's voice, one continuous line "
+        f"without manual line breaks, no translator notes. {sl.honorifics}For a region of "
+        'kind "sfx" give a short English onomatopoeia. Entries under "Glossary (binding)" are '
+        "mandatory: whenever a source term appears"
+        f"{sl.particle_hint}, its target must appear in your English exactly as written. If a region "
+        'has "problems", your earlier answer was rejected: fix exactly those problems (each missing '
+        "binding target must appear verbatim in your text) and answer again. Answer with JSON only, in "
+        'exactly this shape: {"judgements":[{"id":"r0001","decision":"pick","pick":"A",'
+        '"text":"","rationale":"short reason"}]} — for "pick" set "pick" to the label and '
+        'leave "text" empty; for "merge" and "rewrite" set "text" to the final line and '
+        '"pick" to ""; one entry for every input id, no extra ids, no commentary.'
+    )
+
+
+JUDGE_SYSTEM = judge_system("ko")
 
 JUDGE_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -92,7 +99,7 @@ def judge_messages(
     regions_json = json.dumps([_region_dict(item) for item in items], ensure_ascii=False, indent=1)
     parts.append(f"Regions (reading order):\n{regions_json}")
     return [
-        {"role": "system", "content": JUDGE_SYSTEM},
+        {"role": "system", "content": judge_system(region_language([item.region for item in items]))},
         {"role": "user", "content": "\n\n".join(parts)},
     ]
 

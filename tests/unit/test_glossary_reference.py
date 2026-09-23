@@ -25,7 +25,12 @@ from omniscan.glossary.reference import (
     merge_into_store,
     pair_chapter,
 )
-from omniscan.glossary.reference_prompts import TERMS_SCHEMA, PairedLine, parse_terms_reply
+from omniscan.glossary.reference_prompts import (
+    TERMS_SCHEMA,
+    PairedLine,
+    extract_system,
+    parse_terms_reply,
+)
 from omniscan.glossary.store import GlossaryStore
 from omniscan.llm.ollama import ChatResponse
 from omniscan.match.chapters import PagePair
@@ -214,6 +219,13 @@ def test_extract_candidates_sends_the_schema_prompt_and_tags_the_chapter() -> No
     assert call["format"] == TERMS_SCHEMA
     assert call["options"] == {"temperature": 0.0}
     assert "Minjun" in call["messages"][1]["content"]
+
+
+def test_extract_candidates_sends_the_given_language() -> None:
+    client = FakeClient([REPLY])
+    lines = [PairedLine("こんにちは", "Hello", 0, 0)]
+    extract_candidates(client, "gemma4:31b-cloud", "Chapter 001", lines, lang="ja")
+    assert client.calls[0]["messages"][0]["content"] == extract_system("ja")
 
 
 def test_parse_terms_reply_tolerates_malformed_replies() -> None:

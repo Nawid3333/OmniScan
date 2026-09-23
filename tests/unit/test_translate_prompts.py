@@ -10,6 +10,7 @@ from omniscan.translate.prompts import (
     CHAT_JSON_SYSTEM,
     TRANSLATEGEMMA_TEMPLATE,
     chat_json_messages,
+    chat_json_system,
     glossary_subset,
     source_text,
     substitute_binding,
@@ -25,6 +26,7 @@ def region(
     text: str = "",
     slice_index: int = 0,
     reading_order: int = 0,
+    lang: str = "ko",
 ) -> Region:
     return Region(
         id=rid,
@@ -33,6 +35,7 @@ def region(
         bbox=BBox(x0=0, y0=0, x1=10, y1=10),
         reading_order=reading_order,
         text=text,
+        lang=lang,  # type: ignore[arg-type]
     )
 
 
@@ -148,3 +151,9 @@ def test_chat_json_messages_none_and_empty_story_summary_are_identical_to_omitti
     plain = chat_json_messages(regions, entries)
     assert chat_json_messages(regions, entries, story_summary=None) == plain
     assert chat_json_messages(regions, entries, story_summary="") == plain
+
+
+def test_chat_json_messages_regions_language_selects_the_system_prompt() -> None:
+    messages = chat_json_messages([region("r0001", text="你好", lang="zh")], [])
+    assert messages[0] == {"role": "system", "content": chat_json_system("zh")}
+    assert messages[0]["content"] != CHAT_JSON_SYSTEM  # acceptance 5: not the Korean prompt

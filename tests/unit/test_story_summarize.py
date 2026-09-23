@@ -12,20 +12,21 @@ from omniscan.core.config import Config, GpuConfig, PathsConfig
 from omniscan.core.paths import ChapterPaths, SeriesPaths
 from omniscan.core.schemas import BBox, FinalArtifact, FinalLine, Region, RegionsArtifact
 from omniscan.llm.ollama import ChatResponse
-from omniscan.story.prompts import SUMMARY_SCHEMA
+from omniscan.story.prompts import SUMMARY_SCHEMA, summary_system
 from omniscan.story.store import SummaryStore
 from omniscan.story.summarize import chapter_final_lines, run_summarize, summarize_chapter
 
 MODEL = "summary-model"
 
 
-def region(rid: str, *, slice_index: int = 0, reading_order: int = 0) -> Region:
+def region(rid: str, *, slice_index: int = 0, reading_order: int = 0, lang: str = "ko") -> Region:
     return Region(
         id=rid,
         slice_index=slice_index,
         kind="bubble_text",
         bbox=BBox(x0=0, y0=0, x1=10, y1=10),
         reading_order=reading_order,
+        lang=lang,  # type: ignore[arg-type]
     )
 
 
@@ -241,3 +242,20 @@ def test_run_summarize_stores_a_plain_json_reply(tmp_path: Path, cfg: Config) ->
     with SummaryStore(SeriesPaths.from_config(cfg, "S").db) as store:
         row = store.get("Chapter 1")
         assert row is not None and row.summary == "Fenced."
+
+
+def test_run_summarize_sends_the_chapters_ocr_language(tmp_path: Path, cfg: Config) -> None:
+    make_series(cfg, "Chapter 1")
+    paths = paths_of(cfg, "Chapter 1")
+    write_ocr(paths, {"rid": "r0001", "lang": "zh"})
+    write_final(paths, [("r0001", "第一句话")])
+    client = FakeClient(['{"summary": "He steps through."}'])
+    summary = run_summarize(cfg, "S", client=client, model=MODEL)
+    assert summary.done == ("Chapter 1",)  # acceptance 6
+    assert client.calls[0]["messages"][0] == {"role": "system", "content": summary_system("zh")}
+
+
+def test_summarize_chapter_lang_defaults_to_ko() -> None:
+    client = FakeClient(['{"summary": "Minjun enters the gate."}'])
+    summarize_chapter(client, MODEL, ["첫 문장"])
+    assert client.calls[0]["messages"][0]["content"] == summary_system("ko")

@@ -41,6 +41,7 @@ from omniscan.glossary.store import GlossaryStore
 from omniscan.glossary.yaml_io import export_yaml
 from omniscan.match.chapters import PagePair, match_chapters
 from omniscan.pipeline.runner import PipelineResult, run_pipeline
+from omniscan.translate.languages import chapter_language
 from omniscan.translate.run import ChatClient
 
 DEFAULT_MIN_LOCKS = 3  # decision D7: auto-lock terms consistent across >= 3 reference chapters
@@ -142,13 +143,17 @@ class TermCandidate:
 
 
 def extract_candidates(
-    client: ChatClient, model: str, chapter: str, lines: Sequence[PairedLine]
+    client: ChatClient, model: str, chapter: str, lines: Sequence[PairedLine], lang: str = "ko"
 ) -> list[TermCandidate]:
     """Ask the chat model for the terms of one chapter's paired lines (no request without lines)."""
     if not lines:
         return []
     response = client.chat(
-        model, terms_messages(lines), cloud=False, format=TERMS_SCHEMA, options={"temperature": 0.0}
+        model,
+        terms_messages(lines, lang),
+        cloud=False,
+        format=TERMS_SCHEMA,
+        options={"temperature": 0.0},
     )
     return [
         TermCandidate(term.source, term.target, term.type, chapter)
@@ -432,7 +437,15 @@ def run_reference(
             lines_paired += len(pairing.lines)
             pages_skipped += pairing.pages_skipped
             if pairing.lines:
-                candidates.extend(extract_candidates(client, model, match.a, pairing.lines))
+                candidates.extend(
+                    extract_candidates(
+                        client,
+                        model,
+                        match.a,
+                        pairing.lines,
+                        lang=chapter_language(sp.chapter(match.a)),
+                    )
+                )
                 chapters_extracted += 1
     report = _merge(
         cfg,

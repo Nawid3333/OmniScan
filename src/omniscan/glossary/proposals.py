@@ -26,6 +26,7 @@ from omniscan.glossary.reference import (
 from omniscan.glossary.reference_prompts import TERMS_SCHEMA, parse_terms_reply
 from omniscan.glossary.store import GlossaryStore
 from omniscan.glossary.yaml_io import export_yaml
+from omniscan.translate.languages import chapter_language
 from omniscan.translate.prompts import source_text, translatable
 from omniscan.translate.run import ChatClient
 
@@ -43,13 +44,17 @@ def chapter_lines(sp: SeriesPaths, chapter: str) -> list[str]:
 
 
 def extract_proposals(
-    client: ChatClient, model: str, chapter: str, lines: Sequence[str]
+    client: ChatClient, model: str, chapter: str, lines: Sequence[str], lang: str = "ko"
 ) -> list[TermCandidate]:
     """[] for no lines; else one chat call over the chapter's lines -> its TermCandidate list."""
     if not lines:
         return []
     response = client.chat(
-        model, proposal_messages(lines), cloud=False, format=TERMS_SCHEMA, options={"temperature": 0.0}
+        model,
+        proposal_messages(lines, lang),
+        cloud=False,
+        format=TERMS_SCHEMA,
+        options={"temperature": 0.0},
     )
     return [
         TermCandidate(term.source, term.target, term.type, chapter)
@@ -90,7 +95,9 @@ def run_proposals(
         if not lines:
             continue
         chapters_with_lines += 1
-        candidates.extend(extract_proposals(client, model, chapter, lines))
+        candidates.extend(
+            extract_proposals(client, model, chapter, lines, lang=chapter_language(sp.chapter(chapter)))
+        )
     aggregated = [term for term in aggregate(candidates) if term.chapters >= min_chapters]
     report = _merge_proposals(sp, aggregated, dry_run=dry_run)
     return ProposalSummary(

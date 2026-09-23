@@ -17,6 +17,7 @@ from omniscan.translate.prompts import (
     source_text,
     substitute_binding,
     translategemma_prompt,
+    translategemma_template,
 )
 from omniscan.translate.run import run_profile
 
@@ -24,7 +25,13 @@ MODEL = "test-model"
 
 
 def region(
-    rid: str, *, text: str = "", slice_index: int = 0, reading_order: int = 0, kind: str = "bubble_text"
+    rid: str,
+    *,
+    text: str = "",
+    slice_index: int = 0,
+    reading_order: int = 0,
+    kind: str = "bubble_text",
+    lang: str = "ko",
 ) -> Region:
     return Region(
         id=rid,
@@ -33,6 +40,7 @@ def region(
         bbox=BBox(x0=0, y0=0, x1=10, y1=10),
         reading_order=reading_order,
         text=text,
+        lang=lang,  # type: ignore[arg-type]
     )
 
 
@@ -286,6 +294,14 @@ def test_translategemma_unwraps_quotes_and_skips_empty() -> None:
     client = FakeClient(['"You\'re here"', '"Quoted reply"', '"', ""])
     run = run_profile(client, profile(style="translategemma"), regions, [])
     assert [c.text for c in run.candidates] == ["You're here", '"Quoted reply"', '"']
+
+
+def test_translategemma_sends_the_region_language_template() -> None:
+    regions = [region("r0001", text="こんにちは", lang="ja")]
+    client = FakeClient(["Hello"])
+    run_profile(client, profile(style="translategemma"), regions, [])
+    expected = translategemma_template("ja") + source_text(regions[0])  # acceptance 5
+    assert client.calls[0]["messages"] == [{"role": "user", "content": expected}]
 
 
 def test_translategemma_partial_saved_after_20_regions(tmp_path: Path) -> None:

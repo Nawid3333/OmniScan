@@ -11,6 +11,8 @@ import json
 from collections.abc import Sequence
 from typing import Any
 
+from omniscan.translate.languages import source_language
+
 MAX_SUMMARY_CHARS = 800
 
 SUMMARY_SCHEMA: dict[str, Any] = {
@@ -19,20 +21,28 @@ SUMMARY_SCHEMA: dict[str, Any] = {
     "required": ["summary"],
 }
 
-SUMMARY_SYSTEM = (
-    "You are the continuity writer for an official English release of a Korean manhwa. You get one "
-    "chapter's translated text as its lines in reading order. Write a short English summary of what "
-    "happens in this chapter: 3 to 5 sentences, third person, present tense, naming the characters "
-    "and places involved and what changed in this chapter only — nothing about earlier chapters, no "
-    "meta-commentary about the art or the lettering, no chapter numbers. Answer with JSON only, in "
-    'exactly this shape: {"summary":"..."} — the summary text and nothing else.'
-)
+
+def summary_system(lang: str) -> str:
+    """The summarisation system prompt for `lang`'s source language; "ko" is the original."""
+    sl = source_language(lang)
+    return (
+        f"You are the continuity writer for an official English release of a {sl.name} {sl.work}. "
+        "You get one chapter's translated text as its lines in reading order. Write a short English "
+        "summary of what happens in this chapter: 3 to 5 sentences, third person, present tense, "
+        "naming the characters and places involved and what changed in this chapter only — nothing "
+        "about earlier chapters, no meta-commentary about the art or the lettering, no chapter "
+        "numbers. Answer with JSON only, in "
+        'exactly this shape: {"summary":"..."} — the summary text and nothing else.'
+    )
 
 
-def summary_messages(lines: Sequence[str]) -> list[dict[str, str]]:
+SUMMARY_SYSTEM = summary_system("ko")
+
+
+def summary_messages(lines: Sequence[str], lang: str = "ko") -> list[dict[str, str]]:
     """The summarisation prompt: system message plus the chapter's lines as one user message."""
     return [
-        {"role": "system", "content": SUMMARY_SYSTEM},
+        {"role": "system", "content": summary_system(lang)},
         {"role": "user", "content": "Chapter lines (reading order):\n" + "\n".join(lines)},
     ]
 

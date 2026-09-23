@@ -15,6 +15,7 @@ from omniscan.core.paths import ChapterPaths, SeriesPaths, natural_key
 from omniscan.core.schemas import FinalArtifact, RegionsArtifact
 from omniscan.story.prompts import SUMMARY_SCHEMA, parse_summary_reply, summary_messages
 from omniscan.story.store import SummaryStore
+from omniscan.translate.languages import chapter_language
 from omniscan.translate.run import ChatClient
 
 DEFAULT_SUMMARY_MODEL = "gemma4:31b-cloud"
@@ -39,12 +40,16 @@ def chapter_final_lines(paths: ChapterPaths) -> list[str]:
     return [text for _key, text in usable]
 
 
-def summarize_chapter(client: ChatClient, model: str, lines: Sequence[str]) -> str | None:
+def summarize_chapter(client: ChatClient, model: str, lines: Sequence[str], lang: str = "ko") -> str | None:
     """One chat call over the chapter's lines; None when there are no lines or the reply is unusable."""
     if not lines:
         return None
     response = client.chat(
-        model, summary_messages(lines), cloud=False, format=SUMMARY_SCHEMA, options={"temperature": 0.0}
+        model,
+        summary_messages(lines, lang),
+        cloud=False,
+        format=SUMMARY_SCHEMA,
+        options={"temperature": 0.0},
     )
     return parse_summary_reply(response.content)
 
@@ -83,7 +88,7 @@ def run_summarize(
             if not lines:
                 skipped_no_final.append(chapter)
                 continue
-            summary = summarize_chapter(client, model, lines)
+            summary = summarize_chapter(client, model, lines, lang=chapter_language(sp.chapter(chapter)))
             if summary is None:
                 skipped_no_final.append(chapter)
                 continue

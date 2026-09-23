@@ -3,7 +3,8 @@
 Evidence for every choice lives in docs/benchmarks/translation-probe.md: source text is sent with
 collapsed whitespace (cloud models leak source line breaks), glossary entries are split into binding
 (proposed/locked) sections, and translategemma gets locked terms pre-substituted because it ignores
-prompt glossaries.
+prompt glossaries. Prompts are functions of the regions' source language (`languages.py`); the "ko"
+renderings are the tuned originals.
 """
 
 from __future__ import annotations
@@ -15,20 +16,28 @@ from typing import Any
 from omniscan.core.paths import natural_key
 from omniscan.core.schemas import GlossaryEntry, Region
 from omniscan.glossary.match import find_terms
+from omniscan.translate.languages import region_language, source_language
 
-CHAT_JSON_SYSTEM = (
-    "You are the translator for an official English release of a Korean manhwa. Translate every "
-    "numbered region from Korean into natural, idiomatic English suited to comic lettering: concise, "
-    "in the character's voice, with no translator notes. Write each translation as one continuous "
-    "line without manual line breaks (the letterer re-wraps it). Keep Korean honorific suffixes and "
-    "titles romanized when they address a person (-nim, -ssi, hyung, noona, sunbae) unless that reads "
-    'badly in English. For a region of kind "sfx" give a short English onomatopoeia. Entries under '
-    '"Glossary (binding)" are mandatory: whenever a source term appears (with or without a particle '
-    "such as 이/가/은/는/을/를/의), its target must appear in your English exactly as written. Entries "
-    'under "Glossary (suggested)" are preferred spellings but not mandatory. Answer with JSON only, '
-    'in exactly this shape: {"translations":[{"id":"r0001","text":"..."}]} — one entry for every '
-    "input id, no extra ids, no commentary."
-)
+
+def chat_json_system(lang: str) -> str:
+    """The chat_json system prompt for `lang`'s source language; "ko" is the tuned original."""
+    sl = source_language(lang)
+    return (
+        f"You are the translator for an official English release of a {sl.name} {sl.work}. Translate "
+        f"every numbered region from {sl.name} into natural, idiomatic English suited to comic "
+        "lettering: concise, in the character's voice, with no translator notes. Write each "
+        "translation as one continuous line without manual line breaks (the letterer re-wraps it). "
+        f'{sl.honorifics}For a region of kind "sfx" give a short English onomatopoeia. Entries under '
+        '"Glossary (binding)" are mandatory: whenever a source term appears'
+        f"{sl.particle_hint}, its target must appear in your English exactly as written. Entries "
+        'under "Glossary (suggested)" are preferred spellings but not mandatory. Answer with JSON '
+        "only, "
+        'in exactly this shape: {"translations":[{"id":"r0001","text":"..."}]} — one entry for every '
+        "input id, no extra ids, no commentary."
+    )
+
+
+CHAT_JSON_SYSTEM = chat_json_system("ko")
 
 TRANSLATIONS_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -45,14 +54,22 @@ TRANSLATIONS_SCHEMA: dict[str, Any] = {
     "required": ["translations"],
 }
 
+
 # From scripts/probe_translation.py (tg_style) — translategemma's own training template, ending with
 # three newlines before the text.
-TRANSLATEGEMMA_TEMPLATE = (
-    "You are a professional Korean (ko) to English (en) translator. Your goal is to accurately convey "
-    "the meaning and nuances of the original Korean text while adhering to English grammar, vocabulary, "
-    "and cultural sensitivities.\nProduce only the English translation, without any additional "
-    "explanations or commentary. Please translate the following Korean text into English:\n\n\n"
-)
+def translategemma_template(lang: str) -> str:
+    """The translategemma training template naming `lang`'s source language; "ko" is the original."""
+    sl = source_language(lang)
+    return (
+        f"You are a professional {sl.name} ({sl.code}) to English (en) translator. Your goal is to "
+        "accurately convey the meaning and nuances of the original "
+        f"{sl.name} text while adhering to English grammar, vocabulary, and cultural sensitivities.\n"
+        "Produce only the English translation, without any additional explanations or commentary. "
+        f"Please translate the following {sl.name} text into English:\n\n\n"
+    )
+
+
+TRANSLATEGEMMA_TEMPLATE = translategemma_template("ko")
 
 
 def source_text(region: Region) -> str:
@@ -98,7 +115,7 @@ def chat_json_messages(
     )
     parts.append(f"Regions (reading order):\n{regions_json}")
     return [
-        {"role": "system", "content": CHAT_JSON_SYSTEM},
+        {"role": "system", "content": chat_json_system(region_language(regions))},
         {"role": "user", "content": "\n\n".join(parts)},
     ]
 
@@ -116,6 +133,6 @@ def substitute_binding(text: str, entries: Sequence[GlossaryEntry]) -> str:
     return result
 
 
-def translategemma_prompt(text: str) -> str:
+def translategemma_prompt(text: str, lang: str = "ko") -> str:
     """The one-region translategemma prompt (its own template, glossary pre-substituted upstream)."""
-    return TRANSLATEGEMMA_TEMPLATE + text
+    return translategemma_template(lang) + text

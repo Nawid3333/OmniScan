@@ -7,13 +7,27 @@ import json
 import pytest
 
 from omniscan.core.schemas import BBox, GlossaryEntry, Region, RegionKind
-from omniscan.translate.judge_prompts import JUDGE_SCHEMA, JUDGE_SYSTEM, JudgeItem, judge_messages, label_for
+from omniscan.translate.judge_prompts import (
+    JUDGE_SCHEMA,
+    JUDGE_SYSTEM,
+    JudgeItem,
+    judge_messages,
+    judge_system,
+    label_for,
+)
 
 EXPECTED_SYSTEM = """You are the editor of an official English release of a Korean manhwa. For every numbered region you get the Korean source text and one or more candidate English translations labelled A, B, C. Decide per region: "pick" the best candidate unchanged; "merge" to combine the best parts of the candidates into one line; or "rewrite" to write a better line yourself when every candidate is wrong or unnatural. Judge the meaning against the Korean source, not by how many candidates agree. Write natural, idiomatic English suited to comic lettering: concise, in the character's voice, one continuous line without manual line breaks, no translator notes. Keep Korean honorific suffixes and titles romanized when they address a person (-nim, -ssi, hyung, noona, sunbae) unless that reads badly in English. For a region of kind "sfx" give a short English onomatopoeia. Entries under "Glossary (binding)" are mandatory: whenever a source term appears (with or without a particle such as 이/가/은/는/을/를/의), its target must appear in your English exactly as written. If a region has "problems", your earlier answer was rejected: fix exactly those problems (each missing binding target must appear verbatim in your text) and answer again. Answer with JSON only, in exactly this shape: {"judgements":[{"id":"r0001","decision":"pick","pick":"A","text":"","rationale":"short reason"}]} — for "pick" set "pick" to the label and leave "text" empty; for "merge" and "rewrite" set "text" to the final line and "pick" to ""; one entry for every input id, no extra ids, no commentary."""
 
 
-def region(rid: str, text: str, *, kind: RegionKind = "bubble_text") -> Region:
-    return Region(id=rid, slice_index=0, kind=kind, bbox=BBox(x0=0, y0=0, x1=10, y1=10), text=text)
+def region(rid: str, text: str, *, kind: RegionKind = "bubble_text", lang: str = "ko") -> Region:
+    return Region(
+        id=rid,
+        slice_index=0,
+        kind=kind,
+        bbox=BBox(x0=0, y0=0, x1=10, y1=10),
+        text=text,
+        lang=lang,  # type: ignore[arg-type]
+    )
 
 
 def entry(eid: int, source: str, target: str, status: str, type_: str = "person") -> GlossaryEntry:
@@ -148,3 +162,10 @@ def test_judge_messages_none_and_empty_story_summary_are_identical_to_omitting_i
     plain = judge_messages([item], [])
     assert judge_messages([item], [], story_summary=None) == plain
     assert judge_messages([item], [], story_summary="") == plain
+
+
+def test_judge_messages_use_the_items_regions_language() -> None:
+    item = JudgeItem(region=region("r0001", "こんにちは", lang="ja"), candidates={"A": "Hello"})
+    messages = judge_messages([item], [])
+    assert messages[0] == {"role": "system", "content": judge_system("ja")}
+    assert messages[0]["content"] != JUDGE_SYSTEM  # acceptance 5: not the Korean prompt
