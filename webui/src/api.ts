@@ -162,6 +162,43 @@ export interface FilteredChapter {
   items: FilteredItem[];
 }
 
+export type InpaintMethod = "flat" | "lama" | "none";
+
+export interface InpaintItem {
+  region_id: string;
+  box: BBox;
+  method: InpaintMethod;
+  fill: [number, number, number] | null;
+  needs_lama: boolean;
+  mask_px: number;
+}
+
+export interface InpaintArtifact {
+  schema_version: number;
+  items: InpaintItem[];
+}
+
+export type FontRole = "dialogue" | "thought" | "shout" | "narration" | "free" | "sfx";
+
+export interface LayoutItem {
+  region_id: string;
+  font_role: FontRole;
+  font: string;
+  size_px: number;
+  lines: string[];
+  box: BBox;
+  align: "center" | "left" | "right";
+  color: [number, number, number];
+  stroke_px: number;
+  stroke_color: [number, number, number];
+  overflow: boolean;
+}
+
+export interface LayoutArtifact {
+  schema_version: number;
+  items: LayoutItem[];
+}
+
 const BASE = "/api";
 
 async function getJson<T>(path: string): Promise<T> {
@@ -263,6 +300,22 @@ export function outputImageUrl(series: string, chapter: string, name: string): s
 
 export async function listFiltered(series: string): Promise<FilteredChapter[]> {
   return getJson<FilteredChapter[]>(`${BASE}/series/${encodeURIComponent(series)}/filtered`);
+}
+
+export async function getInpaint(series: string, chapter: string): Promise<InpaintArtifact> {
+  return getJson<InpaintArtifact>(
+    `${BASE}/series/${encodeURIComponent(series)}/chapters/${encodeURIComponent(chapter)}/inpaint`,
+  );
+}
+
+export function inpaintPatchUrl(series: string, chapter: string, regionId: string): string {
+  return `${BASE}/series/${encodeURIComponent(series)}/chapters/${encodeURIComponent(chapter)}/inpaint/patches/${encodeURIComponent(regionId)}.png`;
+}
+
+export async function getLayout(series: string, chapter: string): Promise<LayoutArtifact> {
+  return getJson<LayoutArtifact>(
+    `${BASE}/series/${encodeURIComponent(series)}/chapters/${encodeURIComponent(chapter)}/layout`,
+  );
 }
 
 export async function restoreFiltered(

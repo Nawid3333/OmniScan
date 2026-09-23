@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import io
 import mimetypes
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal
 
+import numpy as np
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
+from PIL import Image
 from pydantic import Field, ValidationError
 
 from omniscan.core.config import Config
@@ -21,6 +24,7 @@ from omniscan.core.schemas import (
     FinalArtifact,
     GlossaryEntry,
     IngestArtifact,
+    InpaintArtifact,
     Model,
     RegionsArtifact,
     SlicesArtifact,
@@ -28,6 +32,7 @@ from omniscan.core.schemas import (
 from omniscan.filter.decide import effective_decision, restore
 from omniscan.glossary.match import find_terms, term_present
 from omniscan.glossary.store import GlossaryStore
+from omniscan.inpaint.patches import load_patches
 
 
 class RestoreBody(Model):
@@ -155,6 +160,42 @@ def create_app(cfg: Config, *, cors_origins: Sequence[str] = ("http://localhost:
     def get_ocr(series: str, chapter: str) -> Response:
         """The chapter's ocr.json, byte-for-byte as written by the OCR stage."""
         return artifact_bytes(chapter_paths(series, chapter), "ocr.json")
+
+    @app.get("/api/series/{series}/chapters/{chapter}/inpaint")
+    def get_inpaint(series: str, chapter: str) -> Response:
+        """The chapter's inpaint.json, byte-for-byte as written by the inpaint stage."""
+        return artifact_bytes(chapter_paths(series, chapter), "inpaint.json")
+
+    @app.get("/api/series/{series}/chapters/{chapter}/layout")
+    def get_layout(series: str, chapter: str) -> Response:
+        """The chapter's layout.json, byte-for-byte as written by the typeset stage."""
+        return artifact_bytes(chapter_paths(series, chapter), "layout.json")
+
+    @app.get("/api/series/{series}/chapters/{chapter}/inpaint/patches/{region_id}.png")
+    def get_inpaint_patch(series: str, chapter: str, region_id: str) -> Response:
+        """One region's inpaint patch as an RGBA PNG (alpha = the patch's mask, scaled 0/255)."""
+        paths = chapter_paths(series, chapter)
+        inpaint_path = paths.artifact("inpaint.json")
+        if not inpaint_path.is_file():
+            raise HTTPException(status_code=404, detail="inpaint.json not found")
+        artifact = InpaintArtifact.load(inpaint_path)
+        # region_id is never used to build a filesystem path, only as a lookup key; validating it
+        # against the known list is this route's traversal guard in place of the usual _under/`..` check.
+        if all(item.region_id != region_id for item in artifact.items):
+            raise HTTPException(status_code=404, detail="region not found")
+        patches_path = paths.artifact("patches.npz")
+        if not patches_path.is_file():
+            raise HTTPException(status_code=404, detail="patches.npz not found")
+        patches = load_patches(patches_path)
+        if region_id not in patches:
+            raise HTTPException(status_code=404, detail="no patch stored for this region")
+        pixels, mask = patches[region_id]
+        img = Image.fromarray(pixels, mode="RGB").convert("RGBA")
+        alpha = Image.fromarray(mask.astype(np.uint8) * 255, mode="L")
+        img.putalpha(alpha)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return Response(content=buf.getvalue(), media_type="image/png")
 
     @app.get("/api/series/{series}/chapters/{chapter}/translations")
     def list_translations(series: str, chapter: str) -> list[str]:

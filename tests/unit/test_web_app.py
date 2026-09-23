@@ -6,6 +6,7 @@ import io
 from pathlib import Path
 from urllib.parse import quote
 
+import torch
 from fastapi.testclient import TestClient
 from PIL import Image
 
@@ -21,6 +22,10 @@ from omniscan.core.schemas import (
     FinalLine,
     GlossaryEntry,
     IngestArtifact,
+    InpaintArtifact,
+    InpaintItem,
+    LayoutArtifact,
+    LayoutItem,
     OcrLine,
     Region,
     RegionsArtifact,
@@ -29,6 +34,7 @@ from omniscan.core.schemas import (
     SourceFile,
 )
 from omniscan.glossary.store import GlossaryStore
+from omniscan.inpaint.patches import save_patches
 from omniscan.web.app import create_app
 
 SERIES = "Solo Leveling"
@@ -858,3 +864,201 @@ def test_restore_traversal_cannot_escape_roots(tmp_path: Path) -> None:
     for url in escapes:
         response = client.post(url, json={"target": "file", "index": 0})
         assert response.status_code == 404, url
+
+
+# ---------------------------------------------------------------- inpaint + layout views (B11b)
+
+
+def write_inpaint_chapter(tmp_path: Path) -> Path:
+    """One chapter with inpaint.json (lama/flat/none items) and patches.npz holding r0001's patch."""
+    write_chapter(tmp_path)
+    work = tmp_path / "work" / SERIES / CHAPTER
+    InpaintArtifact(
+        items=[
+            InpaintItem(
+                region_id="r0001",
+                box=BBox(x0=10, y0=20, x1=14, y1=24),
+                method="lama",
+                needs_lama=True,
+                mask_px=8,
+            ),
+            InpaintItem(
+                region_id="r0002",
+                box=BBox(x0=0, y0=100, x1=20, y1=120),
+                method="flat",
+                fill=(250, 250, 250),
+            ),
+            InpaintItem(
+                region_id="r0003",
+                box=BBox(x0=30, y0=130, x1=40, y1=140),
+                method="none",
+            ),
+        ]
+    ).save(work / "inpaint.json")
+    save_patches(work / "patches.npz", {"r0001": (_patch_pixels(), _patch_mask())})
+    return work
+
+
+def _patch_pixels() -> torch.Tensor:
+    """A 4x4 uint8 RGB patch with one distinct value per channel."""
+    pixels = torch.zeros((3, 4, 4), dtype=torch.uint8)
+    pixels[0] = 10
+    pixels[1] = 20
+    pixels[2] = 30
+    return pixels
+
+
+def _patch_mask() -> torch.Tensor:
+    """A 4x4 checkerboard mask, so the PNG's alpha channel is verifiably not uniform."""
+    mask = torch.zeros((4, 4), dtype=torch.bool)
+    mask[::2, ::2] = True
+    mask[1::2, 1::2] = True
+    return mask
+
+
+def inpaint_url() -> str:
+    return f"/api/series/{quote(SERIES)}/chapters/{quote(CHAPTER)}/inpaint"
+
+
+def layout_url() -> str:
+    return f"/api/series/{quote(SERIES)}/chapters/{quote(CHAPTER)}/layout"
+
+
+def patch_url(region_id: str = "r0001") -> str:
+    return f"/api/series/{quote(SERIES)}/chapters/{quote(CHAPTER)}/inpaint/patches/{quote(region_id)}.png"
+
+
+def test_inpaint_serves_exact_file_bytes(tmp_path: Path) -> None:
+    write_inpaint_chapter(tmp_path)
+    client = make_client(tmp_path)
+    response = client.get(inpaint_url())
+    assert response.status_code == 200
+    on_disk = (tmp_path / "work" / SERIES / CHAPTER / "inpaint.json").read_bytes()
+    assert response.content == on_disk
+
+
+def test_inpaint_missing_returns_404(tmp_path: Path) -> None:
+    write_chapter(tmp_path)
+    client = make_client(tmp_path)
+    response = client.get(inpaint_url())
+    assert response.status_code == 404
+    assert response.json() == {"detail": "inpaint.json not found"}
+
+
+def write_layout_chapter(tmp_path: Path) -> Path:
+    """One chapter with layout.json: a dialogue item with defaults and an overflowing sfx item."""
+    write_chapter(tmp_path)
+    work = tmp_path / "work" / SERIES / CHAPTER
+    LayoutArtifact(
+        items=[
+            LayoutItem(
+                region_id="r0001",
+                font_role="dialogue",
+                font="Bados",
+                size_px=28,
+                lines=["Cheolsu came", "again"],
+                box=BBox(x0=10, y0=20, x1=90, y1=60),
+            ),
+            LayoutItem(
+                region_id="r0002",
+                font_role="sfx",
+                font="WildWord",
+                size_px=44,
+                lines=["WHOOM"],
+                box=BBox(x0=5, y0=100, x1=50, y1=140),
+                align="left",
+                color=(200, 30, 30),
+                stroke_px=2,
+                stroke_color=(255, 255, 255),
+                overflow=True,
+            ),
+        ]
+    ).save(work / "layout.json")
+    return work
+
+
+def test_layout_serves_exact_file_bytes(tmp_path: Path) -> None:
+    write_layout_chapter(tmp_path)
+    client = make_client(tmp_path)
+    response = client.get(layout_url())
+    assert response.status_code == 200
+    on_disk = (tmp_path / "work" / SERIES / CHAPTER / "layout.json").read_bytes()
+    assert response.content == on_disk
+
+
+def test_layout_missing_returns_404(tmp_path: Path) -> None:
+    write_chapter(tmp_path)
+    client = make_client(tmp_path)
+    response = client.get(layout_url())
+    assert response.status_code == 404
+    assert response.json() == {"detail": "layout.json not found"}
+
+
+def test_inpaint_and_layout_traversal_cannot_escape_roots(tmp_path: Path) -> None:
+    """`..` / absolute segments in series/chapter on the new routes must yield a clean 404."""
+    write_inpaint_chapter(tmp_path)
+    secret = tmp_path / "secret.json"
+    secret.write_bytes(b"outside the roots")
+    client = make_client(tmp_path)
+    escapes = (
+        f"/api/series/..%2F..%2Fsecret/chapters/{quote(CHAPTER)}/inpaint",
+        f"/api/series/{quote(SERIES)}/chapters/..%2F..%2Fsecret/inpaint",
+        f"/api/series/..%2F..%2Fsecret/chapters/{quote(CHAPTER)}/layout",
+        f"/api/series/{quote(SERIES)}/chapters/..%2F..%2Fsecret/layout",
+        f"/api/series/..%2F..%2Fsecret/chapters/{quote(CHAPTER)}/inpaint/patches/r0001.png",
+        f"/api/series/{quote(SERIES)}/chapters/..%2F..%2Fsecret/inpaint/patches/r0001.png",
+        f"/api/series/%2Fetc%2Fpasswd/chapters/{quote(CHAPTER)}/inpaint/patches/r0001.png",
+    )
+    for url in escapes:
+        response = client.get(url)
+        assert response.status_code == 404, url
+        assert b"outside the roots" not in response.content, url
+
+
+def test_inpaint_patch_serves_masked_rgba_png(tmp_path: Path) -> None:
+    write_inpaint_chapter(tmp_path)
+    client = make_client(tmp_path)
+    response = client.get(patch_url())
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/png")
+    img = Image.open(io.BytesIO(response.content))
+    assert img.size == (4, 4)
+    assert img.mode == "RGBA"
+    # alpha is the mask scaled 0/255, pixel-for-pixel (row-major)
+    expected = _patch_mask().numpy().astype("uint8") * 255
+    assert img.getchannel("A").tobytes() == expected.tobytes()
+    # the patch's own pixels are kept in RGB
+    assert img.convert("RGB").getpixel((0, 0)) == (10, 20, 30)
+    assert img.convert("RGB").getpixel((1, 0)) == (10, 20, 30)
+
+
+def test_inpaint_patch_unknown_or_escaping_region_returns_404(tmp_path: Path) -> None:
+    """region_id is validated against inpaint.json's ids, never turned into a path."""
+    write_inpaint_chapter(tmp_path)
+    secret = tmp_path / "secret.png"
+    secret.write_bytes(b"outside the roots")
+    client = make_client(tmp_path)
+    for region_id in ("nope", "..", "..%2F..%2Fsecret"):
+        response = client.get(patch_url(region_id))
+        assert response.status_code == 404, region_id
+        assert b"outside the roots" not in response.content, region_id
+    assert client.get(patch_url("nope")).json() == {"detail": "region not found"}
+
+
+def test_inpaint_patch_missing_patches_npz_returns_404(tmp_path: Path) -> None:
+    write_inpaint_chapter(tmp_path)
+    (tmp_path / "work" / SERIES / CHAPTER / "patches.npz").unlink()
+    client = make_client(tmp_path)
+    response = client.get(patch_url())
+    assert response.status_code == 404
+    assert response.json() == {"detail": "patches.npz not found"}
+
+
+def test_inpaint_patch_item_without_npz_entry_returns_404(tmp_path: Path) -> None:
+    """A flat/none item has no patches.npz entry: 404 with the 'no patch stored' detail, not a 500."""
+    write_inpaint_chapter(tmp_path)
+    client = make_client(tmp_path)
+    for region_id in ("r0002", "r0003"):
+        response = client.get(patch_url(region_id))
+        assert response.status_code == 404, region_id
+        assert response.json() == {"detail": "no patch stored for this region"}, region_id
