@@ -1,4 +1,4 @@
-"""Tests for the `omniscan match chapters` CLI command."""
+"""Tests for the `omniscan match chapters` and `omniscan match duplicates` CLI commands."""
 
 from __future__ import annotations
 
@@ -10,12 +10,18 @@ from typer.testing import CliRunner
 
 from omniscan.cli import app
 from omniscan.match.chapters import ChapterMapping
+from omniscan.match.duplicates import DuplicateReport
 from tests.fixtures.chapter_sets import page_seeds, write_raw_series, write_translated_series
 
 runner = CliRunner()
 
 RAW = {f"Chapter {n:03d}": page_seeds(1000 * n + 1, 4) for n in range(1, 5)}
 TRANSLATED = {f"ch_{n:02d}": RAW[f"Chapter {n:03d}"] for n in range(1, 5)}
+DUPLICATE_SET = {  # "Chapter 001 copy" holds pixel-identical copies of "Chapter 001"'s pages
+    "Chapter 001": page_seeds(1, 6),
+    "Chapter 001 copy": page_seeds(1, 6),
+    "Chapter 002": page_seeds(500, 6),
+}
 
 
 def build_series(tmp_path: Path) -> tuple[Path, Path]:
@@ -134,3 +140,86 @@ def test_match_chapters_threshold_flags_reach_the_artifact(tmp_path: Path) -> No
     assert mapping.thresholds.page_similarity == 0.99
     assert mapping.thresholds.chapter_gap == 0.7
     assert mapping.thresholds.min_quality == 0.2
+
+
+def test_match_duplicates_writes_and_summarises(tmp_path: Path) -> None:
+    root = write_raw_series(tmp_path / "raw", DUPLICATE_SET)
+    out = tmp_path / "duplicates.json"
+    result = runner.invoke(app, ["match", "duplicates", str(root), "--out", str(out)])
+    assert result.exit_code == 0
+    assert "1 likely duplicate pair(s)" in result.output
+    assert "'Chapter 001' <-> 'Chapter 001 copy' quality 1.00" in result.output
+    report = DuplicateReport.load(out)
+    assert [(pair.a, pair.b) for pair in report.duplicates] == [("Chapter 001", "Chapter 001 copy")]
+    assert report.root == str(root)
+
+
+def test_match_duplicates_default_out_and_json_flag_print_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    root = write_raw_series(tmp_path / "raw", DUPLICATE_SET)
+    result = runner.invoke(app, ["match", "duplicates", str(root), "--json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["duplicates"] == [{"a": "Chapter 001", "b": "Chapter 001 copy", "quality": 1.0}]
+    assert Path("chapter-duplicates.json").is_file()  # the documented default destination
+
+
+def test_match_duplicates_refuses_to_overwrite_without_force(tmp_path: Path) -> None:
+    root = write_raw_series(tmp_path / "raw", DUPLICATE_SET)
+    out = tmp_path / "duplicates.json"
+    first = runner.invoke(app, ["match", "duplicates", str(root), "--out", str(out)])
+    assert first.exit_code == 0
+    before = out.read_text(encoding="utf-8")
+    second = runner.invoke(app, ["match", "duplicates", str(root), "--out", str(out)])
+    assert second.exit_code == 2
+    assert "--force" in second.output
+    assert out.read_text(encoding="utf-8") == before  # the hand-edited report was not touched
+    third = runner.invoke(app, ["match", "duplicates", str(root), "--out", str(out), "--force"])
+    assert third.exit_code == 0
+
+
+def test_match_duplicates_zero_pairs_and_clean_summary(tmp_path: Path) -> None:
+    root = write_raw_series(
+        tmp_path / "raw", {f"Chapter {n:03d}": page_seeds(1000 * n + 1, 6) for n in (1, 2, 3)}
+    )
+    result = runner.invoke(app, ["match", "duplicates", str(root), "--out", str(tmp_path / "d.json")])
+    assert result.exit_code == 0
+    assert "0 likely duplicate pair(s)" in result.output
+    assert "<->" not in result.output  # no pair lines when nothing was flagged
+
+
+def test_match_duplicates_empty_root_fails_cleanly(tmp_path: Path) -> None:
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    result = runner.invoke(app, ["match", "duplicates", str(empty)])
+    assert result.exit_code == 2
+    assert "no chapter folders" in result.output
+
+
+def test_match_duplicates_threshold_flags_reach_the_artifact(tmp_path: Path) -> None:
+    root = write_raw_series(tmp_path / "raw", DUPLICATE_SET)
+    out = tmp_path / "d.json"
+    result = runner.invoke(
+        app,
+        [
+            "match",
+            "duplicates",
+            str(root),
+            "--out",
+            str(out),
+            "--page-similarity",
+            "0.99",
+            "--page-gap",
+            "0.3",
+            "--min-quality",
+            "1.1",
+        ],
+    )
+    assert result.exit_code == 0
+    report = DuplicateReport.load(out)
+    assert report.thresholds.page_similarity == 0.99
+    assert report.thresholds.page_gap == 0.3
+    assert report.thresholds.min_quality == 1.1
+    assert report.duplicates == []  # the pair's quality 1.0 sits below the impossible 1.1 bar

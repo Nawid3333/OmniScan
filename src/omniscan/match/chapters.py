@@ -85,7 +85,7 @@ def match_chapters(dir_a: Path, dir_b: Path, thresholds: Thresholds | None = Non
     chapters_b = _read(dir_b)
     if not chapters_a or not chapters_b:
         raise ValueError(f"no chapter folders with page images under {dir_a} / {dir_b}")
-    quality, page_matches = _chapter_qualities(chapters_a, chapters_b, thresholds)
+    quality, page_matches = chapter_qualities(chapters_a, chapters_b, thresholds)
     chapter_align = align(
         np.where(quality >= thresholds.min_quality, quality - 1.0, FORBIDDEN),
         gap=thresholds.chapter_gap,
@@ -113,7 +113,7 @@ def _read(root: Path) -> list[tuple[str, list[int]]]:
     return [(p.name, chapter_hashes(p)) for p in list_chapters(root)]
 
 
-def _chapter_qualities(
+def chapter_qualities(
     chapters_a: Sequence[tuple[str, list[int]]],
     chapters_b: Sequence[tuple[str, list[int]]],
     thresholds: Thresholds,

@@ -894,6 +894,40 @@ trusting the mapping), and the weakest matches — lowest quality first — each
 when a close alternative existed. Missing or chapter-less directories exit 2; an existing mapping
 file is never overwritten without `--force`.
 
+### `omniscan match duplicates`
+
+Flag accidental duplicate imports **within one chapter set**: two chapter folders under one root
+that hold (nearly) the same pages — an accidental double download, a reposted chapter re-imported
+under a different name, a copy-paste mistake. This is a different question from `match chapters`
+(aligning two *independent* sets 1:1): here every chapter is compared against every other chapter of
+the *same* directory, and one chapter can appear in several flagged pairs (three accidental copies
+of a chapter pair up as three pairs). Pairs score the same page-coverage quality as the matcher, and
+a pair is flagged once it reaches `--min-quality` — whose default of `0.9` is deliberately much
+higher than the matcher's `0.3`: ordinary different chapters of one series share almost no page art,
+while "literally the same pages imported twice" scores near 1.0, so a high bar keeps the report free
+of near-misses.
+
+```bash
+uv run omniscan match duplicates data/raws/PepperCarrotKR
+uv run omniscan match duplicates data/raws/PepperCarrotKR --out dups.json --json
+```
+
+| Argument/option | Meaning |
+|---|---|
+| `root` | the chapter-set directory to scan (one subfolder per chapter) |
+| `--out <path>` | report artifact path. Default: `chapter-duplicates.json` in the current folder |
+| `--force` | overwrite an existing report (the file is meant to be hand-edited, so overwriting is refused without it) |
+| `--page-similarity <0..1>` | dHash similarity at/above which two pages may align. Default: `0.75` |
+| `--page-gap <float>` | penalty for leaving a page unmatched inside a chapter pair. Default: `0.25` |
+| `--min-quality <0..1>` | page-coverage quality at/above which a chapter pair is a duplicate. Default: `0.9` |
+| `--json` | print the full report JSON to stdout instead of the text summary |
+
+The report is hand-editable JSON like the chapter mapping: `duplicates` (each with the `a`/`b`
+folder names — `a` the natural-sort-earlier of the two — and `quality`, sorted by descending
+quality) plus the `thresholds` the run used. Nothing is deleted or merged automatically; a flagged
+pair is a hint for you to remove one copy by hand. A chapter folder with no page images can never
+appear in a pair; a directory with no chapter folders at all exits 2.
+
 ### `omniscan watermark add`
 
 Record a fixed-position watermark region for a series (fractions of every raw page).
