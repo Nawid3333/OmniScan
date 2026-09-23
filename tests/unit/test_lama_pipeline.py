@@ -7,7 +7,7 @@ import torch
 
 from omniscan.core.config import InpaintConfig
 from omniscan.core.schemas import BBox, InpaintArtifact, InpaintItem
-from omniscan.inpaint.lama_pipeline import dilate_mask, lama_regions, window_origin
+from omniscan.inpaint.lama_pipeline import _tile_boxes, _tile_starts, dilate_mask, lama_regions, window_origin
 
 
 class FakeInpainter:
@@ -119,11 +119,25 @@ def test_lama_region_inpaints_a_window_and_cuts_the_patch_back_out() -> None:
     assert metrics == {"regions": 1.0, "skipped_too_large": 0.0, "mask_px": float(n)}
 
 
-def test_region_wider_than_the_usable_window_is_skipped() -> None:
+def test_tile_starts_fits_whole_and_splits_with_overlap() -> None:
+    assert _tile_starts(300, 448, 32) == [0]  # fits in one tile: no split
+    assert _tile_starts(448, 448, 32) == [0]  # exactly the limit: still one tile
+    assert _tile_starts(460, 448, 32) == [0, 12]  # 460 - 448 = 12: the last tile ends flush at 460
+    assert _tile_starts(1000, 448, 32) == [0, 416, 552]  # step = 448 - 32 = 416; last tile flush at 1000-448
+
+
+def test_tile_boxes_splits_only_the_axis_that_needs_it() -> None:
+    box = BBox(x0=100, y0=200, x1=560, y1=280)  # 460 wide, 80 tall
+    tiles = _tile_boxes(box, 448, 32)
+    assert [(t.x0, t.x1, t.y0, t.y1) for t in tiles] == [(100, 548, 200, 280), (112, 560, 200, 280)]
+    assert _tile_boxes(box, 500, 32) == [box]  # fits inside the limit: returned whole
+
+
+def test_region_wider_than_the_usable_window_is_tiled_not_skipped() -> None:
     strip = noisy_strip(3, 1400, 800)
-    box = BBox(x0=100, y0=200, x1=560, y1=280)  # 460 px wide > 512 - 2*32
-    flat_mask = torch.zeros((80, 460), dtype=torch.bool)
-    flat_mask[10:40, 20:200] = True
+    box = BBox(x0=100, y0=200, x1=613, y1=280)  # 513 px wide > 512 - 2*32 (the real Solo Leveling case)
+    flat_mask = torch.zeros((80, 513), dtype=torch.bool)
+    flat_mask[10:40, 20:490] = True
     patches = {"r0001": np_patch(flat_mask)}
     fake = FakeInpainter()
 
@@ -131,9 +145,46 @@ def test_region_wider_than_the_usable_window_is_skipped() -> None:
         strip, artifact_with("r0001", box, needs_lama=True), patches, fake, InpaintConfig()
     )
 
-    assert fake.calls == []
-    assert out_artifact.items == [] and out_patches == {}
-    assert metrics == {"regions": 0.0, "skipped_too_large": 1.0, "mask_px": 0.0}
+    assert len(fake.calls) == 2  # two tiles, each a full lama_window crop
+    for image, _mask in fake.calls:
+        assert image.shape == (3, 512, 512) and image.dtype == torch.uint8
+
+    (item,) = out_artifact.items
+    assert item.region_id == "r0001" and item.method == "lama" and item.needs_lama is False
+    assert item.box == box
+    expected_mask = dilate_mask(flat_mask, 4)
+    assert item.mask_px == int(expected_mask.sum())
+    pixels, patch_mask = out_patches["r0001"]
+    assert pixels.shape == (3, 80, 513) and pixels.dtype == torch.uint8
+    assert torch.equal(patch_mask, expected_mask)
+    n = int(expected_mask.sum())
+    assert torch.equal(pixels[:, expected_mask].T, torch.tensor((1, 2, 3), dtype=torch.uint8).repeat(n, 1))
+    crop = strip[:, 200:280, 100:613]
+    assert torch.equal(pixels[:, ~expected_mask], crop[:, ~expected_mask])  # untouched pixels came through
+    assert metrics == {"regions": 1.0, "skipped_too_large": 0.0, "mask_px": float(n)}
+
+
+def test_region_too_tall_and_too_wide_is_tiled_on_both_axes() -> None:
+    strip = noisy_strip(9, 1400, 1400)
+    box = BBox(x0=50, y0=50, x1=550, y1=550)  # 500x500, both axes over the 448 limit
+    flat_mask = torch.zeros((500, 500), dtype=torch.bool)
+    flat_mask[100:400, 100:400] = True
+    patches = {"r0001": np_patch(flat_mask)}
+    fake = FakeInpainter()
+
+    out_artifact, out_patches, metrics = lama_regions(
+        strip, artifact_with("r0001", box, needs_lama=True), patches, fake, InpaintConfig()
+    )
+
+    assert len(fake.calls) == 4  # a 2x2 tile grid
+    (item,) = out_artifact.items
+    assert item.box == box
+    pixels, _patch_mask = out_patches["r0001"]
+    assert pixels.shape == (3, 500, 500)
+    expected_mask = dilate_mask(flat_mask, 4)
+    n = int(expected_mask.sum())
+    assert torch.equal(pixels[:, expected_mask].T, torch.tensor((1, 2, 3), dtype=torch.uint8).repeat(n, 1))
+    assert metrics["skipped_too_large"] == 0.0
 
 
 def test_strip_smaller_than_the_window_is_replicate_padded() -> None:
