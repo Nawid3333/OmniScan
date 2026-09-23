@@ -959,6 +959,12 @@ uv run omniscan watermark list DemoSeries
 uv run omniscan watermark remove DemoSeries 0
 ```
 
+Stored watermark regions affect the chapters on the next `detect` run of the series: any detected
+region whose box mostly (>= 50 % of its own area) falls inside a stored watermark zone is excluded
+from translation, scoring and evaluation the same way tier 1 (text-pattern) and tier 2 (image-hash)
+matches are. Existing chapters re-detect automatically, because the detect stage now depends on
+`watermarks.json`.
+
 ### `omniscan pack`
 
 Package finished chapters (`output_root/<series>/<chapter>/*.jpg`) into CBZ and/or PDF files.

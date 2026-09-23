@@ -16,17 +16,18 @@ from omniscan.core.schemas import IngestArtifact, RegionsArtifact, SlicesArtifac
 from omniscan.core.stage import ChapterContext
 from omniscan.detect.postprocess import Det, build_regions, merge_detections, tile_det_to_strip
 from omniscan.detect.tiles import keep_tiles, plan_tiles
+from omniscan.detect.watermark_position import reclassify_watermark_position_regions
 from omniscan.gpu.groups import VISION_GROUP
 from omniscan.ingest.strip import load_strip
+from omniscan.watermark.resolve import resolve_watermark_regions
+from omniscan.watermark.store import WatermarkStore
 
 
 class DetectStage:
     """Find bubbles and text regions in chapter strips (satisfies core.stage.Stage)."""
 
     name: ClassVar[str] = "detect"
-    version: ClassVar[int] = (
-        2  # 2: strips decoded before the CUDA staging-buffer fix (2026-09-19) held duplicated pages
-    )
+    version: ClassVar[int] = 3  # 3: fixed-position watermark reclassification (F2c)
     gpu_group: ClassVar[str | None] = VISION_GROUP
 
     def inputs(self, ctx: ChapterContext) -> list[Path]:
@@ -34,6 +35,7 @@ class DetectStage:
         return [
             ctx.paths.artifact("ingest.json"),
             ctx.paths.artifact("slices.json"),
+            ctx.series.work_dir / "watermarks.json",
             *list_images(ctx.paths.raw_dir),
         ]
 
@@ -83,6 +85,9 @@ class DetectStage:
             merge_bubble_text=cfg.merge_bubble_text,
             direction=cfg.reading_direction,
         )
+        # a fixed-position watermark stored for this series (card F2c) reclassifies overlapping regions
+        watermark_boxes = resolve_watermark_regions(WatermarkStore(ctx.series.work_dir).list(), ingest)
+        regions = reclassify_watermark_position_regions(regions, watermark_boxes)
         RegionsArtifact(regions=regions).save(ctx.paths.artifact("regions.json"))
         return {
             "tiles": float(len(tiles)),
@@ -90,4 +95,5 @@ class DetectStage:
             "raw_detections": float(raw_count),
             "merged_detections": float(len(merged)),
             "regions": float(len(regions)),
+            "watermarked": float(sum(1 for r in regions if r.kind == "watermark")),
         }

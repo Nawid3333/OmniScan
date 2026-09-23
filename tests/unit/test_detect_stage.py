@@ -19,6 +19,7 @@ from omniscan.detect.stage import DetectStage
 from omniscan.detect.tiles import keep_tiles, plan_tiles
 from omniscan.ingest.stage import IngestStage
 from omniscan.slicer.stage import SliceStage
+from omniscan.watermark.store import WatermarkStore
 
 SERIES = "S"
 CHAPTER = "Chapter 1"
@@ -227,6 +228,43 @@ def test_detect_stage_no_active_slices(cfg: Config) -> None:
     artifact = RegionsArtifact.load(ctx.paths.artifact("regions.json"))
     assert artifact.regions == []
     assert outcome.metrics["tiles"] == 0.0 and outcome.metrics["tiles_skipped"] == 8.0
+
+
+def test_detect_stage_reclassifies_fixed_position_watermarks(tmp_path: Path) -> None:
+    # 3 noise pages of 100x150 -> a 100x450 strip; tile 0's box lands at strip (20, 30, 80, 70) on
+    # page 1 and tile 4's at (20, 230, 80, 270). A stored zone at fractions (0.2, 0.2, 0.8, 0.4)
+    # resolves to x 20..80, y file.y0+30..file.y0+60: on page 1 that is (20, 30, 80, 60), which
+    # holds 60x30 of the first region's own 60x40 area (IoA 0.75); the second region stays clear.
+    cfg = stage_cfg(tmp_path)
+    script = {
+        0: [RawDet("text_free", 0.6, (20, 30, 80, 70))],
+        4: [RawDet("text_free", 0.6, (20, 30, 80, 70))],
+    }
+    ctx = prepare(cfg, pages=3, size=(100, 150), banded=False)
+    run_chapter([IngestStage(), SliceStage()], ctx)
+    WatermarkStore(ctx.series.work_dir).add(0.2, 0.2, 0.8, 0.4, note="corner stamp")
+    ctx.gpu = FakeScheduler({"detector": FakeDetector(script)})
+
+    outcome = run_stage(DetectStage(), ctx)
+
+    assert outcome.status == "done"
+    assert outcome.metrics["regions"] == 2.0 and outcome.metrics["watermarked"] == 1.0
+    artifact = RegionsArtifact.load(ctx.paths.artifact("regions.json"))
+    kinds = {(r.bbox.x0, r.bbox.y0, r.bbox.x1, r.bbox.y1): r.kind for r in artifact.regions}
+    assert kinds == {(20, 30, 80, 70): "watermark", (20, 230, 80, 270): "free_text"}
+
+
+def test_detect_stage_invalidated_by_a_new_watermark_region(cfg: Config) -> None:
+    ctx = prepare(cfg, pages=2, size=(100, 200), banded=True)
+    run_chapter([IngestStage(), SliceStage()], ctx)
+    ctx.gpu = FakeScheduler({"detector": FakeDetector()})
+
+    assert run_stage(DetectStage(), ctx).status == "done"  # watermarks.json does not exist yet
+    assert run_stage(DetectStage(), ctx).status == "skipped"
+
+    WatermarkStore(ctx.series.work_dir).add(0.9, 0.9, 1.0, 1.0, note="corner site stamp")
+
+    assert run_stage(DetectStage(), ctx).status == "done"  # watermarks.json now exists
 
 
 def test_detect_stage_without_upstream_artifacts_fails(cfg: Config) -> None:
