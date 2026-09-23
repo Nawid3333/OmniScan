@@ -9,14 +9,14 @@ If you are a builder running a task card, this file plus the card are your contr
 - Windows 11 native; repo at `V:\OmniScan` (builder worktrees in `V:\OmniScan-wt\<ID>`). GPU: RX 9070 XT (gfx1201, 16 GB), ROCm 10.0.0.
   Your Bash tool is Git Bash (bash syntax works, paths like `V:/OmniScan/...`). Never rely on Linux-only behaviour (symlinks, `chmod`,
   `fcntl`, `/dev/...`, `/mnt/c`); code and tests must run on Windows, Linux and macOS. Files use LF line endings (`.gitattributes`).
-- Python **3.14**, managed by **uv**. PyTorch comes from AMD's ROCm 10 index (see `pyproject.toml`); never `pip install torch` from PyPI.
+- Python **3.14**, managed by **uv**. Torch is a per-machine `[project.optional-dependencies]` extra (`rocm-gfx1201` / `cpu` / `cuda` / `mps`, see `pyproject.toml`) — `uv sync` never installs one on its own, and `uv sync --all-extras` **fails on purpose** (they're declared mutually exclusive via `[tool.uv.conflicts]`). This machine is `rocm-gfx1201`. Never `pip install torch` from PyPI.
 - GPU choice: use `omniscan.gpu.device.resolve_device(cfg.gpu.device)`; never hard-code `cuda:0` (on this PC `cuda:0` is the integrated GPU and crashes).
 - Ollama runs natively on Windows at `http://localhost:11434`.
 - **Never** install or import `paddlepaddle` / `paddleocr`: Paddle has no ROCm support. Paddle *models* are used through HF `transformers` (PyTorch).
 
 ## Commands
 ```bash
-uv sync --all-extras         # install/refresh deps, including the `gui` extra (PySide6) tests/gui/** needs
+uv sync --extra rocm-gfx1201 --extra gui   # this machine's torch backend + the gui extra (PySide6)
 uv run pytest                # all tests (GPU tests are marked `gpu`)
 uv run pytest -m "not gpu"   # CPU-only tests
 uv run ruff format . && uv run ruff check --fix .

@@ -43,14 +43,17 @@ pipeline stage consumes it yet.
 - A GPU PyTorch supports. Tested: AMD RX 9070 XT (gfx1201, 16 GB) with AMD's ROCm 10 wheels on Windows and Linux/WSL.
   NVIDIA, Apple Silicon (MPS) and CPU-only are expected to work through PyTorch but are untested; `gpu.device = "auto"`
   picks the strongest discrete GPU (it skips integrated GPUs).
-- Python 3.14, managed by [uv](https://docs.astral.sh/uv/). PyTorch comes from AMD's ROCm 10 index —
-  never `pip install torch` from PyPI.
+- Python 3.14, managed by [uv](https://docs.astral.sh/uv/). PyTorch is a per-machine extra you pick at sync
+  time — `rocm-gfx1201` (this project's own dev machine), `cuda`, `cpu` or `mps` (see Quickstart below and
+  `pyproject.toml`) — never `pip install torch` from PyPI.
 - Node 24 for the web UI only (`npm run dev` in `webui/`).
 
 ## Quickstart
 
 ```bash
-uv sync --all-extras  # add --extra gui if you only want the desktop app's dependency, not everything
+# pick the extra matching your GPU: rocm-gfx1201 (AMD RX 9070 XT, this project's own dev machine),
+# cuda (NVIDIA), cpu, or mps (Apple Silicon) — exactly one; add --extra gui for the desktop app too
+uv sync --extra rocm-gfx1201 --extra gui
 uv run omniscan doctor
 uv run python scripts/make_demo_chapter.py
 uv run omniscan slice DemoSeries

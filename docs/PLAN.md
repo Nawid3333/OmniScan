@@ -49,9 +49,13 @@ Changes to the plan:
    encodes. Glyph rasterisation (FreeType) runs on the CPU into small patches; compositing is on the GPU (question F9).
 7. **Judge economics:** the judge only sees lines where candidates disagree (agreement below 0.9) or a locked term is violated,
    with one repair round for violations (question D5).
-8. **Portability:** `pyproject.toml` pins torch to AMD's ROCm build unconditionally, so only ROCm machines can install the project
-   today. Backend selection (ROCm / CUDA / CPU / MPS through uv extras, or the runtime-download model of question B4) and a CPU CI
-   matrix (Windows / Linux / macOS) are planned as P1/P2; they shape `pyproject.toml`, so decide early.
+8. **Portability (P1 done 2026-09-23):** `pyproject.toml` now selects the torch backend per machine via
+   `[project.optional-dependencies]` (`rocm-gfx1201` / `cuda` / `cpu` / `mps`) with `[tool.uv.conflicts]`
+   refusing more than one at a time — `uv sync --extra <name>` (no safe default; only the operator knows
+   their own GPU). `rocm-gfx1201` is the only one verified on real hardware (byte-identical `uv pip list`
+   and a full GPU test pass before/after); cuda/cpu/mps resolve cleanly (`uv lock`) but are otherwise
+   untested. The runtime-download model of question B4 is separate, still open. **P2 (a CI matrix testing
+   `uv sync --extra cpu` on Windows/Linux/macOS) is not done yet.**
 9. **QA loop:** every logic card gets a mutation check; mutation-review cards hand that job to builders; one large Claude
    verification pass at the end (question F7). Every Hugging Face model is pinned by `revision` in config once validated
    (`DetectConfig.revision` is the pattern), and a stage's `version` is bumped when its model changes.

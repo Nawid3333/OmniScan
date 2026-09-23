@@ -1,13 +1,10 @@
 [project]
 name = "omniscan"
 version = "0.1.0"
-description = "GPU end-to-end manhwa/manga translator (KO/ZH/JA -> EN) for AMD ROCm"
+description = "GPU end-to-end manhwa/manga translator (KO/ZH/JA -> EN); Windows/macOS/Linux, AMD/NVIDIA/Apple/CPU"
 readme = "README.md"
 requires-python = ">=3.14,<3.15"
 dependencies = [
-    # ROCm 10 PyTorch for the RX 9070 XT (gfx1201) — served by AMD's index below
-    "torch[device-gfx1201]==2.13.0+rocm10.0.0",
-    "torchvision[device-gfx1201]==0.28.0+rocm10.0.0",
     "numpy>=2.3",
     "pillow>=11.3",
     "pydantic>=2.11",
@@ -35,9 +32,34 @@ dev = [
 [project.scripts]
 omniscan = "omniscan.cli:app"
 
+# torch/torchvision are picked per machine: exactly one of these four (`uv sync` needs `--extra <name>`;
+# `[tool.uv.conflicts]` below refuses more than one at a time — there is no safe default, since only the
+# machine's operator knows its own GPU). "rocm-gfx1201" is this project's own dev machine (RX 9070 XT) and
+# the only one benchmarked on real hardware (docs/benchmarks/windows-native.md); cpu/cuda/mps are
+# best-effort and not yet verified on real hardware other than gfx1201 — see docs/PLAN.md P1/P2.
 [project.optional-dependencies]
 gui = [
     "pyside6-essentials>=6.10,<7",
+]
+rocm-gfx1201 = [
+    # ROCm 10 PyTorch for the RX 9070 XT (gfx1201) — served by the "rocm10" index below
+    "torch[device-gfx1201]==2.13.0+rocm10.0.0",
+    "torchvision[device-gfx1201]==0.28.0+rocm10.0.0",
+]
+cpu = [
+    "torch>=2.9,<3",
+    "torchvision>=0.24,<1",
+]
+cuda = [
+    # NVIDIA, CUDA 12.8 wheels (the "pytorch-cuda" index below); a different driver/toolkit version may
+    # need a different index tag (e.g. .../whl/cu126) — change that one URL, nothing else
+    "torch>=2.9,<3",
+    "torchvision>=0.24,<1",
+]
+mps = [
+    # Apple Silicon: the default PyPI wheel already includes MPS support, no special index needed
+    "torch>=2.9,<3",
+    "torchvision>=0.24,<1",
 ]
 
 [build-system]
@@ -47,17 +69,58 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/omniscan"]
 
-# AMD lists  (Linux-only wheels) as an unconditional torch dependency; Windows has no triton and does not
-# need it (only torch.compile does), so require it on Linux only. Keeps uv.lock installable on Windows.
+# AMD lists triton (Linux-only wheels) as an unconditional torch dependency; Windows has no triton and does
+# not need it (only torch.compile does), so require it on Linux only. Keeps uv.lock installable on Windows.
 [tool.uv]
 override-dependencies = ["triton; sys_platform == 'linux'"]
 
-# AMD ROCm 10 wheel index first (torch, torchvision, triton, rocm-sdk-*, amd-*-device-gfx1201).
-# first-index strategy: a package found on the AMD index is only taken from there (prevents
-# dependency confusion with same-named PyPI projects like "rocm").
+# Exactly one torch backend at a time — see the comment on [project.optional-dependencies] above. uv
+# refuses a sync/lock that asks for more than one of these together instead of silently picking one.
+conflicts = [
+    [
+        { extra = "rocm-gfx1201" },
+        { extra = "cpu" },
+        { extra = "cuda" },
+        { extra = "mps" },
+    ],
+]
+
+[tool.uv.sources]
+# torch/torchvision themselves are routed by extra to the matching index. rocm10 stays a general (non-
+# explicit) index below rather than `explicit = true`: torch[device-gfx1201] pulls in several transitive
+# ROCm SDK/device packages (rocm-sdk-core, amd-torch-device-gfx1201, ...) that are never listed directly in
+# `[project.optional-dependencies]`, so they cannot carry an `extra = "rocm-gfx1201"` source mapping (uv
+# requires the named package to appear in that extra's own dependency list) — they can only be found via
+# rocm10 participating in general index search, exactly as before this table existed.
+torch = [
+    { index = "rocm10", extra = "rocm-gfx1201" },
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cuda", extra = "cuda" },
+]
+torchvision = [
+    { index = "rocm10", extra = "rocm-gfx1201" },
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cuda", extra = "cuda" },
+]
+# mps has no entry above on purpose: macOS wheels come from the default `pypi` index below, already MPS-capable
+
+# AMD ROCm 10 wheel index first (torch, torchvision, triton, rocm-sdk-*, amd-*-device-gfx1201) — this
+# project's own dev machine (RX 9070 XT / gfx1201). Not `explicit`, same as before this table existed: its
+# transitive ROCm SDK/device packages have no direct entry in [project.optional-dependencies] to attach an
+# explicit source to (see the comment above), so they need general index search to be found at all.
 [[tool.uv.index]]
 name = "rocm10"
 url = "https://stable.repo.amd.com/rocm/whl-next/"
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cuda"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
 
 [[tool.uv.index]]
 name = "pypi"
