@@ -11,7 +11,7 @@ dist/
 
 # Data — never commit raws, outputs, models (copyright + size)
 # (anchored to the repo root; `src/omniscan/models/` is the manager package from card U2a)
-library/
+/library/  # card L1: unanchored 'library/' also swallowed the new src/omniscan/library package
 work/
 output/
 samples/
