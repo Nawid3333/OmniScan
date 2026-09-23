@@ -78,10 +78,14 @@ def glossary_subset(regions: Sequence[Region], entries: Sequence[GlossaryEntry])
     return subset
 
 
-def chat_json_messages(regions: Sequence[Region], entries: Sequence[GlossaryEntry]) -> list[dict[str, str]]:
-    """The chat_json prompt: system message plus glossary sections and the regions as a JSON list."""
+def chat_json_messages(
+    regions: Sequence[Region], entries: Sequence[GlossaryEntry], *, story_summary: str | None = None
+) -> list[dict[str, str]]:
+    """The chat_json prompt: system message plus story context, glossary sections and the regions list."""
     subset = glossary_subset(regions, entries)
     parts: list[str] = []
+    if story_summary:
+        parts.append(f"Story so far:\n{story_summary}")
     for title, status in (("Glossary (binding)", "locked"), ("Glossary (suggested)", "proposed")):
         section = [e for e in subset if e.status == status]
         if section:

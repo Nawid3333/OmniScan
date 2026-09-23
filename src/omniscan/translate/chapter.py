@@ -18,6 +18,7 @@ def translate_chapter(
     entries: Sequence[GlossaryEntry],
     *,
     force: bool = False,
+    story_summary: str | None = None,
 ) -> tuple[Literal["done", "skipped"], CandidateRun | None]:
     """Run one translation profile over a chapter; write `translations/<profile>.json` (skip if present)."""
     output = paths.artifact(f"translations/{profile.name}.json")
@@ -30,7 +31,9 @@ def translate_chapter(
     if force:
         partial.unlink(missing_ok=True)  # a leftover partial from another attempt is stale under --force
     artifact = RegionsArtifact.load(ocr_path)
-    run = run_profile(client, profile, artifact.regions, entries, partial_path=partial)
+    run = run_profile(
+        client, profile, artifact.regions, entries, partial_path=partial, story_summary=story_summary
+    )
     run.save(output)
     partial.unlink(missing_ok=True)
     return "done", run

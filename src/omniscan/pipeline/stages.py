@@ -15,6 +15,7 @@ from omniscan.core.config import Config
 from omniscan.core.paths import SeriesPaths
 from omniscan.core.stage import ChapterContext, Stage
 from omniscan.glossary.store import GlossaryStore
+from omniscan.story.store import SummaryStore
 from omniscan.translate.chapter import translate_chapter
 from omniscan.translate.judge_chapter import judge_chapter
 
@@ -58,6 +59,27 @@ def _series_entries(series: SeriesPaths) -> list[GlossaryEntry]:
         return store.list()
 
 
+def _series_story_context(series: SeriesPaths, chapter: str, *, max_chapters: int = 3) -> str | None:
+    """Up to the last `max_chapters` prior chapters' stored summaries, oldest first; None when none exist."""
+    if not series.db.is_file():
+        return None
+    order = series.chapters()
+    if chapter not in order:
+        return None
+    prior = order[: order.index(chapter)]
+    pairs: list[tuple[str, str]] = []
+    with SummaryStore(series.db) as store:
+        for name in prior:
+            row = store.get(name)
+            if row is not None:  # gaps are fine: an unsummarised chapter just contributes nothing
+                pairs.append((name, row.summary))
+    if len(pairs) > max_chapters:
+        pairs = pairs[-max_chapters:]
+    if not pairs:
+        return None
+    return "\n".join(f"- {name}: {summary}" for name, summary in pairs)
+
+
 def _needs_local_gpu(endpoint: str, model: str) -> bool:
     """True when a model occupies local VRAM: local endpoint and not an Ollama cloud model (`x:cloud`, `x:31b-cloud`)."""
     return endpoint == "local" and not model.endswith((":cloud", "-cloud"))
@@ -99,9 +121,12 @@ class TranslateStage:
     def run(self, ctx: ChapterContext, models: Mapping[str, Any]) -> Mapping[str, float]:
         """Do the work, write outputs, return metrics (seconds are added by the runner)."""
         entries = _series_entries(ctx.series)
+        story_summary = _series_story_context(ctx.series, ctx.paths.chapter)
         regions = 0.0
         for profile in self._profiles:
-            _status, run = translate_chapter(self._client, ctx.paths, profile, entries, force=True)
+            _status, run = translate_chapter(
+                self._client, ctx.paths, profile, entries, force=True, story_summary=story_summary
+            )
             if run is not None:
                 regions += float(run.usage["regions"])
         return {"profiles": float(len(self._profiles)), "regions": regions}
@@ -148,7 +173,12 @@ class JudgeStage:
     def run(self, ctx: ChapterContext, models: Mapping[str, Any]) -> Mapping[str, float]:
         """Do the work, write outputs, return metrics (seconds are added by the runner)."""
         _status, _artifact, stats = judge_chapter(
-            self._client, ctx.paths, self._judge_cfg, _series_entries(ctx.series), force=True
+            self._client,
+            ctx.paths,
+            self._judge_cfg,
+            _series_entries(ctx.series),
+            force=True,
+            story_summary=_series_story_context(ctx.series, ctx.paths.chapter),
         )
         if stats is None:
             return {}

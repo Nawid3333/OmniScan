@@ -86,6 +86,7 @@ def run_profile(
     *,
     partial_path: Path | None = None,
     max_repair_rounds: int = 2,
+    story_summary: str | None = None,
     clock: Callable[[], float] = time.perf_counter,
 ) -> CandidateRun:
     """Translate the chapter's translatable regions with one profile and return its candidate run."""
@@ -105,7 +106,17 @@ def run_profile(
 
     try:
         if profile.style == "chat_json":
-            _run_chat_json(client, profile, remaining, entries, by_id, save_partial, usage, max_repair_rounds)
+            _run_chat_json(
+                client,
+                profile,
+                remaining,
+                entries,
+                by_id,
+                save_partial,
+                usage,
+                max_repair_rounds,
+                story_summary,
+            )
         else:
             _run_translategemma(client, profile, remaining, entries, by_id, save_partial, usage)
     except BaseException:
@@ -131,17 +142,22 @@ def _run_chat_json(
     save_partial: Callable[[], None],
     usage: _Usage,
     max_repair_rounds: int,
+    story_summary: str | None = None,
 ) -> None:
     """Request the regions in chunks; repair missing ids, then save the partial after every chunk."""
     for chunk in (
         remaining[i : i + profile.chunk_regions] for i in range(0, len(remaining), profile.chunk_regions)
     ):
-        texts = _request_translations(client, profile, chunk, entries, usage, repair=False)
+        texts = _request_translations(
+            client, profile, chunk, entries, usage, repair=False, story_summary=story_summary
+        )
         missing = [r for r in chunk if r.id not in texts]
         for _ in range(max_repair_rounds):
             if not missing:
                 break
-            repair = _request_translations(client, profile, missing, entries, usage, repair=True)
+            repair = _request_translations(
+                client, profile, missing, entries, usage, repair=True, story_summary=story_summary
+            )
             texts.update(repair)
             missing = [r for r in missing if r.id not in repair]
         for region in chunk:
@@ -158,11 +174,12 @@ def _request_translations(
     usage: _Usage,
     *,
     repair: bool,
+    story_summary: str | None = None,
 ) -> dict[str, str]:
     """One chat_json request for `regions`; returns the usable id -> text pairs of the reply."""
     response = client.chat(
         profile.model,
-        chat_json_messages(regions, entries),
+        chat_json_messages(regions, entries, story_summary=story_summary),
         cloud=(profile.endpoint == "cloud"),
         format=TRANSLATIONS_SCHEMA,
         options={"temperature": profile.temperature},
