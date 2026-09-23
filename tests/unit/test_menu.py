@@ -343,3 +343,171 @@ def test_menu_launch_serve_keyboard_interrupt_returns_to_submenu(
 
     assert calls == [{"host": "127.0.0.1", "port": 8000, "reload": False}]
     assert remaining == []
+
+
+# ---------------------------------------------------------------- MENU2: menu_translate
+
+
+def spy(monkeypatch: pytest.MonkeyPatch, name: str) -> list[dict[str, object]]:
+    """Replace the menu module's `name` attribute with a fake recording its kwargs."""
+    calls: list[dict[str, object]] = []
+
+    def fake(**kwargs: object) -> None:
+        calls.append(kwargs)
+
+    monkeypatch.setattr(menu, name, fake)
+    return calls
+
+
+def test_menu_translate_run_calls_cmd_translate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg, _sp = chapter_cfg(tmp_path)
+    calls = spy(monkeypatch, "cmd_translate")
+    read, remaining = make_read("1", "1", "a", "", "n", "", "0")
+
+    menu.menu_translate(cfg, read=read)
+
+    assert calls == [{"series": "S", "chapter": None, "profile": None, "force": False}]
+    assert remaining == []
+
+
+def test_menu_translate_run_splits_profile_list_and_forces(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg, _sp = chapter_cfg(tmp_path)
+    calls = spy(monkeypatch, "cmd_translate")
+    read, remaining = make_read("1", "1", "1", "a, b ,c", "y", "", "0")
+
+    menu.menu_translate(cfg, read=read)
+
+    assert calls == [{"series": "S", "chapter": ["Chapter 1"], "profile": ["a", "b", "c"], "force": True}]
+    assert remaining == []
+
+
+def test_menu_translate_nothing_to_do_when_series_has_no_chapters(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = menu_cfg(tmp_path)
+    (cfg.paths.library_root / "Empty").mkdir(parents=True)
+    calls = spy(monkeypatch, "cmd_translate")
+    read, remaining = make_read("1", "1", "0")
+
+    menu.menu_translate(cfg, read=read)
+
+    assert calls == []
+    assert "nothing to do" in capsys.readouterr().out
+    assert remaining == []
+
+
+def test_menu_translate_judge_calls_cmd_judge(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg, _sp = chapter_cfg(tmp_path)
+    calls = spy(monkeypatch, "cmd_judge")
+    read, remaining = make_read("2", "1", "a", "", "n", "", "0")
+
+    menu.menu_translate(cfg, read=read)
+
+    assert calls == [{"series": "S", "chapter": None, "run": None, "force": False}]
+    assert remaining == []
+
+
+def test_menu_translate_judge_splits_run_list(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg, _sp = chapter_cfg(tmp_path)
+    calls = spy(monkeypatch, "cmd_judge")
+    read, remaining = make_read("2", "1", "1", "r1, r2", "y", "", "0")
+
+    menu.menu_translate(cfg, read=read)
+
+    assert calls == [{"series": "S", "chapter": ["Chapter 1"], "run": ["r1", "r2"], "force": True}]
+    assert remaining == []
+
+
+def test_menu_translate_story_calls_story_summarize(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg, _sp = chapter_cfg(tmp_path)
+    calls = spy(monkeypatch, "story_summarize")
+    read, remaining = make_read("3", "1", "a", "", "n", "", "0")
+
+    menu.menu_translate(cfg, read=read)
+
+    assert calls == [
+        {"series": "S", "chapter": None, "model": "gemma4:31b-cloud", "force": False, "as_json": False}
+    ]
+    assert remaining == []
+
+
+def test_menu_translate_eof_during_chapter_pick_aborts_flow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """EOF after the series pick: the flow aborts without calling cmd_translate (card Definitions)."""
+    cfg, _sp = chapter_cfg(tmp_path)
+    calls = spy(monkeypatch, "cmd_translate")
+    read, _remaining = make_read("1", "1")  # EOF hits at the chapter pick
+
+    menu.menu_translate(cfg, read=read)  # must not raise
+
+    assert calls == []
+
+
+# ---------------------------------------------------------------- MENU2: menu_glossary
+
+
+def test_menu_glossary_list_passes_status(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg, _sp = chapter_cfg(tmp_path)
+    calls = spy(monkeypatch, "glossary_list")
+
+    menu.menu_glossary(cfg, read=make_read("1", "1", "2", "", "0")[0])
+    assert calls == [{"series": "S", "status": "locked"}]
+
+    menu.menu_glossary(cfg, read=make_read("1", "1", "4", "", "0")[0])  # "all" -> status=None
+    assert calls == [{"series": "S", "status": "locked"}, {"series": "S", "status": None}]
+
+
+def test_menu_glossary_export_and_import(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg, _sp = chapter_cfg(tmp_path)
+    exports = spy(monkeypatch, "glossary_export")
+    imports = spy(monkeypatch, "glossary_import")
+
+    menu.menu_glossary(cfg, read=make_read("2", "1", "", "0")[0])
+    assert exports == [{"series": "S"}]
+
+    menu.menu_glossary(cfg, read=make_read("3", "1", "1", "", "0")[0])
+    menu.menu_glossary(cfg, read=make_read("3", "1", "2", "", "0")[0])
+    assert imports == [{"series": "S", "mode": "merge"}, {"series": "S", "mode": "replace"}]
+
+
+def test_menu_glossary_propose_calls_glossary_propose(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg, _sp = chapter_cfg(tmp_path)
+    calls = spy(monkeypatch, "glossary_propose")
+    read, remaining = make_read("4", "1", "a", "", "5", "y", "", "0")
+
+    menu.menu_glossary(cfg, read=read)
+
+    assert calls == [
+        {
+            "series": "S",
+            "chapter": None,
+            "model": "gemma4:31b-cloud",
+            "min_chapters": 5,
+            "dry_run": True,
+            "as_json": False,
+        }
+    ]
+    assert remaining == []
+
+
+def test_menu_glossary_bootstrap_calls_cmd_reference_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No pre-check runs first — the leaf goes straight to cmd_reference and nothing else (card)."""
+    cfg, _sp = chapter_cfg(tmp_path)
+    calls = spy(monkeypatch, "cmd_reference")
+    read, remaining = make_read("5", "1", "", "", "", "", "", "0")
+
+    menu.menu_glossary(cfg, read=read)
+
+    assert calls == [
+        {
+            "series": "S",
+            "min_locks": 3,
+            "model": "gemma4:31b-cloud",
+            "dry_run": False,
+            "force": False,
+        }
+    ]
+    assert remaining == []

@@ -19,27 +19,56 @@ from omniscan.cli import (
     UpdateChannel,
     cmd_gui,
     cmd_import,
+    cmd_judge,
     cmd_pack,
+    cmd_reference,
     cmd_run,
     cmd_serve,
+    cmd_translate,
     doctor,
+    filter_add,
+    filter_force,
+    filter_restore,
+    filter_run,
+    glossary_export,
+    glossary_import,
+    glossary_list,
+    glossary_propose,
     hardware,
     models_download,
     models_list,
     models_remove,
     models_verify,
+    queue_add,
+    queue_cancel,
+    queue_clear,
+    queue_list,
+    queue_pause,
+    queue_resume,
+    queue_retry,
+    queue_run,
+    story_summarize,
     update_check,
+    watermark_add,
+    watermark_list,
+    watermark_remove,
 )
 from omniscan.core.config import Config
 from omniscan.core.paths import SeriesPaths, natural_key
 from omniscan.library.cli import CoverProvider, CoverSize, cover, info
 from omniscan.match.cli import chapters as match_chapters
 from omniscan.pipeline.stages import STAGE_ORDER
+from omniscan.queue.store import STATUSES
 from omniscan.update.github import DEFAULT_REPO
 
 TOP_LEVEL_OPTIONS: tuple[str, ...] = (
     "Run pipeline (a series' chapters through the full pipeline, or one stage at a time)",
     "Library (import chapters, package finished chapters, covers/metadata, match two chapter sets)",
+    "Translate (translate chapters, judge candidates, summarize story)",
+    "Glossary (list, export, import, propose terms, bootstrap from reference chapters)",
+    "Watermark (fixed-position regions excluded from translation)",
+    "Filter (promo-filter overrides: restore or force-filter a file/slice)",
+    "Queue (queue pipeline jobs, drain, pause/resume/cancel/retry)",
     "Models (list, download, remove, verify)",
     "Diagnostics (doctor, hardware report, check for updates)",
     "Launch (web debug viewer, desktop app)",
@@ -146,6 +175,18 @@ def pick_int(prompt: str, default: int, *, read: Callable[[str], str] = input) -
             continue
 
 
+def pick_float(prompt: str, default: float, *, read: Callable[[str], str] = input) -> float:
+    """Like `pick_int` but parses a float; a non-numeric answer reprints the prompt and asks again."""
+    while True:
+        answer = read(f"{prompt} [{default}]: ").strip()
+        if not answer:
+            return default
+        try:
+            return float(answer)
+        except ValueError:
+            continue
+
+
 def pause(*, read: Callable[[str], str] = input) -> None:
     """Print "Press Enter to continue..." and read one line, discarding it (EOF is fine too)."""
     typer.echo("Press Enter to continue...")
@@ -180,6 +221,11 @@ def run_menu(cfg: Config, *, read: Callable[[str], str] = input) -> int:
     menus: tuple[Callable[..., None], ...] = (
         menu_pipeline,
         menu_library,
+        menu_translate,
+        menu_glossary,
+        menu_watermark,
+        menu_filter,
+        menu_queue,
         menu_models,
         menu_diagnostics,
         menu_launch,
@@ -394,6 +440,180 @@ def _match_chapter_sets(*, read: Callable[[str], str]) -> None:
             review_quality=0.5,
             as_json=False,
         ),
+        read=read,
+    )
+
+
+def menu_translate(cfg: Config, *, read: Callable[[str], str] = input) -> None:
+    """Translate submenu: translate chapters, judge candidate runs, summarize into story memory."""
+    options = ("Translate chapters", "Judge candidate runs", "Summarize into story memory")
+    while True:
+        index = pick_from(options, "Translate", read=read)
+        if index is None:
+            return
+        try:
+            if index == 0:
+                _translate_run(cfg, read=read)
+            elif index == 1:
+                _judge_run(cfg, read=read)
+            else:
+                _story_summarize(cfg, read=read)
+        except EOFError:  # input ended mid-flow: cancel the flow, redraw this submenu
+            pass
+
+
+def _translate_run(cfg: Config, *, read: Callable[[str], str]) -> None:
+    """Translate leaf 1: `cmd_translate` with typed profile names (blank: every enabled profile)."""
+    series = pick_series(cfg, read=read)
+    if series is None:
+        return
+    chapters = pick_chapters(SeriesPaths.from_config(cfg, series), read=read)
+    if chapters is not None and not chapters:
+        typer.echo("nothing to do")
+        return
+    profiles_text = pick_text(
+        "Profile name(s), comma-separated (blank = every enabled profile)", None, read=read
+    )
+    profiles = (
+        None if not profiles_text else [part.strip() for part in profiles_text.split(",") if part.strip()]
+    )
+    force = pick_bool("Force re-run even if the run file already exists?", False, read=read)
+    _run_action(
+        "translate",
+        lambda: cmd_translate(series=series, chapter=chapters, profile=profiles, force=force),
+        read=read,
+    )
+
+
+def _judge_run(cfg: Config, *, read: Callable[[str], str]) -> None:
+    """Translate leaf 2: `cmd_judge` with typed run ids (blank: every run)."""
+    series = pick_series(cfg, read=read)
+    if series is None:
+        return
+    chapters = pick_chapters(SeriesPaths.from_config(cfg, series), read=read)
+    if chapters is not None and not chapters:
+        typer.echo("nothing to do")
+        return
+    runs_text = pick_text("Run id(s) to judge, comma-separated (blank = every run)", None, read=read)
+    runs = None if not runs_text else [part.strip() for part in runs_text.split(",") if part.strip()]
+    force = pick_bool("Force re-run even if final.json already exists?", False, read=read)
+    _run_action(
+        "judge",
+        lambda: cmd_judge(series=series, chapter=chapters, run=runs, force=force),
+        read=read,
+    )
+
+
+def _story_summarize(cfg: Config, *, read: Callable[[str], str]) -> None:
+    """Translate leaf 3: `story_summarize` into the series' story memory (needs final.json)."""
+    series = pick_series(cfg, read=read)
+    if series is None:
+        return
+    chapters = pick_chapters(SeriesPaths.from_config(cfg, series), read=read)
+    model = pick_text("Chat model", "gemma4:31b-cloud", read=read)
+    force = pick_bool("Re-summarize chapters that already have a summary?", False, read=read)
+    _run_action(
+        "story",
+        lambda: story_summarize(series=series, chapter=chapters, model=model, force=force, as_json=False),
+        read=read,
+    )
+
+
+def menu_glossary(cfg: Config, *, read: Callable[[str], str] = input) -> None:
+    """Glossary submenu: list, export, import, propose terms, bootstrap from reference chapters (D7)."""
+    options = (
+        "List",
+        "Export to YAML",
+        "Import from YAML",
+        "Propose terms from OCR text",
+        "Bootstrap from reference chapters (D7)",
+    )
+    while True:
+        index = pick_from(options, "Glossary", read=read)
+        if index is None:
+            return
+        try:
+            if index == 0:
+                _glossary_list(cfg, read=read)
+            elif index == 1:
+                _glossary_export(cfg, read=read)
+            elif index == 2:
+                _glossary_import(cfg, read=read)
+            elif index == 3:
+                _glossary_propose(cfg, read=read)
+            else:
+                _reference_bootstrap(cfg, read=read)
+        except EOFError:  # input ended mid-flow: cancel the flow, redraw this submenu
+            pass
+
+
+def _glossary_list(cfg: Config, *, read: Callable[[str], str]) -> None:
+    """Glossary leaf 1: the entries table, narrowed to one status ("all" = every status)."""
+    series = pick_series(cfg, read=read)
+    if series is None:
+        return
+    index = pick_from(["proposed", "locked", "rejected", "all"], "Status", read=read)
+    if index is None:
+        return
+    status = None if index == 3 else ("proposed", "locked", "rejected")[index]
+    _run_action("glossary", lambda: glossary_list(series=series, status=status), read=read)
+
+
+def _glossary_export(cfg: Config, *, read: Callable[[str], str]) -> None:
+    """Glossary leaf 2: write the full glossary to the series' hand-editable glossary.yaml."""
+    series = pick_series(cfg, read=read)
+    if series is None:
+        return
+    _run_action("glossary", lambda: glossary_export(series=series), read=read)
+
+
+def _glossary_import(cfg: Config, *, read: Callable[[str], str]) -> None:
+    """Glossary leaf 3: import the series' glossary.yaml into its db (merge or replace)."""
+    series = pick_series(cfg, read=read)
+    if series is None:
+        return
+    index = pick_from(["merge", "replace"], "Mode", read=read)
+    if index is None:
+        return
+    mode = ("merge", "replace")[index]
+    _run_action("glossary", lambda: glossary_import(series=series, mode=mode), read=read)
+
+
+def _glossary_propose(cfg: Config, *, read: Callable[[str], str]) -> None:
+    """Glossary leaf 4: propose terms from the series' own OCR text (always proposed, never locked)."""
+    series = pick_series(cfg, read=read)
+    if series is None:
+        return
+    chapters = pick_chapters(SeriesPaths.from_config(cfg, series), read=read)
+    model = pick_text("Chat model", "gemma4:31b-cloud", read=read)
+    min_chapters = pick_int("Minimum chapters a term must recur in", 2, read=read)
+    dry_run = pick_bool("Dry run (scan and extract, write nothing)?", False, read=read)
+    _run_action(
+        "glossary",
+        lambda: glossary_propose(
+            series=series,
+            chapter=chapters,
+            model=model,
+            min_chapters=min_chapters,
+            dry_run=dry_run,
+            as_json=False,
+        ),
+        read=read,
+    )
+
+
+def _reference_bootstrap(cfg: Config, *, read: Callable[[str], str]) -> None:
+    """Glossary leaf 5: learn the glossary from official English reference chapters (D7)."""
+    series = pick_series(cfg, read=read)
+    if series is None:
+        return
+    min_locks = pick_int("Distinct reference chapters a pair must recur in to lock", 3, read=read)
+    model = pick_text("Chat model", "gemma4:31b-cloud", read=read)
+    dry_run = pick_bool("Dry run (match/OCR/extract, write nothing)?", False, read=read)
+    force = pick_bool("Force re-run OCR stages even if up to date?", False, read=read)
+    _run_action(
+        "reference",
+        lambda: cmd_reference(series=series, min_locks=min_locks, model=model, dry_run=dry_run, force=force),
         read=read,
     )
 
