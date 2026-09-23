@@ -3,8 +3,9 @@
 `MangaOcrReader` runs the manga-ocr VisionEncoderDecoder over region crops (uint8 `[3, h, w]`, any
 device) in fp32; the crops are resized to 224x224 by the ViT processor, so no width batching is
 needed. Decoding uses the model's `vocab.txt` directly (transformers' tokenizer needs `fugashi`).
-`PaddleOcrVlReader` runs PaddleOCR-VL (a 0.9 B vision-language model) over the same crops — one
-chat-formatted `generate` per crop, in order, which reads all CJK scripts and Latin.
+`PaddleOcrVlReader` runs PaddleOCR-VL (a 0.9 B vision-language model) over the same crops — a
+chat-formatted `generate` over `cfg.crop_batch_size` crops at a time, in order, which reads all CJK
+scripts and Latin.
 """
 
 from __future__ import annotations
@@ -201,13 +202,16 @@ def clean_vl_text(text: str) -> str:
 
 
 class PaddleOcrVlReader:
-    """PaddleOCR-VL crop reader (`cfg.rec_model` or the engine default): one `generate` per crop."""
+    """PaddleOCR-VL crop reader (`cfg.rec_model` or the engine default): `cfg.crop_batch_size` crops per `generate`."""
 
-    def __init__(self, model: Any, processor: Any, device: torch.device, *, max_new_tokens: int) -> None:
+    def __init__(
+        self, model: Any, processor: Any, device: torch.device, *, max_new_tokens: int, batch_size: int
+    ) -> None:
         self.model = model
         self.processor = processor
         self._device = device
         self._max_new_tokens = max_new_tokens
+        self.batch_size = batch_size
 
     @classmethod
     def load(cls, cfg: OcrConfig, device: torch.device, models_dir: Path | None = None) -> PaddleOcrVlReader:
@@ -227,27 +231,33 @@ class PaddleOcrVlReader:
             AutoModelForImageTextToText.from_pretrained(path_or_repo, dtype=torch.float32, **kwargs), device
         ).eval()
         processor = AutoProcessor.from_pretrained(path_or_repo, **kwargs)
-        return cls(model, processor, device, max_new_tokens=cfg.vl_max_new_tokens)
+        return cls(
+            model, processor, device, max_new_tokens=cfg.vl_max_new_tokens, batch_size=cfg.crop_batch_size
+        )
 
     def read(self, crops: Sequence[torch.Tensor]) -> list[tuple[str, float]]:
-        """(text, score) per crop, in order, one `generate` each; `cfg.crop_batch_size` is ignored.
+        """(text, score) per crop, in order, `cfg.crop_batch_size` crops per batched `generate`.
 
-        Sequential by design today (batched generation is a later card): the model reads a whole
-        region with the fixed "OCR:" chat prompt, greedy, scored by the mean generated-token
-        log-probability.
+        The model reads a whole region with the fixed "OCR:" chat prompt, greedy, scored by the mean
+        generated-token log-probability. Batches are left-padded: every prompt in a chunk then ends
+        at the same index, so one shared prompt length offsets the generated tail of every row.
         """
         if not crops:
             return []
         readings: list[tuple[str, float]] = []
-        for crop in crops:
+        for start in range(0, len(crops), self.batch_size):
+            chunk = list(crops[start : start + self.batch_size])
             messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image", "image": prepare_vl_image(crop)},
-                        {"type": "text", "text": VL_PROMPT},
-                    ],
-                }
+                [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "image", "image": prepare_vl_image(crop)},
+                            {"type": "text", "text": VL_PROMPT},
+                        ],
+                    }
+                ]
+                for crop in chunk
             ]
             inputs = self.processor.apply_chat_template(
                 messages,
@@ -255,6 +265,8 @@ class PaddleOcrVlReader:
                 tokenize=True,
                 return_dict=True,
                 return_tensors="pt",
+                padding=True,
+                padding_side="left",
                 images_kwargs={
                     "size": {
                         "shortest_edge": self.processor.image_processor.size["shortest_edge"],
@@ -271,18 +283,36 @@ class PaddleOcrVlReader:
                     output_scores=True,
                     return_dict_in_generate=True,
                 )
-            text = clean_vl_text(self.processor.decode(out.sequences[0][n_prompt:], skip_special_tokens=True))
-            readings.append((text, self._score(out)) if text else ("", 0.0))
+            readings.extend(self._readings(out, n_prompt))
         return readings
 
-    def _score(self, out: Any) -> float:
-        """exp of the mean generated-token log-prob, clamped to [0, 1]; 1.0 when it cannot be computed."""
+    def _readings(self, out: Any, n_prompt: int) -> list[tuple[str, float]]:
+        """(text, score) per row of the batch: exp of the mean non-pad generated-token log-prob."""
         try:
             transition = self.model.compute_transition_scores(
                 out.sequences, out.scores, normalize_logits=True
             )
-            score = math.exp(float(transition[0].mean()))
         except Exception:
             log.debug("paddleocr-vl transition scores unavailable; scoring 1.0", exc_info=True)
-            return 1.0
-        return round(min(max(score, 0.0), 1.0), 4)
+            transition = None
+        pad_id = getattr(getattr(self.model, "config", None), "pad_token_id", None)
+        if pad_id is None:
+            pad_id = 0  # the PaddleOCR-VL vocab pads with <unk> (id 0)
+        readings: list[tuple[str, float]] = []
+        for index, sequence in enumerate(out.sequences):
+            text = clean_vl_text(self.processor.decode(sequence[n_prompt:], skip_special_tokens=True))
+            if not text:
+                readings.append(("", 0.0))
+                continue
+            if transition is None:
+                score = 1.0
+            else:
+                generated = sequence[len(sequence) - transition.shape[1] :]
+                log_probs = transition[index][generated != pad_id]
+                score = (
+                    round(min(max(math.exp(float(log_probs.mean())), 0.0), 1.0), 4)
+                    if log_probs.numel()
+                    else 0.0
+                )
+            readings.append((text, score))
+        return readings

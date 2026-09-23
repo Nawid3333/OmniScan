@@ -1,9 +1,10 @@
-"""prepare_vl_image / clean_vl_text / PaddleOcrVlReader against fake model+processor (card O1d, tests 1-4)."""
+"""prepare_vl_image / clean_vl_text / PaddleOcrVlReader against fake model+processor (cards O1d, O1f)."""
 
 from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -112,10 +113,12 @@ class FakeInputs(dict):
 
 
 class FakeVLProcessor:
-    """Records apply_chat_template calls; decodes one scripted text per crop."""
+    """apply_chat_template over one chunk: hand-built left-padded prompts; scripted decode per row."""
 
-    def __init__(self, texts: list[str]) -> None:
+    def __init__(self, texts: list[str], *, prompt_lengths: Sequence[int] = (4,)) -> None:
         self.texts = texts
+        self.prompt_lengths = prompt_lengths
+        self.served = 0
         self.calls: list[dict[str, Any]] = []
         self.inputs: list[FakeInputs] = []
         self.decoded: list[list[int]] = []
@@ -123,7 +126,16 @@ class FakeVLProcessor:
 
     def apply_chat_template(self, messages: Any, **kwargs: Any) -> FakeInputs:
         self.calls.append({"messages": messages, **kwargs})
-        inputs = FakeInputs({"input_ids": torch.arange(5).reshape(1, -1)})
+        lengths = [
+            self.prompt_lengths[(self.served + i) % len(self.prompt_lengths)] for i in range(len(messages))
+        ]
+        self.served += len(messages)
+        rows, masks = [], []
+        for row, length in enumerate(lengths):
+            pads = [0] * (max(lengths) - length)
+            rows.append(pads + [1000 * (row + 1) + j for j in range(length)])
+            masks.append([0] * len(pads) + [1] * length)
+        inputs = FakeInputs({"input_ids": torch.tensor(rows), "attention_mask": torch.tensor(masks)})
         self.inputs.append(inputs)
         return inputs
 
@@ -134,14 +146,14 @@ class FakeVLProcessor:
 
 
 class FakeVLModel:
-    """Scripted generate: prompt + N generated tokens, transition scores from the scripted logs."""
+    """Scripted batched generate: prompt + per-row generated ids, per-row transition scores."""
 
     def __init__(self, calls: list[dict[str, Any]]) -> None:
         self.calls = calls
         self.generate_calls: list[dict[str, Any]] = []
-        self.score_calls = 0
         self.to_devices: list[torch.device] = []
         self.evaled = False
+        self.config = SimpleNamespace(pad_token_id=0)
 
     def to(self, device: torch.device) -> FakeVLModel:
         self.to_devices.append(device)
@@ -154,53 +166,79 @@ class FakeVLModel:
     def generate(self, **kwargs: Any) -> Any:
         self.generate_calls.append(kwargs)
         call = self.calls[len(self.generate_calls) - 1]
-        generated = (torch.arange(len(call["logs"]), dtype=torch.long) + 100).reshape(1, -1)
-        sequences = torch.cat([kwargs["input_ids"], generated], dim=1)
-        return SimpleNamespace(sequences=sequences, scores=tuple(object() for _ in call["logs"]))
+        sequences = torch.cat([kwargs["input_ids"], torch.tensor(call["gen"], dtype=torch.long)], dim=1)
+        return SimpleNamespace(sequences=sequences, scores=tuple(object() for _ in call["gen"][0]))
 
     def compute_transition_scores(self, sequences: Any, scores: Any, normalize_logits: bool) -> torch.Tensor:
         assert normalize_logits is True
         call = self.calls[len(self.generate_calls) - 1]
         if call.get("raise"):
             raise RuntimeError("no transition scores")
-        return torch.tensor([call["logs"]])
+        return torch.tensor(call["logs"])
 
 
 def make_reader(
-    calls: list[dict[str, Any]], texts: list[str], *, cfg: OcrConfig | None = None
+    calls: list[dict[str, Any]],
+    texts: list[str],
+    *,
+    cfg: OcrConfig | None = None,
+    prompt_lengths: Sequence[int] = (4,),
 ) -> tuple[PaddleOcrVlReader, FakeVLModel, FakeVLProcessor]:
     cfg = cfg or OcrConfig(engine="paddleocr_vl", vl_max_new_tokens=99)
     model = FakeVLModel(calls)
-    processor = FakeVLProcessor(texts)
-    reader = PaddleOcrVlReader(model, processor, torch.device("cpu"), max_new_tokens=cfg.vl_max_new_tokens)
+    processor = FakeVLProcessor(texts, prompt_lengths=prompt_lengths)
+    reader = PaddleOcrVlReader(
+        model,
+        processor,
+        torch.device("cpu"),
+        max_new_tokens=cfg.vl_max_new_tokens,
+        batch_size=cfg.crop_batch_size,
+    )
     return reader, model, processor
+
+
+def zero_crops(n: int) -> list[torch.Tensor]:
+    return [torch.zeros(3, 20, 20, dtype=torch.uint8) for _ in range(n)]
 
 
 # ---------------------------------------------------------------- read (test 3)
 
 
 def test_read_sends_the_card_messages_and_generate_arguments() -> None:
-    calls = [{"logs": [-0.1, -0.3]}, {"logs": [-1.0]}]
-    reader, model, processor = make_reader(calls, ["first", "second"])
+    calls = [
+        {"gen": [[100, 101], [200, 201]], "logs": [[-0.1, -0.3], [-0.5, -0.5]]},
+        {"gen": [[300]], "logs": [[-1.0]]},
+    ]
+    cfg = OcrConfig(engine="paddleocr_vl", vl_max_new_tokens=99, crop_batch_size=2)
+    reader, model, processor = make_reader(calls, ["first", "second", "third"], cfg=cfg)
 
-    out = reader.read([torch.zeros(3, 40, 60, dtype=torch.uint8), torch.zeros(3, 30, 30, dtype=torch.uint8)])
+    out = reader.read(zero_crops(3))
 
-    assert out == [("first", 0.8187), ("second", 0.3679)]  # exp(-0.2), exp(-1.0)
-    assert len(processor.calls) == 2 and len(model.generate_calls) == 2  # one generate per crop, in order
-    for call, inputs in zip(processor.calls, processor.inputs, strict=True):
-        image = call["messages"][0]["content"][0]["image"]
-        assert isinstance(image, Image.Image)
-        assert call["messages"] == [
-            {
-                "role": "user",
-                "content": [{"type": "image", "image": image}, {"type": "text", "text": VL_PROMPT}],
-            }
-        ]
+    assert out == [
+        ("first", 0.8187),
+        ("second", 0.6065),
+        ("third", 0.3679),
+    ]  # exp(-0.2), exp(-0.5), exp(-1.0)
+    assert len(processor.calls) == len(model.generate_calls) == 2  # one generate per chunk: 2 + 1
+    assert [len(call["messages"]) for call in processor.calls] == [2, 1]
+    for call in processor.calls:
+        for conversation in call["messages"]:
+            image = conversation[0]["content"][0]["image"]
+            assert isinstance(image, Image.Image)
+            assert conversation == [
+                {
+                    "role": "user",
+                    "content": [{"type": "image", "image": image}, {"type": "text", "text": VL_PROMPT}],
+                }
+            ]
         assert call["add_generation_prompt"] is True
         assert call["tokenize"] is True
         assert call["return_dict"] is True
         assert call["return_tensors"] == "pt"
+        assert call["padding"] is True
+        assert call["padding_side"] == "left"
         assert call["images_kwargs"] == {"size": {"shortest_edge": 448, "longest_edge": VL_MAX_PIXELS}}
+    for inputs in processor.inputs:
         assert inputs.to_device == torch.device("cpu")
     for kwargs in model.generate_calls:
         assert kwargs["max_new_tokens"] == 99  # cfg.vl_max_new_tokens of make_reader's cfg
@@ -209,44 +247,102 @@ def test_read_sends_the_card_messages_and_generate_arguments() -> None:
         assert kwargs["return_dict_in_generate"] is True
 
 
+def test_read_batches_five_crops_into_three_generate_calls() -> None:
+    calls = [
+        {"gen": [[100], [200]], "logs": [[-0.1], [-0.9]]},
+        {"gen": [[300], [400]], "logs": [[-0.1], [-0.9]]},
+        {"gen": [[500]], "logs": [[-0.1]]},
+    ]
+    cfg = OcrConfig(engine="paddleocr_vl", vl_max_new_tokens=8, crop_batch_size=2)
+    reader, model, _processor = make_reader(calls, ["a", "b", "c", "d", "e"], cfg=cfg)
+
+    out = reader.read(zero_crops(5))
+
+    assert len(model.generate_calls) == 3  # chunked 2 + 2 + 1
+    assert [kwargs["input_ids"].shape[0] for kwargs in model.generate_calls] == [2, 2, 1]
+    assert out == [("a", 0.9048), ("b", 0.4066), ("c", 0.9048), ("d", 0.4066), ("e", 0.9048)]  # order kept
+
+
+def test_read_decodes_each_rows_own_tail_ignoring_output_pads() -> None:
+    # row 1 finishes one token early: pad id 0 fills its tail to row 0's length
+    calls = [{"gen": [[100, 101, 102], [200, 0, 0]], "logs": [[-0.1, -0.1, -0.1], [-0.2, -9.0, -9.0]]}]
+    reader, _model, processor = make_reader(calls, ["row zero", "row one"], prompt_lengths=(3,))
+
+    out = reader.read(zero_crops(2))
+
+    assert out == [("row zero", 0.9048), ("row one", 0.8187)]  # exp(-0.1); exp(-0.2) — the pads are masked
+    assert processor.decoded == [[100, 101, 102], [200, 0, 0]]  # each row decoded its own tail
+
+
+def test_read_scores_are_per_row() -> None:
+    # row 1 finishes a token early: its pad (id 0) carries a -9.0 log-prob that must not count
+    calls = [{"gen": [[100, 101], [200, 0]], "logs": [[-0.05, -0.05], [-2.0, -9.0]]}]
+    reader, _model, _processor = make_reader(calls, ["fast", "slow"])
+
+    assert reader.read(zero_crops(2)) == [("fast", 0.9512), ("slow", 0.1353)]  # exp(-0.05); exp(-2.0)
+
+
+def test_read_left_pads_the_prompt_and_offsets_the_tail_by_one_shared_length() -> None:
+    # real prompt lengths 2 and 4: row 0 is left-padded to 4, so decoding must start at the shared
+    # width — slicing at row 0's own shorter prompt would bleed its prompt tokens into the decode
+    calls = [{"gen": [[100], [200]], "logs": [[-0.1], [-0.2]]}]
+    reader, _model, processor = make_reader(calls, ["short", "long"], prompt_lengths=(2, 4))
+
+    out = reader.read(zero_crops(2))
+
+    assert out == [("short", 0.9048), ("long", 0.8187)]
+    inputs = processor.inputs[0]
+    assert inputs["input_ids"].tolist() == [[0, 0, 1000, 1001], [2000, 2001, 2002, 2003]]
+    assert inputs["attention_mask"].tolist() == [[0, 0, 1, 1], [1, 1, 1, 1]]  # padding on the left
+    assert processor.decoded == [[100], [200]]  # row 0's slice starts after the shared width
+
+
+def test_read_single_crop_goes_through_the_batched_path() -> None:
+    calls = [{"gen": [[100, 101]], "logs": [[-0.3, -0.1]]}]
+    reader, model, processor = make_reader(calls, ["only"])
+
+    assert reader.read(zero_crops(1)) == [("only", 0.8187)]  # exp(-(0.3+0.1)/2)
+    assert len(model.generate_calls) == 1 and [len(call["messages"]) for call in processor.calls] == [1]
+
+
 def test_read_decodes_only_the_generated_tail() -> None:
-    calls = [{"logs": [-0.2, -0.4, -0.6]}]
+    calls = [{"gen": [[100, 101, 102]], "logs": [[-0.2, -0.4, -0.6]]}]
     reader, _model, processor = make_reader(calls, ["decoded"])
 
-    reader.read([torch.zeros(3, 8, 8, dtype=torch.uint8)])
+    reader.read(zero_crops(1))
 
-    # the prompt is arange(5); the generated tail of the fake sequence is 100, 101, 102
+    # the prompt is four ids; the generated tail of the fake sequence is 100, 101, 102
     assert processor.decoded == [[100, 101, 102]]
 
 
 def test_read_cleans_the_decoded_text() -> None:
-    calls = [{"logs": [-0.1]}]
+    calls = [{"gen": [[100]], "logs": [[-0.1]]}]
     reader, _model, _processor = make_reader(calls, ["きっと...\nうっかりして\n寝ちゃったんだ!"])
 
-    assert reader.read([torch.zeros(3, 20, 20, dtype=torch.uint8)]) == [
-        ("きっと... うっかりして 寝ちゃったんだ!", 0.9048)  # exp(-0.1)
-    ]
+    assert reader.read(zero_crops(1)) == [("きっと... うっかりして 寝ちゃったんだ!", 0.9048)]  # exp(-0.1)
 
 
 def test_read_clamps_the_score_to_one() -> None:
-    calls = [{"logs": [0.5, 0.2]}]  # a mean log-prob above 0 cannot happen; the fake can
+    calls = [
+        {"gen": [[100, 101]], "logs": [[0.5, 0.2]]}
+    ]  # a mean log-prob above 0 cannot happen; the fake can
     reader, _model, _processor = make_reader(calls, ["text"])
 
-    assert reader.read([torch.zeros(3, 20, 20, dtype=torch.uint8)]) == [("text", 1.0)]
+    assert reader.read(zero_crops(1)) == [("text", 1.0)]
 
 
 def test_read_transition_scores_raising_scores_1() -> None:
-    calls = [{"logs": [-0.1, -0.2], "raise": True}]
+    calls = [{"gen": [[100, 101]], "logs": [[-0.1, -0.2]], "raise": True}]
     reader, _model, _processor = make_reader(calls, ["text"])
 
-    assert reader.read([torch.zeros(3, 20, 20, dtype=torch.uint8)]) == [("text", 1.0)]
+    assert reader.read(zero_crops(1)) == [("text", 1.0)]
 
 
 def test_read_empty_decode_scores_0() -> None:
-    calls = [{"logs": [-0.1]}]
+    calls = [{"gen": [[100]], "logs": [[-0.1]]}]
     reader, model, _processor = make_reader(calls, [""])
 
-    assert reader.read([torch.zeros(3, 20, 20, dtype=torch.uint8)]) == [("", 0.0)]
+    assert reader.read(zero_crops(1)) == [("", 0.0)]
     assert len(model.generate_calls) == 1  # the crop was still read; only scoring is skipped
 
 
@@ -258,12 +354,12 @@ def test_read_no_crops_never_calls_the_model() -> None:
 
 
 def test_read_upscales_a_crop_below_28px_before_the_processor() -> None:
-    calls = [{"logs": [-0.1]}]
+    calls = [{"gen": [[100]], "logs": [[-0.1]]}]
     reader, _model, processor = make_reader(calls, ["text"])
 
     reader.read([torch.zeros(3, 60, 20, dtype=torch.uint8)])
 
-    image = processor.calls[0]["messages"][0]["content"][0]["image"]
+    image = processor.calls[0]["messages"][0][0]["content"][0]["image"]
     assert image.size == (28, 84)
 
 
@@ -307,6 +403,16 @@ def test_load_installed_model_uses_its_folder_fp32(monkeypatch, tmp_path, patche
     assert model.to_devices == [torch.device("cpu")] and model.evaled
     assert reader.model is model and reader.processor is processor
     assert reader._max_new_tokens == 192  # cfg.vl_max_new_tokens default
+    assert reader.batch_size == 16  # cfg.crop_batch_size default
+
+
+def test_load_threads_cfg_crop_batch_size(monkeypatch, patched_transformers) -> None:
+    monkeypatch.setattr("omniscan.ocr.engines.load_catalog", lambda: [vl_entry()])
+    _seen, _model, _processor = patched_transformers
+
+    reader = PaddleOcrVlReader.load(OcrConfig(engine="paddleocr_vl", crop_batch_size=7), torch.device("cpu"))
+
+    assert reader.batch_size == 7
 
 
 def test_load_missing_model_falls_back_to_the_pinned_hub(

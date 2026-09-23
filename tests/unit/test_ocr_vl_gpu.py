@@ -1,10 +1,12 @@
-"""Real PaddleOCR-VL on the GPU: rendered English crops -> text (card O1d, test 6).
+"""Real PaddleOCR-VL on the GPU: rendered English crops -> text (cards O1d test 6, O1f verification).
 
 Skipped unless `ocr-vl-1.6` is installed in the models dir — the test never downloads.
 """
 
 from __future__ import annotations
 
+import time
+from difflib import SequenceMatcher
 from pathlib import Path
 
 import numpy as np
@@ -77,4 +79,49 @@ def test_paddleocr_vl_reads_rendered_english_crops() -> None:
         wanted = [c.lower() for c in truth if c.isalnum()]
         found = sum(1 for c in wanted if c in text.lower())
         assert found >= 0.6 * len(wanted), f"{text!r} vs {truth!r}: {found}/{len(wanted)} characters"
+    torch.cuda.empty_cache()
+
+
+_BATCH_TEXTS = (
+    "I even brought my clothes, hat, and potions!",
+    "Wow, the potion really worked this time!",
+    "Pepper!",
+)
+
+
+@pytest.mark.gpu
+def test_paddleocr_vl_batched_read_matches_and_times_chunk_size_one() -> None:
+    """Card O1f director check: the batched read() against a forced chunk size of 1 (same code path).
+
+    Greedy decoding can shift a token or two under left padding, so text must be near-identical
+    (>= 0.8 similarity), not exactly equal; the printed wall-clock times show the speedup.
+    """
+    models_dir = _REPO_ROOT / "models"
+    if local_model_source(_REPO, models_dir) is None:
+        pytest.skip(f"{_REPO} is not installed in {models_dir} - run 'omniscan models download ocr-vl-1.6'")
+    font = ImageFont.truetype(str(_REPO_ROOT / "fonts" / "ComicNeue-Regular.ttf"), 36)
+
+    device = resolve_device()
+    reader = PaddleOcrVlReader.load(OcrConfig(engine="paddleocr_vl"), device, models_dir=models_dir)
+    crops = [
+        _crop(text, font).to(device) for text in _BATCH_TEXTS
+    ]  # on the GPU: prepare_vl_image round trips
+
+    started = time.perf_counter()
+    batched = reader.read(crops)
+    batched_seconds = time.perf_counter() - started
+
+    chunk_of_one = PaddleOcrVlReader(
+        reader.model, reader.processor, device, max_new_tokens=reader._max_new_tokens, batch_size=1
+    )
+    started = time.perf_counter()
+    sequential = chunk_of_one.read(crops)
+    sequential_seconds = time.perf_counter() - started
+
+    print(f"\nbatched (one chunk of {len(crops)}): {batched_seconds:.1f}s")
+    print(f"chunk size 1 ({len(crops)} chunks): {sequential_seconds:.1f}s")
+    for (batch_text, batch_score), (text, score) in zip(batched, sequential, strict=True):
+        assert 0.0 < batch_score <= 1.0 and 0.0 < score <= 1.0
+        ratio = SequenceMatcher(None, batch_text, text).ratio()
+        assert ratio >= 0.8, f"batched {batch_text!r} vs chunk size 1 {text!r} (similarity {ratio:.2f})"
     torch.cuda.empty_cache()
