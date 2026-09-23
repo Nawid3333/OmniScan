@@ -150,7 +150,11 @@ class MetadataClient:
             if response is not None:
                 error = f"HTTP {response.status_code}"
             # a 429 waits out Retry-After; every other failure waits the exponential backoff
-            wait = _retry_after(response) if response is not None and response.status_code == 429 else 0.5 * 2**attempt
+            wait = (
+                _retry_after(response)
+                if response is not None and response.status_code == 429
+                else 0.5 * 2**attempt
+            )
             if attempt < self._max_retries:
                 self._sleep(wait)
         raise _ProviderError(error)
@@ -253,14 +257,20 @@ def _mangadex_candidate(item: Any) -> Candidate:
     series_id = _text(entry.get("id"))
     attributes = _as_dict(entry.get("attributes"))
     title = _as_dict(attributes.get("title"))
-    alt = [alt_entry for alt_entry in attributes.get("altTitles", []) if isinstance(alt_entry, dict)]
+    raw_alt = attributes.get("altTitles")
+    alt = [
+        alt_entry
+        for alt_entry in (raw_alt if isinstance(raw_alt, list) else [])
+        if isinstance(alt_entry, dict)
+    ]
     alt_values = [_text(value) for alt_entry in alt for value in alt_entry.values()]
     en_title = _text(title.get("en"))
     en_alt = next((_text(value) for alt_entry in alt for key, value in alt_entry.items() if key == "en"), "")
     first_title = next((value for value in (_text(v) for v in title.values()) if value), "")
     first_alt = next((value for value in alt_values if value), "")
     cover_file = ""
-    for relationship in entry.get("relationships", []):
+    raw_relationships = entry.get("relationships")
+    for relationship in raw_relationships if isinstance(raw_relationships, list) else []:
         rel = _as_dict(relationship)
         if rel.get("type") == "cover_art":
             cover_file = _text(_as_dict(rel.get("attributes")).get("fileName"))

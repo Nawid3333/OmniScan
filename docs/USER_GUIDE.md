@@ -1083,6 +1083,41 @@ update:   Bugfixes for the slicer and a faster OCR pass.
 update: staged ~/omniscan/updates/v1.2.3/omniscan-windows-x64.zip (9c1b…)
 ```
 
+### `omniscan library`
+
+Covers and metadata: every series can get a cover image and basic metadata from the free structured
+metadata APIs — no LLM, no scraping. `cover` searches **AniList**, **MangaDex** and **Jikan
+(MyAnimeList)** in that order; a failing or rate-limited provider is skipped and reported, it never
+aborts the search. The candidates are scored against the query and the best one's cover is saved to
+`<series>/_meta/cover.jpg|png|webp` next to a `series.json` that records where everything came from.
+Your own image always wins: `--file` sets it instead and marks the source `user`.
+
+| Subcommand | Effect |
+|---|---|
+| `cover SERIES [--title TITLE] [--provider anilist\|mangadex\|jikan\|all] [--pick N] [--file PATH] [--size large\|small] [--json]` | print the numbered candidate list (`#`, provider, title, year, country, score) plus any provider errors, then download the best match's cover (a match must score ≥ 0.75); `--title` overrides the search text (default: the series name), `--pick N` chooses from the list, `--file` sets your own image with no network call, `--size small` fetches the smaller cover variant. Without a confident match: `no confident match — choose one with --pick N`, exit 1, nothing written |
+| `info SERIES [--json]` | print the stored `series.json` fields (title, provider, year, country, status, credit, cover path), or `no metadata for SERIES` (exit 1) |
+
+The series folder does not need to exist yet — `_meta` is created under `paths.library_root`. The
+client honours each provider's rate limit (AniList 30/min, MangaDex 5/s, Jikan 3/s): a `429` waits
+out its `Retry-After` (capped at 60 s) and server errors are retried with a short backoff. Covers
+are copyrighted artwork of the series: they are stored in your library for your own display, with
+the source recorded in `series.json` (`cover_source`, `credit`), and are never re-distributed.
+
+```bash
+uv run omniscan library cover "Solo Leveling"
+uv run omniscan library cover "Solo Leveling" --pick 3
+uv run omniscan library cover "Solo Leveling" --file ~/Pictures/my-cover.png
+uv run omniscan library info "Solo Leveling"
+```
+
+```text
+1. anilist    Solo Leveling  2018  KR  1.000
+2. anilist    The Privilege of the Second Life is Power Leveling  2024  KR  0.592
+3. anilist    Solo Leveling: Ragnarok  2024  KR  0.850
+jikan: HTTP 504
+cover saved: ~/omniscan/library/Solo Leveling/_meta/cover.jpg (anilist)
+```
+
 ## Desktop app
 
 `omniscan gui` opens a native desktop window over the same library and config the CLI uses. The GUI
