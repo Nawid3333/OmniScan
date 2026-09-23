@@ -7,6 +7,7 @@ import ctypes.util
 import shutil
 import subprocess
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -16,14 +17,46 @@ import httpx
 from omniscan.core.config import Config, Secrets
 from omniscan.models.catalog import load_catalog
 from omniscan.models.store import model_status
+from omniscan.translate.judge_config import default_judge_paths, load_judge_config
+from omniscan.translate.profiles import default_profile_paths, load_profiles, resolve_fallbacks
 
 Status = Literal["OK", "WARN", "FAIL"]
 
-REQUIRED_OLLAMA_MODELS: tuple[str, ...] = (
-    "translategemma:12b",
-    "gemma4:12b",
-    "gemma4:31b-cloud",
-    "glm-5.3-flash:cloud",
+
+def required_ollama_models(
+    profile_paths: Sequence[Path] | None = None, judge_paths: Sequence[Path] | None = None
+) -> list[str]:
+    """Every Ollama model name a real run can need: enabled profiles' models, their fallbacks, the judge's.
+
+    Each enabled profile contributes its model and, when it names one, its fallback's model (the fallback
+    profile may itself be `enabled = false` — it then only ever runs as that fallback); the judge's model
+    is appended last. A `*-cloud` name still counts: it is served by Ollama Cloud through the same local
+    daemon, so every model in this list is checked the same way. Duplicates are removed, first kept.
+    """
+    profiles = load_profiles(profile_paths if profile_paths is not None else default_profile_paths())
+    enabled = [profile for profile in profiles.values() if profile.enabled]
+    fallbacks = resolve_fallbacks(enabled, profiles)
+    ordered: list[str] = []
+    for profile in enabled:
+        ordered.append(profile.model)
+        fallback = fallbacks.get(profile.name)
+        if fallback is not None:
+            ordered.append(fallback.model)
+    judge = load_judge_config(judge_paths if judge_paths is not None else default_judge_paths())
+    ordered.append(judge.model)
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for name in ordered:
+        if name not in seen:
+            seen.add(name)
+            deduped.append(name)
+    return deduped
+
+
+# Fixed reference value for tests and other callers that want the shipped defaults: derived at import
+# time from the shipped config files only (no per-user override), so it does not depend on the machine.
+REQUIRED_OLLAMA_MODELS: tuple[str, ...] = tuple(
+    required_ollama_models(default_profile_paths()[:1], default_judge_paths()[:1])
 )
 
 _ROCJPEG_CANDIDATES = (
@@ -137,6 +170,10 @@ def check_ollama_local(cfg: Config, http: httpx.Client) -> CheckResult:
 
 def check_ollama_models(cfg: Config, http: httpx.Client) -> CheckResult:
     """Check the local Ollama has every required model."""
+    try:
+        required = required_ollama_models()
+    except (OSError, ValueError) as exc:
+        return CheckResult("ollama_models", "WARN", f"{type(exc).__name__}: {exc}")
     url = f"{cfg.ollama.local_url}/api/tags"
     try:
         resp = http.get(url)
@@ -147,7 +184,7 @@ def check_ollama_models(cfg: Config, http: httpx.Client) -> CheckResult:
     except (KeyError, ValueError) as exc:
         return CheckResult("ollama_models", "FAIL", f"unexpected response at {url}: {exc}")
     present = {model["name"] for model in models}
-    missing = [name for name in REQUIRED_OLLAMA_MODELS if name not in present]
+    missing = [name for name in required if name not in present]
     if missing:
         return CheckResult("ollama_models", "WARN", f"missing: {', '.join(missing)}")
     return CheckResult("ollama_models", "OK", f"{len(models)} models, all required present")
