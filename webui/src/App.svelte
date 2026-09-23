@@ -2,13 +2,17 @@
   import { onMount } from "svelte";
 
   import FilteredView from "./FilteredView.svelte";
+  import InpaintView from "./InpaintView.svelte";
+  import LayoutView from "./LayoutView.svelte";
   import OcrView from "./OcrView.svelte";
   import ReaderView from "./ReaderView.svelte";
   import SlicerView from "./SlicerView.svelte";
   import TranslationView from "./TranslationView.svelte";
   import { listChapters, listSeries } from "./api";
 
-  let view = $state<"slicer" | "ocr" | "translation" | "reader" | "filtered">("slicer");
+  let view = $state<"slicer" | "ocr" | "translation" | "reader" | "inpaint" | "layout" | "filtered">(
+    "slicer",
+  );
   let series = $state("");
   let chapter = $state("");
   let seriesList = $state<string[]>([]);
@@ -62,6 +66,8 @@
         <button onclick={() => (view = "ocr")} disabled={view === "ocr"}>OCR</button>
         <button onclick={() => (view = "translation")} disabled={view === "translation"}>Translation</button>
         <button onclick={() => (view = "reader")} disabled={view === "reader"}>Reader</button>
+        <button onclick={() => (view = "inpaint")} disabled={view === "inpaint"}>Inpaint</button>
+        <button onclick={() => (view = "layout")} disabled={view === "layout"}>Layout</button>
       {/if}
       <button onclick={() => (view = "filtered")} disabled={view === "filtered"}>Filtered</button>
     </p>
@@ -72,6 +78,10 @@
         <SlicerView {series} {chapter} />
       {:else if view === "ocr"}
         <OcrView {series} {chapter} />
+      {:else if view === "inpaint"}
+        <InpaintView {series} {chapter} />
+      {:else if view === "layout"}
+        <LayoutView {series} {chapter} />
       {:else if view === "reader"}
         <ReaderView {series} {chapter} />
       {:else}

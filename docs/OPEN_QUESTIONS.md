@@ -7,7 +7,7 @@ Each has the **default I will use until you answer**, so nothing is blocked unle
 - At a natural pause I ask 2–3 relevant questions (not all at once), then record your answer in the *Decisions* table
   at the bottom with the date, and delete the question from the lists.
 - A "blocks" entry means real work cannot proceed or cannot be validated without your answer.
-- Ordered roughly by how soon the answer matters. Last updated 2026-09-22.
+- Ordered roughly by how soon the answer matters. Last updated 2026-09-23.
 
 ## A. Data and accounts (needed soon)
 
@@ -83,6 +83,7 @@ Each has the **default I will use until you answer**, so nothing is blocked unle
 | F11 | **Public repo or a separate `OmniScan-releases` repo?** Users must be able to pull the model mirror (`models-v1` release assets) and app updates (GitHub Releases) without a token; a private repo blocks that. | Model download, auto-update (B9/B12/B13) | Repo stays private; upstream Hugging Face is the fallback for models |
 | F12 | **JA full-pipeline check.** PepperCarrotJA's `paddleocr_vl` engine needs `ocr.rec_model` (O1d's rec-model wiring is not on this branch), so card G3 could verify JA only through `ingest/slice/detect` artifacts (see `docs/reports/G3.md`). Re-run the full 6-stage JA hash check once O1d lands? | Completing the bit-identicality evidence for JA | KR export slices verified fully; JA's three runnable stages verified |
 | F13 | **MIOpen pre-seed.** The ~28 s MIOpen find chain (library load + finds) floors the chapter wall at ~33 s; cutting it needs a shipped/kernel-db change (`MIOPEN_USER_DB_PATH` per GPU). Worth a card, with a bit-identicality check? | The 25 s stretch target | Not pursued: selection-affecting changes are forbidden under G3's constraints |
+| F14 | **Must `omniscan serve` stay strictly torch-free?** Card B11b's patch endpoint imports `omniscan.inpaint.patches.load_patches` as instructed, which imports torch transitively (numpy-only usage; no GPU work). Strict freedom needs a numpy-only npz helper outside read-only `inpaint/patches.py`. | Whether `serve` should run on machines without torch installed | Keep `load_patches`; only bother if serve-on-no-torch matters |
 
 ## Decisions (answered)
 

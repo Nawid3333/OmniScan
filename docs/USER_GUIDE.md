@@ -957,6 +957,9 @@ Run the web debug tool's API (pair with `npm run dev` in `webui/` for the UI).
 Serves existing artifacts read-only: `/api/series`, `/api/series/{s}/chapters`,
 `/api/series/{s}/chapters/{c}/ingest`, `/api/series/{s}/chapters/{c}/slices`,
 `/api/series/{s}/chapters/{c}/ocr` (the OCR stage's `ocr.json`),
+`/api/series/{s}/chapters/{c}/inpaint` (the inpaint stage's `inpaint.json`) and
+`/api/series/{s}/chapters/{c}/inpaint/patches/{region_id}.png` (one region's patch as an RGBA PNG, alpha = its text mask),
+`/api/series/{s}/chapters/{c}/layout` (the typeset stage's `layout.json`),
 `/api/series/{s}/chapters/{c}/translations` (run ids) and `/api/series/{s}/chapters/{c}/translations/{run_id}`
 (each translation run's JSON), `/api/series/{s}/chapters/{c}/final` (the judge's `final.json`),
 `/api/series/{s}/glossary` (the series glossary),
@@ -1229,8 +1232,8 @@ npm run dev
 The Vite dev server proxies `/api` to `http://localhost:8000`, so the defaults of both commands work
 together. Open the local URL Vite prints and pick a series and chapter.
 
-Four chapter views (Slicer, OCR, Translation, Reader) need a chapter; the **Filtered** view only needs
-a series and shows its every chapter that has filtered items.
+Six chapter views (Slicer, OCR, Translation, Reader, Inpaint, Layout) need a chapter; the **Filtered**
+view only needs a series and shows its every chapter that has filtered items.
 
 The Slicer view stacks the raw pages and overlays:
 
@@ -1263,6 +1266,23 @@ released chapter. `final only` shows the output images alone; `raw | final` puts
 the chapter's raw pages (kept files only) with linked scrolling for comparison. A width slider sets the
 reading column width, fitted to the viewport. The view shows `no output yet` until `omniscan export`
 has written the chapter's slices.
+
+The **Inpaint view** (switch with the `Inpaint` button) checks the inpaint stage's work on the stacked
+raw pages. A `raw ↔ clean` slider reveals the clean layer: each `inpaint.json` item's stored patch from
+`patches.npz`, positioned exactly where export applies it — a `flat` item (and any item whose patch was
+not stored) shows its solid fill colour instead, and a `none` item is not cleaned at all. A `show patch
+outlines` checkbox (on by default) draws every item's box, colored by method (flat blue, lama purple,
+none gray; dashed = nothing was cleaned, a `· needs lama` label flags items the flat fill could not
+clean). Clicking a box opens a side panel with the method, `needs_lama`, `mask_px` and the fill colour
+swatch, plus the patch itself enlarged. The view shows `no inpaint.json yet` until `omniscan inpaint`
+has run.
+
+The **Layout view** (switch with the `Layout` button) draws every `layout.json` item on the stacked raw
+pages, colored by font role (dialogue blue, thought teal, shout red, narration purple, free orange, sfx
+gray; dashed = the typesetter predicted `overflow`). Checkboxes hide/show roles, and clicking an item
+opens a side panel with the font, size, alignment, the wrapped lines, colour and stroke swatches, and
+`overflow` highlighted red when true. The view shows `no layout.json yet` until `omniscan typeset`
+has run.
 
 The **Filtered view** (switch with the `Filtered` button, shown as soon as a series is picked) lists
 everything the promo filter ever marked `filtered`, per chapter: one row per filtered file or slice
