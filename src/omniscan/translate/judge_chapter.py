@@ -41,7 +41,19 @@ def judge_chapter(
         story_summary=story_summary,
         rate_limit_fallback=rate_limit_fallback,
     )
-    result = FinalArtifact(judge_model=cfg.model, lines=lines)
+    result = FinalArtifact(
+        judge_model=cfg.model,
+        lines=lines,
+        usage={  # mirrors CandidateRun.usage; the judge's pipeline metrics stay out of it
+            "prompt_tokens": float(stats.prompt_tokens),
+            "completion_tokens": float(stats.completion_tokens),
+            "requests": float(stats.requests),
+            "repair_requests": float(stats.repair_requests),
+            "regions": float(stats.regions),
+            "seconds": float(stats.seconds),
+            "rate_limited": float(stats.rate_limited),
+        },
+    )
     result.save(output)
     return "done", result, stats
 

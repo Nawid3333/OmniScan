@@ -241,3 +241,30 @@ def test_judge_chapter_passes_the_story_summary_to_the_model(paths: ChapterPaths
     plain = RecordingClient([judgements_reply({"id": "r0001", "decision": "pick", "pick": "A"})])
     judge_chapter(plain, paths, CFG, [], force=True)  # no story summary
     assert "Story so far" not in plain.messages[0][1]["content"]
+
+
+def test_judge_chapter_records_usage(paths: ChapterPaths) -> None:
+    write_ocr(paths)
+    disagreeing_runs(paths)
+    client = FakeClient([judgements_reply({"id": "r0001", "decision": "pick", "pick": "A"})])
+    status, artifact, stats = judge_chapter(client, paths, CFG, [])
+    assert status == "done"
+    assert artifact is not None and stats is not None
+    assert (stats.requests, stats.repair_requests, stats.regions) == (1, 0, 2)
+    loaded = FinalArtifact.load(paths.artifact("final.json"))
+    assert list(loaded.usage) == [  # the pinned judge usage key set, in order
+        "prompt_tokens",
+        "completion_tokens",
+        "requests",
+        "repair_requests",
+        "regions",
+        "seconds",
+        "rate_limited",
+    ]
+    assert loaded.usage["prompt_tokens"] == 1.0  # FakeClient counts 1 prompt/completion token per call
+    assert loaded.usage["completion_tokens"] == 1.0
+    assert loaded.usage["requests"] == float(stats.requests)
+    assert loaded.usage["repair_requests"] == float(stats.repair_requests)
+    assert loaded.usage["regions"] == float(stats.regions)
+    assert loaded.usage["seconds"] == pytest.approx(stats.seconds)
+    assert loaded.usage["rate_limited"] == 0.0

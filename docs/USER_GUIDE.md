@@ -782,6 +782,26 @@ uv run omniscan judge DemoSeries
 uv run omniscan judge DemoSeries --chapter "Chapter 1" --run gemma4-31b-cloud --force
 ```
 
+### `omniscan usage`
+
+Summarise the LLM usage the text stages already recorded, per chapter: one row per candidate run
+under `translations/` (its profile and model) plus one `judge` row per chapter's `final.json`, with
+per-series and grand totals in prompt/completion tokens, requests and seconds. A read-only report —
+nothing is written, and no prices are applied (cost estimation is a separate decision). Artifacts
+written before usage recording existed count as zeros, and corrupt files are skipped.
+
+| Argument/option | Meaning |
+|---|---|
+| `series` | series name; omit for every series under `work_root` |
+| `--json` | emit one JSON object (`rows`, `totals`) instead of the table |
+
+An unknown series exits 2; a series with no recorded usage prints only the zero `TOTAL` line.
+
+```bash
+uv run omniscan usage SoloLeveling
+uv run omniscan usage --json
+```
+
 ### `omniscan typeset`
 
 Fit every final English line into its region's target box and record font role, size, wrapped lines

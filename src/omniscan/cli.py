@@ -46,6 +46,7 @@ from omniscan.queue.worker import run_queue
 from omniscan.update.download import check_for_update, download_update
 from omniscan.update.github import DEFAULT_REPO, ReleaseInfo, UpdateError, platform_key, select_asset
 from omniscan.update.version import current_version
+from omniscan.usage import UsageRow, collect_usage, totals
 from omniscan.watermark.store import WatermarkStore
 
 app = typer.Typer(help="OmniScan — manhwa/manga translator", invoke_without_command=True)
@@ -706,6 +707,58 @@ def cmd_judge(
 
 
 app.command("judge")(cmd_judge)
+
+
+def _usage_count(value: float) -> str:
+    """A usage counter as text: `int(x)` when the value is whole, the float itself otherwise."""
+    whole = int(value)
+    return str(whole) if value == whole else str(value)
+
+
+def _usage_lines(rows: Sequence[UsageRow]) -> list[str]:
+    """The usage table: a header, one line per row, then the TOTAL line (TOTAL only when empty)."""
+
+    def cells(usage: dict[str, float]) -> tuple[str, str, str, str]:
+        """The report's four numeric cells of one usage dict (its display key set)."""
+        return (
+            _usage_count(usage.get("prompt_tokens", 0.0)),
+            _usage_count(usage.get("completion_tokens", 0.0)),
+            _usage_count(usage.get("requests", 0.0)),
+            f"{usage.get('seconds', 0.0):.1f}",
+        )
+
+    lines: list[tuple[str, ...]] = []
+    if rows:
+        lines.append(("SERIES", "CHAPTER", "SOURCE", "MODEL", "PROMPT", "COMPLETION", "REQUESTS", "SECONDS"))
+    lines.extend((row.series, row.chapter, row.source, row.model, *cells(row.usage)) for row in rows)
+    lines.append(("TOTAL", "", "", "", *cells(totals(rows))))
+    widths = [max(len(line[column]) for line in lines) for column in range(8)]
+    return [
+        "  ".join(
+            cell.ljust(widths[column]) if column < 4 else cell.rjust(widths[column])
+            for column, cell in enumerate(line)
+        )
+        for line in lines
+    ]
+
+
+@app.command("usage")
+def cmd_usage(
+    series: Annotated[str | None, typer.Argument(help="Series name; omit for every series.")] = None,
+    json_output: Annotated[bool, typer.Option("--json", help="Emit JSON instead of a table.")] = False,
+) -> None:
+    """Summarise token/request usage recorded in translation runs and final.json."""
+    cfg = get_config()
+    if series is not None and not (cfg.paths.work_root / series).is_dir():
+        typer.echo(f"usage: unknown series {series!r}", err=True)
+        raise typer.Exit(2)
+    rows = collect_usage(cfg, series)
+    if json_output:
+        payload = {"rows": [asdict(row) for row in rows], "totals": totals(rows)}
+        typer.echo(json.dumps(payload, indent=2))
+        return
+    for line in _usage_lines(rows):
+        _echo_text(line)
 
 
 def cmd_inpaint(
