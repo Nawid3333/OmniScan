@@ -14,7 +14,9 @@ packaged into CBZ/PDF.
 | slice | working — `omniscan slice` |
 | promo filter | module only — `omniscan filter run` / `filter restore` |
 | watermark regions | module only — `omniscan watermark add` / `list` / `remove` |
-| glossary | working — `omniscan reference` (bootstrap from imported official `_reference_en` chapters) + `omniscan glossary list` / `export` / `import` |
+| glossary | working — `omniscan reference` (bootstrap from imported official `_reference_en` chapters) + `omniscan glossary list` / `export` / `import` / `propose` (from raw OCR text, no reference needed) |
+| story memory | working — `omniscan story summarize` (per-chapter summaries, fed automatically into later chapters' translate/judge prompts) |
+| chapter matching | working — `omniscan match chapters DIR_A DIR_B` (perceptual-hash alignment between two independently-sourced chapter sets) |
 | detect | working — `omniscan detect` (regions.json; no text yet) |
 | ocr | working — `omniscan ocr` (ocr.json) |
 | translate | working — `omniscan translate` (candidate runs only; needs ocr.json from `omniscan ocr`) |
@@ -29,6 +31,7 @@ packaged into CBZ/PDF.
 | models | working — `omniscan models list` / `download` / `remove` / `verify` |
 | hardware | working — `omniscan hardware [--json]` |
 | web viewer | working — `omniscan serve` + `npm run dev` (Slicer, OCR, Translation, Reader and Filtered views — read-only except the Filtered view's Restore button; the OCR/Translation views need an `ocr.json`) |
+| desktop app | working — `omniscan gui` (PySide6: Library, Reader, Run, Models, Settings; import is still CLI-only, not yet wired into the sidebar) |
 | update | working — `omniscan update check` / `download` |
 
 "working" = usable from the CLI today. "module only" = the code and its own sub-commands exist, but no
