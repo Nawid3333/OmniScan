@@ -35,8 +35,8 @@ Launch builders as **tracked background calls**; never sleep-poll.
 
 | # | ID | What | Tier | State |
 |---|---|---|---|---|
-| 1 | **M10** | Sound effects: design first (translate as text, keep original, or reletter — the director decides). **Now confirmed blocked on more than "no real raws"** — zero `sfx`-kind regions on either real Solo Leveling chapter; the detector itself never fires that class on real content (a "bi ———" beep sound was read as ordinary dialogue and literally transliterated). Needs a decision on whether to tune/retrain detection for SFX or take a different approach before any card can be written | T3 (director decides) | design needed, genuinely blocked |
-| 2 | **(decision)** | **Full KO/ZH PaddleOCR-VL switch?** It's catalogued as a *recommendation* now (`config/models.toml`, alongside the existing ppocr one — see `docs/benchmarks/ocr-qualification-results.md`), not a default switch, because it's a real tradeoff (best chrF, slower, and on Korean a real recall loss). If the owner wants an actual default change (not just cataloging), that's a small follow-up once `recommended_for` has real runtime wiring — check whether that wiring exists yet before writing the card | T1 | catalogued, not switched — owner call |
+| 1 | **M10** | Sound effects: design first (translate as text, keep original, or reletter — the director decides). **Now confirmed blocked on more than "no real raws"** — zero `sfx`-kind regions on either real Solo Leveling chapter; the detector itself never fires that class on real content. Concrete example pulled 2026-09-23 and shown to the owner: Chapter 2 region `r0077` (page 9, a small yellow sign in the background art) is `kind="free_text"`, OCR'd as `"KMA-"`, translated as `"KMA-"` (passed through unchanged) — the pipeline has no notion of "incidental art text that isn't meant to be read/translated at all", only dialogue vs. free text. Needs a decision on whether to tune/retrain detection for SFX/incidental text or take a different approach before any card can be written | T3 (director decides) | design needed, genuinely blocked |
+| 2 | ~~(decision)~~ | **Full KO/ZH PaddleOCR-VL switch — resolved 2026-09-23, no switch.** Owner's call: keep the fast engine (`ppocr`) as the global default; PaddleOCR-VL (`ocr-vl-1.6`) stays an opt-in per series for when the extra quality is worth the extra time. **No code work needed** — this was already fully wired before this session: `cfg.ocr.engine: Literal["ppocr","manga_ocr","paddleocr_vl"]` (`core/config.py`), settable per series in `<library_root>/<series>/series.toml`'s `[ocr]` section (`engine = "paddleocr_vl"`, `rec_model = "ocr-vl-1.6"`) or via the desktop app's Settings → Per-series override editor — documented in `docs/USER_GUIDE.md` under "OCR engines and models". | — | **done, nothing to build** |
 | 3 | **F2c** | Promo filter tier 3: wire the already-built fixed-position `omniscan watermark` tool (`watermark/store.py`, `watermark/resolve.py` — persistence and box-resolution exist, nothing calls `resolve_watermark_regions` anywhere in the real pipeline) into `detect`/`ocr` the way F2b (tier 1, text patterns, merged) wired its own reclassification | T2 | not started |
 | 4 | **(new, from TL1)** | Glossary term matcher (`glossary/match.py`) only strips Korean particles; harmless-but-inert for zh/ja today, will matter once Japanese/Chinese term matching is exercised for real | T2 | flagged by TL1's builder, not scheduled |
 | 5 | **(new, from D2)** | `_MAX_BUBBLE_TO_TEXT_AREA_RATIO`'s cap scales with the text box's own area, so a very small text box (e.g. a one-character "!") shrinks the acceptable bubble ceiling with it. No known incident (225-pairing evidence had none), but worth a look if a tiny-text-box mispairing ever shows up in a real chapter | T2 | flagged by D2's builder, watch for it |
@@ -48,6 +48,8 @@ Launch builders as **tracked background calls**; never sleep-poll.
 | 11 | **C2** | Hybrid GPU JPEG codec decision (question F1); CPU `turbo` is ~145 Mp/s and not the bottleneck | director | open, low urgency |
 | 12 | **W1 follow-through** | `model-watch` GitHub Action is merged and runs, but no live run has yet fed a real catalog update back through the qualification suite | T1 | merged, not yet exercised live |
 | 13 | **F14** (from B11b) | `web/app.py` now transitively imports torch (via `inpaint/patches.py::load_patches`) for the new patch-PNG route; no functional issue, but if `omniscan serve` running on a no-torch machine ever matters, needs a numpy-only npz reader outside `inpaint/patches.py` | T2 | low priority, noted in `docs/OPEN_QUESTIONS.md` |
+| — | **MENU1** | Interactive menu, part 1: framework (numbered pickers, `run_menu`) + core flows (run pipeline, import/pack, models, doctor/hardware/update, launch serve/gui). Owner's instruction 2026-09-23: no more argument-based CLI as the primary interface — bare `omniscan` opens a menu. Additive: every existing subcommand keeps working for scripts/tests/automation | T2 | **in flight** (launched 2026-09-23) |
+| — | **MENU2** | Interactive menu, part 2, on top of MENU1's framework: translate/judge/story/glossary/reference workflow, watermark regions, promo filter, job queue | T2 | queued (write after MENU1 merges — same framework, avoid a merge race) |
 | later | **M13** | Desktop shell polish, LAN mode | — | `docs/PLAN.md` |
 
 Merged and reviewed since the last rewrite of this file (all with mutation checks where applicable; details in
@@ -111,9 +113,11 @@ benchmarking, GPU-timed measurement, anything requiring the live Ollama server o
 director's own job.
 
 ## Questions for the owner
-1. **Sound effects (M10)** — now confirmed the detector itself doesn't find them on real content. Worth
-   pursuing (retrain/fine-tune the detector, or a different approach), or leave SFX untranslated for now?
-2. **Full PaddleOCR-VL switch for KO/ZH**, given the real tradeoff (better quality, much slower, and on Korean
-   a real recall loss) — worth it, or keep it as an opt-in per series?
+1. **Sound effects / incidental art text (M10)** — shown a concrete example (`r0077`, "KMA-" sign,
+   see item 1 above) 2026-09-23; owner reviewed it and is deciding next steps. Worth pursuing
+   (retrain/fine-tune the detector for a real SFX/incidental-text class, or a different approach), or
+   leave such regions as they are for now?
+2. ~~Full PaddleOCR-VL switch for KO/ZH~~ — **resolved 2026-09-23**: keep `ppocr` as the default, keep
+   PaddleOCR-VL opt-in per series (already fully wired, see item 2 above).
 3. Is `omniscan match chapters`/`omniscan reference` against the Solo Leveling `_reference_en` side (item 6)
    worth doing now, or should real tuning continue elsewhere first?
