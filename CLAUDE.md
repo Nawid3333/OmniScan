@@ -36,6 +36,7 @@ uv run omniscan --help
 5. Commit on the card branch with message `<ID>: <summary>`. Never push, never touch `main`.
 
 ## Hard rules
+- **Never run `uv sync --extra <backend>` (`rocm-gfx1201`/`cuda`/`cpu`/`mps`) in a builder worktree.** A worktree's `.venv` is a junction to the main checkout's — syncing a different backend there replaces the real, working torch install for the whole project (every worktree, the director's own session, a live `omniscan serve`), silently. Use `uv run --no-sync ...` for a worktree's own test/lint/type-check runs (only the worktree's source differs; the shared environment is already correct).
 - **If the spec is ambiguous or seems wrong: STOP, write the question in `docs/reports/<ID>.md`, commit, and end.** Do not guess.
 - GPU code: tensors stay on the GPU between steps; no `.cpu()` / `.numpy()` inside hot loops; never loop in Python over image rows or pixels.
 - Never write intermediate images to disk unless the card says so (JSON/`.npz` artifacts only).
