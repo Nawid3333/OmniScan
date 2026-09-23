@@ -1,0 +1,26 @@
+# model-watch config (card W1): which Hugging Face orgs are watched for new model repos, and which
+# repo ids must never be reported again. The watch only READS metadata — it never downloads weights
+# and never edits config/models.toml. A candidate from the report is qualified on a GPU machine
+# (scripts/qualify_ocr.py) first; only a qualification win updates the catalog.
+#
+# Per org: `search` terms for the listing API (GET /api/models?author=<org>&search=<term>) and
+# `patterns` — fnmatch patterns, matched case-insensitively against the repo NAME without the org.
+# `ignore`: full repo ids ("<org>/<name>") that are already known and not wanted in the catalog.
+
+ignore = []
+
+[orgs."PaddlePaddle"]
+search = ["OCR"]
+patterns = ["PP-OCRv*", "*PP-OCRv*_rec*", "PaddleOCR-VL*"]
+
+[orgs."kha-white"]
+search = ["manga-ocr"]
+patterns = ["manga-ocr*"]
+
+[orgs."jzhang533"]
+search = ["manga-ocr"]
+patterns = ["manga-ocr*"]
+
+[orgs."ogkalu"]
+search = ["comic"]
+patterns = ["comic-text*"]
