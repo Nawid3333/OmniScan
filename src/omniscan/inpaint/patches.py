@@ -19,8 +19,6 @@ _MASK_SUFFIX = ".mask"
 
 def save_patches(path: Path, patches: Mapping[str, tuple[torch.Tensor, torch.Tensor]]) -> None:
     """Write `id -> (pixels [3,h,w] uint8, mask [h,w] bool)` as `<id>.pixels`/`<id>.mask` (HWC/HW), atomically."""
-    import torch  # noqa: F401 — local: only this function needs torch; load_patches (web server) must not
-
     arrays: dict[str, np.ndarray] = {}
     for region_id, (pixels, mask) in patches.items():
         arrays[region_id + _PIXELS_SUFFIX] = pixels.cpu().permute(1, 2, 0).numpy()
