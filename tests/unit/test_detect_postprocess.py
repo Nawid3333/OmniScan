@@ -3,7 +3,15 @@
 from __future__ import annotations
 
 from omniscan.core.schemas import Slice
-from omniscan.detect.postprocess import Det, build_regions, merge_detections, reading_order, tile_det_to_strip
+from omniscan.detect.postprocess import (
+    Det,
+    build_regions,
+    ioa,
+    iou,
+    merge_detections,
+    reading_order,
+    tile_det_to_strip,
+)
 from omniscan.detect.tiles import plan_tiles
 
 TILES = plan_tiles(1000, 3000, 1280, 0.5)
@@ -163,6 +171,80 @@ def test_build_regions_text_without_bubble_and_cross_class_duplicate() -> None:
         ("bubble_text", 0, 0, 0.6, True),
         ("free_text", 500, 10, 0.7, True),
     ]
+
+
+def test_build_regions_drops_contained_cross_class_duplicate_solo_leveling_pair() -> None:
+    """Regression (Solo Leveling ch1): text_free fully inside text_bubble, IoU 0.55 under the 0.6 bar."""
+    tb = Det("text_bubble", 0.7, (140, 11622, 605, 12018))
+    free = Det("text_free", 0.5, (140, 11626, 603, 11845))
+    assert iou(free.box, tb.box) < 0.6  # the old IoU-only rule let both through
+    assert ioa(free.box, tb.box) >= 0.85  # free's whole area lies inside tb
+
+    regions = build_regions(
+        [tb, free],
+        [Slice(index=0, y0=11000, y1=12000)],
+        strip_width=1000,
+        strip_height=12500,
+        merge_bubble_text=True,
+        direction="ltr",
+    )
+    assert [(r.kind, r.confidence, r.bubble_bbox is None) for r in regions] == [
+        ("bubble_text", 0.7, True)  # the higher-scored text_bubble survives, the free text is dropped
+    ]
+
+
+def test_build_regions_drops_free_text_mostly_inside_text_bubble() -> None:
+    """Free the inner box: IoU 0.25 but 95% of it lies inside the text_bubble — the IoA rule fires."""
+    tb = Det("text_bubble", 0.6, (450, 15, 650, 200))
+    free = Det("text_free", 0.8, (500, 10, 600, 110))
+    assert iou(free.box, tb.box) < 0.6
+    assert ioa(free.box, tb.box) >= 0.85 and ioa(tb.box, free.box) < 0.85
+
+    regions = build_regions(
+        [tb, free],
+        _slices(),
+        strip_width=1000,
+        strip_height=3000,
+        merge_bubble_text=True,
+        direction="ltr",
+    )
+    assert [(r.kind, r.confidence) for r in regions] == [("free_text", 0.8)]  # the higher score wins
+
+
+def test_build_regions_drops_text_bubble_mostly_inside_text_free() -> None:
+    """Same shape with the classes swapped: the text_bubble is the inner box, IoA(tb, free) fires."""
+    free = Det("text_free", 0.6, (450, 15, 650, 200))
+    tb = Det("text_bubble", 0.8, (500, 10, 600, 110))
+    assert iou(free.box, tb.box) < 0.6
+    assert ioa(tb.box, free.box) >= 0.85 and ioa(free.box, tb.box) < 0.85
+
+    regions = build_regions(
+        [free, tb],
+        _slices(),
+        strip_width=1000,
+        strip_height=3000,
+        merge_bubble_text=True,
+        direction="ltr",
+    )
+    assert [(r.kind, r.confidence) for r in regions] == [("bubble_text", 0.8)]  # the higher score wins
+
+
+def test_build_regions_keeps_two_distinct_partly_overlapping_captions() -> None:
+    """Two separate captions that merely overlap a little are under every threshold and both survive."""
+    free = Det("text_free", 0.7, (100, 100, 400, 200))
+    tb = Det("text_bubble", 0.8, (100, 180, 400, 280))
+    assert iou(free.box, tb.box) < 0.6
+    assert ioa(free.box, tb.box) < 0.85 and ioa(tb.box, free.box) < 0.85
+
+    regions = build_regions(
+        [free, tb],
+        _slices(),
+        strip_width=1000,
+        strip_height=3000,
+        merge_bubble_text=True,
+        direction="ltr",
+    )
+    assert [(r.kind, r.confidence) for r in regions] == [("free_text", 0.7), ("bubble_text", 0.8)]
 
 
 def test_build_regions_ids_follow_slice_then_reading_order() -> None:

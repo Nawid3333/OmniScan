@@ -17,6 +17,9 @@ Box = tuple[float, float, float, float]
 
 _TEXT_IN_BUBBLE_MIN_IOA = 0.6  # a text box is inside a bubble when this share of it lies within the bubble
 _CROSS_CLASS_DUP_IOU = 0.6  # text_free and text_bubble boxes this similar are the same text
+_CROSS_CLASS_CONTAIN_IOA = (
+    0.85  # a box this much inside the other (either direction) is the same text, even if IoU reads low
+)
 _SAME_ROW_OVERLAP = 0.5  # vertical overlap (of the smaller box) that puts two regions in one reading row
 _EDGE_PX = 4.0  # a box this close to an internal tile edge counts as cut by it
 
@@ -120,7 +123,12 @@ def _items(dets: Sequence[Det], merge_bubble_text: bool) -> list[_Item]:
     dropped_bubble: set[int] = set()
     for fi, free in enumerate(texts_free):
         for bi, tb in enumerate(texts_bubble):
-            if bi in dropped_bubble or iou(free.box, tb.box) < _CROSS_CLASS_DUP_IOU:
+            duplicate = (
+                iou(free.box, tb.box) >= _CROSS_CLASS_DUP_IOU
+                or ioa(free.box, tb.box) >= _CROSS_CLASS_CONTAIN_IOA
+                or ioa(tb.box, free.box) >= _CROSS_CLASS_CONTAIN_IOA
+            )
+            if bi in dropped_bubble or not duplicate:
                 continue
             if free.score > tb.score:
                 dropped_bubble.add(bi)
