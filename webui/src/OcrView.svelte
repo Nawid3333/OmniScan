@@ -1,4 +1,5 @@
 <script lang="ts">
+  import RunButton from "./RunButton.svelte";
   import { getIngest, getOcr, pageImageUrl } from "./api";
   import { stackTotalHeight, stackWidth, stripBoxToStackBox } from "./strip";
   import { disagrees, filterRegions, isLowConfidence, kindColor, summarize } from "./ocr";
@@ -70,6 +71,7 @@
 
 {#if error}
   <p>{error} — no ocr.json yet — run ocr first.</p>
+  <RunButton {series} {chapter} through="ocr" onDone={() => load(series, chapter)} />
 {:else if !loaded}
   <p>loading…</p>
 {:else if files.length === 0}

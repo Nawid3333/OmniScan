@@ -1,4 +1,5 @@
 <script lang="ts">
+  import RunButton from "./RunButton.svelte";
   import { getIngest, getSlices, pageImageUrl } from "./api";
   import { stackTotalHeight, stackWidth, stripYToStackY } from "./strip";
   import type { Slice, SourceFile, SlicesArtifact } from "./api";
@@ -97,6 +98,7 @@
 
 {#if error}
   <p>{error} — no ingest.json/slices.json yet? run ingest and slice first.</p>
+  <RunButton {series} {chapter} through="slice" onDone={() => load(series, chapter)} />
 {:else if !loaded}
   <p>loading…</p>
 {:else if files.length === 0}

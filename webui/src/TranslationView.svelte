@@ -1,4 +1,5 @@
 <script lang="ts">
+  import RunButton from "./RunButton.svelte";
   import { getFinal, getGlossaryHits, getOcr, getTranslation, listTranslations } from "./api";
   import type { CandidateRun, FinalArtifact, GlossaryHit, GlossaryHits, RegionsArtifact } from "./api";
   import { buildRows, filterRows, highlightSource, hitColor, summarizeReview } from "./translation";
@@ -75,6 +76,7 @@
 
 {#if missingOcr}
   <p>no ocr.json yet — run ocr first</p>
+  <RunButton {series} {chapter} through="ocr" onDone={() => load(series, chapter)} />
 {:else if !loaded}
   <p>loading…</p>
 {:else if ocr}

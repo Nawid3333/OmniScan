@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
 
+  import EditView from "./EditView.svelte";
   import FilteredView from "./FilteredView.svelte";
   import InpaintView from "./InpaintView.svelte";
   import LayoutView from "./LayoutView.svelte";
@@ -10,9 +11,9 @@
   import TranslationView from "./TranslationView.svelte";
   import { listChapters, listSeries } from "./api";
 
-  let view = $state<"slicer" | "ocr" | "translation" | "reader" | "inpaint" | "layout" | "filtered">(
-    "slicer",
-  );
+  let view = $state<
+    "slicer" | "ocr" | "translation" | "reader" | "inpaint" | "layout" | "edit" | "filtered"
+  >("slicer");
   let series = $state("");
   let chapter = $state("");
   let seriesList = $state<string[]>([]);
@@ -68,6 +69,7 @@
         <button onclick={() => (view = "reader")} disabled={view === "reader"}>Reader</button>
         <button onclick={() => (view = "inpaint")} disabled={view === "inpaint"}>Inpaint</button>
         <button onclick={() => (view = "layout")} disabled={view === "layout"}>Layout</button>
+        <button onclick={() => (view = "edit")} disabled={view === "edit"}>Edit</button>
       {/if}
       <button onclick={() => (view = "filtered")} disabled={view === "filtered"}>Filtered</button>
     </p>
@@ -82,6 +84,8 @@
         <InpaintView {series} {chapter} />
       {:else if view === "layout"}
         <LayoutView {series} {chapter} />
+      {:else if view === "edit"}
+        <EditView {series} {chapter} />
       {:else if view === "reader"}
         <ReaderView {series} {chapter} />
       {:else}

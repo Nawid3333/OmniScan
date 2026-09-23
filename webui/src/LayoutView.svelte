@@ -1,4 +1,5 @@
 <script lang="ts">
+  import RunButton from "./RunButton.svelte";
   import { getIngest, getLayout, pageImageUrl } from "./api";
   import { stackTops as computeStackTops, stackTotalHeight, stackWidth, stripBoxToStackBox } from "./strip";
   import { alignLabel, filterItems, fontRoleColor } from "./layout";
@@ -61,6 +62,7 @@
 
 {#if error}
   <p>{error} — no layout.json yet — run typeset first.</p>
+  <RunButton {series} {chapter} through="typeset" onDone={() => load(series, chapter)} />
 {:else if !loaded}
   <p>loading…</p>
 {:else if files.length === 0}

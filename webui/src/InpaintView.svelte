@@ -1,4 +1,5 @@
 <script lang="ts">
+  import RunButton from "./RunButton.svelte";
   import { getIngest, getInpaint, inpaintPatchUrl, pageImageUrl } from "./api";
   import { stackTotalHeight, stackWidth, stripBoxToStackBox } from "./strip";
   import { cleanClipPath, fillCss, hasStoredPatch, methodColor } from "./inpaint";
@@ -75,6 +76,7 @@
 
 {#if error}
   <p>{error} — no inpaint.json yet — run inpaint first.</p>
+  <RunButton {series} {chapter} through="inpaint" onDone={() => load(series, chapter)} />
 {:else if !loaded}
   <p>loading…</p>
 {:else if files.length === 0}

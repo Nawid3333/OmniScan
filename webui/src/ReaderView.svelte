@@ -1,4 +1,5 @@
 <script lang="ts">
+  import RunButton from "./RunButton.svelte";
   import { getIngest, listOutput, outputImageUrl, pageImageUrl } from "./api";
   import type { SourceFile } from "./api";
   import {
@@ -108,6 +109,7 @@
   <p>loading…</p>
 {:else if names.length === 0}
   <p>no output yet — the export stage has not produced images for this chapter</p>
+  <RunButton {series} {chapter} through="export" onDone={() => load(series, chapter)} />
 {:else}
   <p class="controls">
     <label>
