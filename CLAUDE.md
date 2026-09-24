@@ -1,6 +1,6 @@
 # OmniScan — rules for every agent working in this repo
 
-OmniScan turns raw Korean/Chinese/Japanese manhwa/manga chapters into English releases, GPU end-to-end (developed on Windows 11 + AMD ROCm; the app is meant to run on any OS/GPU that PyTorch supports).
+OmniScan turns raw Korean/Chinese/Japanese manhwa/manga chapters into English releases, GPU end-to-end. It targets one machine: Windows 11 + AMD ROCm (RX 9070 XT, gfx1201) — not a cross-platform/any-GPU app.
 Full plan: `docs/PLAN.md`. Architecture/contracts: `docs/ARCHITECTURE.md`.
 **If you are the director (an interactive session continuing the project) read `docs/HANDOFF.md` first**, then `docs/CHECKPOINT.md`.
 If you are a builder running a task card, this file plus the card are your contract.
@@ -8,8 +8,10 @@ If you are a builder running a task card, this file plus the card are your contr
 ## Environment
 - Windows 11 native; repo at `V:\OmniScan` (builder worktrees in `V:\OmniScan-wt\<ID>`). GPU: RX 9070 XT (gfx1201, 16 GB), ROCm 10.0.0.
   Your Bash tool is Git Bash (bash syntax works, paths like `V:/OmniScan/...`). Never rely on Linux-only behaviour (symlinks, `chmod`,
-  `fcntl`, `/dev/...`, `/mnt/c`); code and tests must run on Windows, Linux and macOS. Files use LF line endings (`.gitattributes`).
-- Python **3.14**, managed by **uv**. Torch is a per-machine `[project.optional-dependencies]` extra (`rocm-gfx1201` / `cpu` / `cuda` / `mps`, see `pyproject.toml`) — `uv sync` never installs one on its own, and `uv sync --all-extras` **fails on purpose** (they're declared mutually exclusive via `[tool.uv.conflicts]`). This machine is `rocm-gfx1201`. Never `pip install torch` from PyPI.
+  `fcntl`, `/dev/...`, `/mnt/c`) — the Windows dev shell still needs care even though the shipped app targets Windows only.
+  Files use LF line endings (`.gitattributes`).
+- Python **3.14**, managed by **uv**. Torch is the `rocm-gfx1201` `[project.optional-dependencies]` extra (see `pyproject.toml`) — the
+  project's only supported backend; `uv sync` never installs it on its own. Never `pip install torch` from PyPI.
 - GPU choice: use `omniscan.gpu.device.resolve_device(cfg.gpu.device)`; never hard-code `cuda:0` (on this PC `cuda:0` is the integrated GPU and crashes).
 - Ollama runs natively on Windows at `http://localhost:11434`.
 - **Never** install or import `paddlepaddle` / `paddleocr`: Paddle has no ROCm support. Paddle *models* are used through HF `transformers` (PyTorch).
@@ -36,7 +38,7 @@ uv run omniscan --help
 5. Commit on the card branch with message `<ID>: <summary>`. Never push, never touch `main`.
 
 ## Hard rules
-- **Never run `uv sync --extra <backend>` (`rocm-gfx1201`/`cuda`/`cpu`/`mps`) in a builder worktree.** A worktree's `.venv` is a junction to the main checkout's — syncing a different backend there replaces the real, working torch install for the whole project (every worktree, the director's own session, a live `omniscan serve`), silently. Use `uv run --no-sync ...` for a worktree's own test/lint/type-check runs (only the worktree's source differs; the shared environment is already correct).
+- **Never run `uv sync --extra rocm-gfx1201` in a builder worktree.** A worktree's `.venv` is a junction to the main checkout's — syncing there re-installs/replaces the real, working torch install for the whole project (every worktree, the director's own session, a live `omniscan serve`), silently. Use `uv run --no-sync ...` for a worktree's own test/lint/type-check runs (only the worktree's source differs; the shared environment is already correct).
 - **If the spec is ambiguous or seems wrong: STOP, write the question in `docs/reports/<ID>.md`, commit, and end.** Do not guess.
 - GPU code: tensors stay on the GPU between steps; no `.cpu()` / `.numpy()` inside hot loops; never loop in Python over image rows or pixels.
 - Never write intermediate images to disk unless the card says so (JSON/`.npz` artifacts only).

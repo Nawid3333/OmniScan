@@ -49,24 +49,19 @@ Changes to the plan:
    encodes. Glyph rasterisation (FreeType) runs on the CPU into small patches; compositing is on the GPU (question F9).
 7. **Judge economics:** the judge only sees lines where candidates disagree (agreement below 0.9) or a locked term is violated,
    with one repair round for violations (question D5).
-8. **Portability (P1+P2 done 2026-09-23):** `pyproject.toml` selects the torch backend per machine via
-   `[project.optional-dependencies]` (`rocm-gfx1201` / `cuda` / `cpu` / `mps`) with `[tool.uv.conflicts]`
-   refusing more than one at a time — `uv sync --extra <name>` (no safe default; only the operator knows
-   their own GPU). `rocm-gfx1201` is the only one verified on real hardware (byte-identical `uv pip list`
-   and a full GPU test pass before/after); cuda/cpu/mps resolve cleanly and now have real CI evidence
-   (below), though no GPU hardware backs cuda/mps in CI. The runtime-download model of question B4 is
-   separate, still open. **P2 (`.github/workflows/ci.yml`, a matrix testing `uv sync --extra cpu` +
-   the CPU-only suite + lint + pyright on ubuntu-latest/windows-latest/macos-latest) is merged and green
-   on all three OSes** — it took 5 iterative real-CI rounds to get there, each catching a genuine bug no
-   local (Windows-only) run could see: a `check_locked_terms` fallout was unrelated, but four were the
-   same root cause recurring — AMD's rocm10 wheel index mirrors torch's *entire* pure-Python dependency
-   closure (numpy, pillow, markupsafe, jinja2, sympy, mpmath, networkx, filelock, typing-extensions,
-   fsspec), each missing macOS wheels, and uv's "first index with the package wins" search kept picking
-   rocm10's copy for every extra, not just rocm-gfx1201; plus a discovery that a `tool.uv.sources` index
-   pin is silently ignored for a package that isn't a direct project dependency somewhere, even one only
-   ever needed transitively (fixed by listing all ten in `[project.dependencies]` with floors matching
-   what's already resolved, purely so the pins have something to attach to); plus an ungated
-   PySide6-subprocess test, a hardcoded-Windows-OS test, and pyright needing the `gui` extra synced first.
+8. **Portability (P1+P2 done 2026-09-23, reverted 2026-09-24):** `pyproject.toml` briefly selected the
+   torch backend per machine via `[project.optional-dependencies]` (`rocm-gfx1201` / `cuda` / `cpu` /
+   `mps`) with `[tool.uv.conflicts]` refusing more than one at a time, and `.github/workflows/ci.yml` ran
+   a real `ubuntu-latest`/`windows-latest`/`macos-latest` matrix on the `cpu` extra (5 iterative CI rounds
+   to get green — the AMD rocm10 wheel index mirroring torch's whole pure-Python dependency closure and
+   winning "first index wins" search over PyPI was the recurring root cause, fixed by explicit `pypi`
+   source pins). **The owner decided (2026-09-24) to drop the "any OS/any GPU" goal entirely and target
+   only this machine** (Windows 11 + AMD ROCm gfx1201): the `cuda`/`cpu`/`mps` extras, `[tool.uv.conflicts]`
+   and the non-ROCm index entries were removed from `pyproject.toml`; `rocm-gfx1201` is now the project's
+   only backend. **`.github/workflows/ci.yml` still references the removed `cpu` extra and needs a decision**
+   (fix it to sync `rocm-gfx1201` and run on `windows-latest` only, or remove it) — flagged, not done, see
+   `docs/OPEN_QUESTIONS.md`. Everything else portability-related (B2–B13 in `docs/OPEN_QUESTIONS.md`, the
+   old M13 "universal app" framing below) is likewise moot.
    See `pyproject.toml`'s `[tool.uv.sources]` comments for the full empirically-verified account.
 9. **QA loop:** every logic card gets a mutation check; mutation-review cards hand that job to builders; one large Claude
    verification pass at the end (question F7). Every Hugging Face model is pinned by `revision` in config once validated
@@ -402,22 +397,19 @@ SFX classification + reading (PaddleOCR-VL / Gemma 4 vision), onomatopoeia gloss
 - **B17:** Docker for ROCm on WSL (`/dev/dxg` + `/usr/lib/wsl`); user docs; Ollama-only API keys.
 
 ### M13 — Unified desktop app (deferred, post first-end-to-end) [C + B]
-One packaged application (Windows `.exe`, macOS `.app`, Linux binary) instead of CLI + separate browser tool.
-- **Shell:** PyQt6 or PySide6 (Qt has the most mature cross-platform native packaging story); no C++/Java needed
-  beyond the GPU codec extension already planned for C2, which is compiled regardless of platform.
+One packaged application (Windows `.exe`) instead of CLI + separate browser tool. **Scope narrowed 2026-09-24:
+Windows + this machine's AMD ROCm GPU only** — the earlier "any GPU / any OS" framing (macOS `.app`, Linux
+binary, CUDA/MPS/CPU auto-detect, cross-platform packaging) is dropped along with the rest of the portability
+work (see the "Portability" plan revision above).
+- **Shell:** PySide6; no C++/Java needed beyond the GPU codec extension already planned for C2.
 - **Debug/review area:** not rebuilt from scratch — the browser views from B5/B7/B10/B11 (slicer cuts, OCR
   boxes, translation candidates, inpaint before/after) are embedded via `QWebEngineView`, so that work carries
   over as the desktop app's dedicated debugging panel instead of a separate Firefox tab. Each pipeline stage
   (slice / OCR / translate / inpaint) gets its own reviewable pane in one window, enterprise-tool style, not
   just a log stream.
-- **Any GPU / any OS:** device selection routed through one small abstraction over `torch.device` —
-  auto-detect CUDA (NVIDIA), ROCm (AMD, this machine), MPS (Apple Silicon), else CPU — so this is additive to
-  `gpu/vram.py`, not a rewrite of it. The CPU `turbo` codec (B2) already doubles as the universal fallback path
-  when no GPU backend is available.
-- **Packaging:** PyInstaller or Nuitka; ship a CPU-only build by default, GPU acceleration used automatically
-  when the detected hardware supports it (no separate installer per vendor to start).
-- Scheduled **after** the pipeline works end-to-end on this machine (post-M9/M10) — going cross-platform/any-GPU
-  before that would multiply the testing surface before we know the pipeline itself is right.
+- **Packaging:** PyInstaller or Nuitka; a Windows build bundling (or first-run-downloading) the ROCm torch
+  wheels for this GPU — no per-vendor installer variants needed.
+- Scheduled **after** the pipeline works end-to-end on this machine (post-M9/M10).
 
 **Critical path:** M0 → C1 + B1 (pilot) → C2/B2 benchmark gate → B3/B4 → C3/C4 → B8/B9 + C5 → C6 → C7 + B12 (first end-to-end).
 **In parallel (builder slot 2):** B18/B19 acquisition, the views (against fixture JSON), then B20.

@@ -1,6 +1,6 @@
 # OmniScan
 
-GPU end-to-end manhwa/manga translator (Korean / Chinese / Japanese → English) on your own GPU (developed on Windows 11 with AMD ROCm).
+GPU end-to-end manhwa/manga translator (Korean / Chinese / Japanese → English). Windows 11 native, AMD ROCm — one machine, one GPU.
 Chapters are imported from a local folder, normalised and cut into reading slices on the GPU, and — as
 the remaining stages land — detected, OCR'd, translated through Ollama, judged, inpainted, typeset and
 packaged into CBZ/PDF.
@@ -39,22 +39,17 @@ pipeline stage consumes it yet.
 
 ## Requirements
 
-- Windows 11 (tested natively; Linux/WSL2 also works). Ollama installed and running at `localhost:11434`.
-- A GPU PyTorch supports. Tested: AMD RX 9070 XT (gfx1201, 16 GB) with AMD's ROCm 10 wheels on Windows and Linux/WSL.
-  NVIDIA, Apple Silicon (MPS) and CPU-only are expected to work through PyTorch but are untested; `gpu.device = "auto"`
-  picks the strongest discrete GPU (it skips integrated GPUs).
-- Python 3.14, managed by [uv](https://docs.astral.sh/uv/). PyTorch is a per-machine extra you pick at sync
-  time — `rocm-gfx1201` (this project's own dev machine), `cuda`, `cpu` or `mps` (see Quickstart below and
-  `pyproject.toml`) — never `pip install torch` from PyPI.
+This project targets one machine: Windows 11 native, AMD RX 9070 XT (gfx1201, 16 GB) with AMD's ROCm 10
+wheels. It is not built or tested for any other OS or GPU vendor.
+
+- Windows 11. Ollama installed and running at `localhost:11434`.
+- Python 3.14, managed by [uv](https://docs.astral.sh/uv/). PyTorch comes from the `rocm-gfx1201` extra —
+  never `pip install torch` from PyPI.
 - Node 24 for the web UI only (`npm run dev` in `webui/`).
-- CI (`.github/workflows/ci.yml`): every push/PR runs `uv sync --extra cpu` + the CPU-only test suite,
-  lint and type check on Windows, Linux and macOS.
 
 ## Quickstart
 
 ```bash
-# pick the extra matching your GPU: rocm-gfx1201 (AMD RX 9070 XT, this project's own dev machine),
-# cuda (NVIDIA), cpu, or mps (Apple Silicon) — exactly one; add --extra gui for the desktop app too
 uv sync --extra rocm-gfx1201 --extra gui
 uv run omniscan doctor
 uv run python scripts/make_demo_chapter.py

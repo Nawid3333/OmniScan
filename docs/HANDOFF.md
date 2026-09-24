@@ -9,8 +9,10 @@ add it here (working agreement, lessons) or in `docs/DECISIONS.md` (design choic
 A tool that takes raw Korean (later Chinese/Japanese) manhwa/manga chapters and produces English releases that look
 official: slice the long strip, find and read the text, translate with several models plus a judge (glossary-aware,
 consistent across hundreds of chapters), remove the original text, letter the English, export. **GPU end-to-end** on the
-owner's AMD RX 9070 XT, and the end goal is **one executable that runs on any OS and GPU** (Windows, macOS, Linux;
-CUDA / ROCm / Apple MPS / CPU) with a professional debug/review area built in (plan milestone M13).
+owner's AMD RX 9070 XT. **One machine, one GPU** (decided 2026-09-24): the project targets Windows 11 + AMD ROCm
+(gfx1201) only — the earlier "any OS/any GPU" goal (old plan milestone M13, cpu/cuda/mps portability extras) was
+dropped on the owner's explicit instruction; a professional debug/review area is still wanted, just not the
+cross-platform packaging that used to come with it.
 Repo: `V:\OmniScan` (Windows 11 native) · GitHub `Nawid3333/OmniScan` (private).
 
 ## Read in this order

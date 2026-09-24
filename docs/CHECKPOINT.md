@@ -1,4 +1,22 @@
-# Checkpoint — 2026-09-23 (Windows native, `V:\OmniScan`)
+# Checkpoint — 2026-09-23, updated 2026-09-24 (Windows native, `V:\OmniScan`)
+
+## 2026-09-24 session (director, no card)
+1. **Scope decision: dropped cross-platform/multi-GPU portability entirely**, owner's explicit instruction.
+   `pyproject.toml`'s `cpu`/`cuda`/`mps` extras, `[tool.uv.conflicts]` and their index/source entries are
+   removed — `rocm-gfx1201` is now the project's only backend (`uv.lock` regenerated, `uv sync --extra
+   rocm-gfx1201 --extra gui` verified clean, full `pytest -m "not gpu"` green). `HANDOFF.md`/`PLAN.md`/
+   `README.md`/`CLAUDE.md` updated to match. **`.github/workflows/ci.yml` still references the removed
+   `cpu` extra and will fail on the next push** — deleting/rewriting it was blocked by the harness's own
+   CI-safety guard (requires the owner's own action, not the director's); see `docs/OPEN_QUESTIONS.md`.
+2. **OCR per-language defaults added** (`core/config.py::_apply_lang_ocr_defaults`): previously there was no
+   language-aware default at all — every series silently got Korean PP-OCRv5 models unless its own
+   `series.toml` hand-set `engine`/`rec_model`. Now a series.toml (or the repo default) that sets `ocr.lang`
+   without also naming an engine gets the qualification suite's measured-best engine automatically: ko/zh →
+   `paddleocr_vl`, ja → `ppocr-v6-medium`. An explicit engine/det_model/rec_model always still wins. Tests
+   added in `tests/unit/test_core_series_config.py`; ruff/pyright/pytest all clean.
+3. **F2c (fixed-position watermark wiring) confirmed already done** — `docs/CHECKPOINT.md`'s "Not done" list
+   was stale; `detect/stage.py` has called `resolve_watermark_regions`/`reclassify_watermark_position_regions`
+   since `6835760` (2026-09-23). Removed from "Not done" below.
 
 **New session? Read `docs/HANDOFF.md` first** (reading order, working agreement with the owner, lessons), then this file, then `docs/NEXT.md` (the ordered work queue with builder cards).
 `docs/PLAN.md` is the master plan (see its "Plan revisions" section); this file is the current-state snapshot. Repo: **`V:\OmniScan`**, remote `Nawid3333/OmniScan` on GitHub (`main` is pushed after every merge).
@@ -41,7 +59,7 @@ Run everything with `uv run --frozen …` from `V:\OmniScan`. Data (gitignored):
 - **Builders on Windows:** `scripts/omni_builder.py` (3 concurrent slots, `PYTHONPATH` pinned to the worktree) runs `claude` against Ollama with `glm-5.3-flash:cloud`.
 
 ## Not done
-Sound effects (**M10 — confirmed this session: zero `sfx`-kind regions on either real Solo Leveling chapter; the detector never fires that class on this content, e.g. a "bi ———" beep sound was read as ordinary bubble_text and literally transliterated, not translated as an SFX — this is a detector-model-level gap, not a threshold tweak, still needs the design decision the queue already flagged**), filter tier 3 (F2c — the fixed-position `omniscan watermark` tool exists but is still unwired; F2b, the text-pattern tier, is now merged), qualification-suite `model-watch` Action follow-through (W1 merged, catalog not yet auto-updated from a live run), debugger overlays and manual tools, packaging (U4/U5), portability (P1/P2 — `pyproject.toml` is still ROCm-only, nothing except this PC can `uv sync`), public repo/releases decision (owner), the hybrid GPU JPEG codec (C2), Japanese source material (no download site yet), the glossary term matcher's particle stripping is Korean-only (flagged by TL1's builder, not yet scheduled), `omniscan match chapters`/`omniscan reference` against the Solo Leveling `_reference_en` side (not run — the visual-review pass took priority and found more value).
+Sound effects (**M10 — confirmed this session: zero `sfx`-kind regions on either real Solo Leveling chapter; the detector never fires that class on this content, e.g. a "bi ———" beep sound was read as ordinary bubble_text and literally transliterated, not translated as an SFX — this is a detector-model-level gap, not a threshold tweak, still needs the design decision the queue already flagged**), qualification-suite `model-watch` Action follow-through (W1 merged, catalog not yet auto-updated from a live run), debugger overlays and manual tools, packaging (U4/U5), public repo/releases decision (owner), the hybrid GPU JPEG codec (C2), Japanese source material (no download site yet), the glossary term matcher's particle stripping is Korean-only (flagged by TL1's builder, not yet scheduled), `omniscan match chapters`/`omniscan reference` against the Solo Leveling `_reference_en` side (not run — the visual-review pass took priority and found more value).
 
 ## Waiting on you (the user)
 Full list: **[docs/OPEN_QUESTIONS.md](OPEN_QUESTIONS.md)**. Most pressing:
