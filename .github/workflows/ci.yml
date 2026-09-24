@@ -1,5 +1,6 @@
-# ci (card P2): prove, for real, that `uv sync --extra cpu` plus the CPU-only test suite works on every
-# OS PyTorch supports — not just on the one AMD ROCm dev machine the repo has always run on.
+# ci: lint, type-check and run the non-GPU test suite on every push, on this project's own backend
+# (rocm-gfx1201). No OS/GPU matrix — the project targets one machine (Windows + AMD ROCm gfx1201) only;
+# this runner has no AMD GPU either, so @pytest.mark.gpu tests are still deselected, same as always.
 
 name: ci
 
@@ -14,44 +15,22 @@ permissions:
 
 jobs:
   test:
-    strategy:
-      # the whole point is comparing all three independently — a failure on one OS must not cancel the others
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-    # bash on all three (Git Bash on Windows runners) so quoting and `&&` mean the same everywhere;
-    # the Windows default run shell is pwsh, which would work but is not identical
-    defaults:
-      run:
-        shell: bash
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
 
       - uses: astral-sh/setup-uv@v6
 
-      # exactly one torch backend extra — GitHub-hosted runners have no GPU of any kind, and the four
-      # backend extras conflict by design ([tool.uv.conflicts] refuses more than one at a time), so
-      # --all-extras would fail loudly. Installs from the committed uv.lock; Python 3.14 resolves itself.
-      - name: Sync (cpu backend)
-        run: uv sync --extra cpu
+      - name: Sync (rocm-gfx1201 + gui)
+        run: uv sync --extra rocm-gfx1201 --extra gui
 
-      # no GPU hardware in CI: every @pytest.mark.gpu test is deselected (they assume real accelerated
-      # kernels, not torch.device("cpu") substitution). tests/gui skips itself when PySide6 is absent,
-      # since the gui extra is deliberately not synced here (Qt headless needs a virtual display).
-      - name: Test (CPU-only suite)
+      # no GPU hardware on this runner: every @pytest.mark.gpu test is deselected (they assume real
+      # accelerated kernels, not a CPU-tensor substitution).
+      - name: Test (non-GPU suite)
         run: uv run pytest -m "not gpu"
 
       - name: Lint
         run: uv run ruff format --check . && uv run ruff check .
-
-      # pyright's `include` covers all of src/+tests/ regardless of what's synced, so the gui-extra-only
-      # files (src/omniscan/gui/**, tests/gui/**) need PySide6 resolvable or every one of them reports a
-      # false reportMissingImports — added only now, after Test already ran (and tests/gui already skipped
-      # itself correctly on the cpu-only sync above): this doesn't run any Qt code, just lets pyright's
-      # static import resolution see it. No virtual display needed for that.
-      - name: Sync (add gui extra for type checking)
-        run: uv sync --extra cpu --extra gui
 
       - name: Type check
         run: uv run pyright
