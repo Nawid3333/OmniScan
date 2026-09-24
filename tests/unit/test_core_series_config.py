@@ -45,6 +45,47 @@ def test_overrides_merge_over_defaults(tmp_path: Path) -> None:
     assert cfg.slicer.strategy == "smart"  # the input is not modified
 
 
+def test_lang_alone_picks_the_measured_ocr_engine(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path)
+    ja_dir = tmp_path / "lib" / "JA"
+    _write(ja_dir, '[ocr]\nlang = "ja"\n')
+    merged = series_config(cfg, ja_dir)
+    assert merged.ocr.engine == "ppocr"
+    assert merged.ocr.det_model == "ocr-det-ppocrv6-medium"
+    assert merged.ocr.rec_model == "ocr-rec-ppocrv6-medium"
+
+    zh_dir = tmp_path / "lib" / "ZH"
+    _write(zh_dir, '[ocr]\nlang = "zh"\n')
+    merged = series_config(cfg, zh_dir)
+    assert merged.ocr.engine == "paddleocr_vl"
+    assert merged.ocr.det_model is None
+    assert merged.ocr.rec_model is None
+
+
+def test_an_explicit_engine_beats_the_lang_default(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path)
+    series_dir = tmp_path / "lib" / "S"
+    _write(series_dir, '[ocr]\nlang = "zh"\nengine = "manga_ocr"\n')
+    merged = series_config(cfg, series_dir)
+    assert merged.ocr.engine == "manga_ocr"
+
+
+def test_an_unlisted_lang_keeps_the_machine_default(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path)
+    series_dir = tmp_path / "lib" / "S"
+    _write(series_dir, '[ocr]\nlang = "en"\n')
+    merged = series_config(cfg, series_dir)
+    assert merged.ocr.engine == cfg.ocr.engine
+
+
+def test_load_config_default_toml_gets_the_ko_default(tmp_path: Path) -> None:
+    from omniscan.core.config import load_config
+
+    cfg = load_config(tmp_path / "does-not-exist.toml")
+    assert cfg.ocr.lang == "ko"
+    assert cfg.ocr.engine == "paddleocr_vl"
+
+
 def test_machine_sections_are_rejected(tmp_path: Path) -> None:
     cfg = _cfg(tmp_path)
     series_dir = tmp_path / "lib" / "S"

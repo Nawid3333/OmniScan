@@ -196,6 +196,30 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
     return out
 
 
+# Per-language OCR engine defaults (cards O1c/O1d; measured in docs/benchmarks/ocr-qualification-results.md).
+# Applied wherever a TOML source sets ocr.lang without itself naming an engine/det_model/rec_model, so a
+# series only has to declare its language to get the best-measured engine instead of silently inheriting
+# whatever engine an earlier layer (repo default, user config) happened to set for a different language.
+_LANG_OCR_ENGINE_DEFAULTS: dict[str, dict[str, str]] = {
+    "ko": {"engine": "paddleocr_vl"},  # chrF 0.567 vs 0.475 (ppocr-v5-ko); -0.056 char recall, accepted
+    "zh": {"engine": "paddleocr_vl"},  # chrF 0.741 vs 0.642 (ppocr-v5-server-multi)
+    "ja": {"engine": "ppocr", "det_model": "ocr-det-ppocrv6-medium", "rec_model": "ocr-rec-ppocrv6-medium"},
+}
+
+
+def _apply_lang_ocr_defaults(data: dict[str, Any]) -> dict[str, Any]:
+    """Fill `ocr.engine`/`det_model`/`rec_model` from `_LANG_OCR_ENGINE_DEFAULTS[ocr.lang]` when `data`
+    sets `ocr.lang` but none of those three keys itself; an explicit value for any of them always wins."""
+    ocr = data.get("ocr")
+    if not isinstance(ocr, dict):
+        return data
+    lang = ocr.get("lang")
+    defaults = _LANG_OCR_ENGINE_DEFAULTS.get(lang) if isinstance(lang, str) else None
+    if defaults is None or ({"engine", "det_model", "rec_model"} & ocr.keys()):
+        return data
+    return {**data, "ocr": {**defaults, **ocr}}
+
+
 def _read_toml(path: Path) -> dict[str, Any]:
     if not path.is_file():
         return {}
@@ -208,6 +232,7 @@ def load_config(*extra_tomls: Path) -> Config:
     data: dict[str, Any] = {}
     for path in (DEFAULT_TOML, USER_TOML, *extra_tomls):
         data = _deep_merge(data, _read_toml(path))
+    data = _apply_lang_ocr_defaults(data)
     # pydantic-settings: init kwargs have the highest priority, so apply env on top explicitly.
     env_only = Config().model_dump(exclude_unset=True)
     return Config(**_deep_merge(data, env_only))
@@ -242,6 +267,7 @@ def series_config(cfg: Config, series_dir: Path) -> Config:
         raise SeriesConfigError(
             f"{path}: sections not allowed per series: {', '.join(unknown)} (allowed: {', '.join(SERIES_SECTIONS)})"
         )
+    data = _apply_lang_ocr_defaults(data)
     try:
         return Config(**_deep_merge(cfg.model_dump(), data))
     except ValidationError as exc:
