@@ -1,5 +1,8 @@
 # OmniScan
 
+> **Development is paused** (since 2026-09-25). Everything is merged and CI is green; to resume, start with the
+> "Development paused" section in [`docs/HANDOFF.md`](docs/HANDOFF.md).
+
 GPU end-to-end manhwa/manga translator (Korean / Chinese / Japanese → English). Windows 11 native, AMD ROCm — one machine, one GPU.
 Chapters are imported from a local folder, normalised and cut into reading slices on the GPU, and — as
 the remaining stages land — detected, OCR'd, translated through Ollama, judged, inpainted, typeset and

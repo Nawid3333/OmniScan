@@ -1,5 +1,8 @@
 # Next session — work plan and builder queue
 
+> **Development paused on 2026-09-25** (owner's decision; back in some years or when the program is needed).
+> Start with the "Development paused" section at the top of `docs/HANDOFF.md` — it has the state and the resume steps.
+
 Rewritten 2026-09-23 (later the same day), after a session that fixed three performance/correctness bugs in
 OCR/translation, changed the translation default to cloud-first, then did a real visual-review tuning pass on
 Solo Leveling and fixed four more bugs found that way. Read `docs/HANDOFF.md` and `docs/CHECKPOINT.md` first;

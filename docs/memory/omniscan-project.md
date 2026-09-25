@@ -8,6 +8,9 @@ metadata:
   modified: 2026-09-18T22:53:09.108Z
 ---
 
+**Paused 2026-09-25** by the owner (back in some years or when needed): read the "Development paused" section of
+`docs/HANDOFF.md` first. The local `V:\OmniScan` checkout and its `data\` were gone by then; re-clone.
+
 OmniScan: raw KO/ZH/JA manhwa/manga → industry-quality English (slicer, promo filter, OCR, multi-candidate translation + judge, inpaint, typeset, SFX later). Started 2026-09-18.
 
 - Plan: `docs/PLAN.md` in the repo (mirror: C:\Users\limex\.claude\plans\okay-let-s-make-a-kind-pinwheel.md)

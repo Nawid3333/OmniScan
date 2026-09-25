@@ -1,5 +1,8 @@
 # Checkpoint — 2026-09-23, updated 2026-09-25 (Windows native, `V:\OmniScan`)
 
+> **Development paused on 2026-09-25** (owner's decision; back in some years or when the program is needed).
+> Start with the "Development paused" section at the top of `docs/HANDOFF.md` — it has the state and the resume steps.
+
 ## 2026-09-25 session (director, cloud session on branch `claude/epic-fermi-90xyvh`, no card)
 Owner: "make it … on the level of when a company translates manhwa and manga … no weird artefacts, good font
 matching and SFX text stylistically matched … the end result is what matters and how it looks". Done, all

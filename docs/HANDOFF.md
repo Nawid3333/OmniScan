@@ -5,6 +5,47 @@ original conversation. It says what OmniScan is, what to read, how the owner lik
 time. Written 2026-09-19 after roughly two days of building. Keep it current: when something important is learned,
 add it here (working agreement, lessons) or in `docs/DECISIONS.md` (design choices and why).
 
+## Development paused on 2026-09-25 — read this before anything else
+The owner paused the project on 2026-09-25 and will come back "in some years, or when I need this program again".
+Nothing was left half-done: every change is merged into `main` (the only branch), CI (Windows: `pytest -m "not gpu"`,
+ruff, pyright) and CodeQL were green, and there were no open issues, pull requests or security alerts.
+
+**State at the pause.** The whole pipeline runs end to end (`omniscan run SERIES`: ingest → slice → detect → OCR →
+translate → judge → inpaint → LaMa → typeset → export; see the README's status table). The last work, on 2026-09-25
+(top of `docs/CHECKPOINT.md`), was official-release lettering: glyph-precise cleaning, balloon-shaped lettering,
+`webtoon`/`manga` presets, sound effects found by lexicon plus a whole-page CRAFT sweep and redrawn in the original's
+style, watermarks erased. It was verified on CPU with synthetic pages and the real models, but **never on the GPU or
+on a real chapter**. Not started: richer SFX styling (gradient fills, double outlines, tilting a lone syllable),
+uploading `craft_mlt_25k.zip` to the `models-v1` release, and the questions left in `docs/OPEN_QUESTIONS.md`.
+
+**Gone from the owner's PC at the pause.** `V:\OmniScan` (the checkout, including its gitignored `data\` folder with
+the imported test chapters, work and output) and the builder worktrees in `V:\OmniScan-wt\` no longer existed on
+2026-09-25. Still there: `C:\Users\limex\.config\omniscan\config.toml`, whose `[paths]` still point into
+`V:/OmniScan/data/`, and `secrets.env` (never read or print it). Code, docs and the model mirror (release `models-v1`)
+are all on GitHub.
+
+**Coming back, in this order.**
+1. Clone `Nawid3333/OmniScan` and check the machine: the project targets one PC (Windows 11, RX 9070 XT gfx1201,
+   ROCm). If the GPU changed, revisit that decision (`docs/DECISIONS.md`) and the `rocm-gfx1201` extra first.
+2. `uv sync --extra rocm-gfx1201 --extra gui`. Expect this to be what broke: `pyproject.toml` pins
+   `torch 2.13.0+rocm10.0.0` from AMD's `whl-next` index, which may no longer serve it, and Python 3.14 / uv will
+   have moved on. Move the pins to the current ROCm build for the GPU, run `uv lock`, and keep the `[tool.uv.sources]`
+   PyPI pins (their comment explains why).
+3. `uv run pytest -m "not gpu"`, then the GPU tests (`uv run pytest`), including `tests/unit/test_e2e_synthetic.py`,
+   which the 2026-09-25 work never ran.
+4. `uv run omniscan models download --required`. Pinned Hugging Face revisions may be gone upstream; the `models-v1`
+   release mirrors the required ones. The Ollama models in `config/translation_profiles.toml` and `config/judge.toml`
+   (gemma4, translategemma) are probably superseded: re-run the translation probe before changing the defaults.
+5. Point `config.toml`'s `[paths]` at a data folder, import a test chapter, then follow `docs/NEXT.md` →
+   "2026-09-25: lettering quality pass" (`scripts/sfx_sweep_check.py`, re-run a real chapter, look at the pages).
+
+**Automation that kept running while paused** (GitHub may also have switched the scheduled ones off after the long
+inactivity; they can be re-enabled in the Actions tab):
+- `model-watch` (Mondays) opens or updates an issue labelled `model-watch` when new upstream OCR models appear —
+  probably the best list of what changed in the meantime.
+- `Runner images` (daily) runs CI on each new GitHub Windows image and opens an issue when it fails.
+- Dependabot (monthly) opens pull requests that bump the workflows' GitHub Actions.
+
 ## What OmniScan is
 A tool that takes raw Korean (later Chinese/Japanese) manhwa/manga chapters and produces English releases that look
 official: slice the long strip, find and read the text, translate with several models plus a judge (glossary-aware,

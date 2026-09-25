@@ -1,4 +1,4 @@
-# Memory snapshot (2026-09-19)
+# Memory snapshot (2026-09-19, pause note added 2026-09-25)
 
 A copy of the Claude Code auto-memory notes about the owner, the environment and the project, kept in the repo so tools that
 do not load Claude's memory (other AIs, a fresh machine) still get them. The live copy for the director's
