@@ -109,9 +109,11 @@ Licences: all Apache-2.0 weights keep their upstream licences (the RT-DETR-v2 de
 Sanster's `models` repo, manga-ocr from `kha-white`). The Ollama LLMs are governed by the Gemma
 Terms of Use and require agreeing to them in the Ollama client.
 
-Excluded on purpose (no catalog entries): the ONNX conversions of PP-OCR models (`*_onnx` /
-`PP-OCRv*_onnx*` repos — OmniScan runs PyTorch weights; the ONNX runtime is not a supported
-backend), and third-party (non-`PaddlePaddle`) GGUF builds of PaddleOCR-VL.
+Excluded on purpose (no catalog entries): the Paddle-inference builds of PP-OCR models (the repos
+without a `_safetensors` suffix — they need the PaddlePaddle framework, which has no ROCm build), the
+ONNX conversions of PP-OCR models (`*_onnx` / `PP-OCRv*_onnx*` repos — OmniScan runs PyTorch
+weights; the ONNX runtime is not a supported backend), third-party (non-`PaddlePaddle`) GGUF builds
+of PaddleOCR-VL, and `ogkalu/comic-text-segmenter-yolov8m` (ultralytics YOLO, AGPL).
 
 ## Model updates
 
@@ -123,7 +125,8 @@ it never downloads weights and never edits `config/models.toml`:
   repo's head commit → `updated`; a repo that answers 404 → `missing`;
 - the listing API of the watched orgs (`PaddlePaddle`, `kha-white`, `jzhang533`, `ogkalu`, with the
   search terms and name patterns in `config/model_watch.toml`) is scanned for model repos the
-  catalog does not know yet → `new`.
+  catalog does not know yet → `new`. For PP-OCR only `*_safetensors` repos are watched, since only
+  those can enter the catalog (see "Excluded on purpose" above).
 
 When something changed, the workflow posts the report (markdown + JSON) to an open issue labelled
 `model-watch`, or opens that issue. What to do with a report: run

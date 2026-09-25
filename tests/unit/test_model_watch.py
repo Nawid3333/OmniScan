@@ -15,7 +15,7 @@ import httpx
 import pytest
 import yaml
 
-from omniscan.models.catalog import ModelEntry
+from omniscan.models.catalog import ModelEntry, load_catalog
 
 _SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "model_watch.py"
 _spec = importlib.util.spec_from_file_location("model_watch", _SCRIPT)
@@ -100,14 +100,51 @@ def test_load_watch_config_shipped_file() -> None:
     cfg = script.load_watch_config(REPO_ROOT / "config" / "model_watch.toml")
     assert set(cfg.orgs) == {"PaddlePaddle", "kha-white", "jzhang533", "ogkalu"}
     assert cfg.orgs["PaddlePaddle"].search == ("OCR",)
-    assert cfg.orgs["PaddlePaddle"].patterns == ("PP-OCRv*", "*PP-OCRv*_rec*", "PaddleOCR-VL*")
+    assert cfg.orgs["PaddlePaddle"].patterns == ("*PP-OCRv*_safetensors", "PaddleOCR-VL*")
     assert cfg.orgs["kha-white"].search == ("manga-ocr",)
     assert cfg.orgs["kha-white"].patterns == ("manga-ocr*",)
     assert cfg.orgs["jzhang533"].search == ("manga-ocr",)
     assert cfg.orgs["jzhang533"].patterns == ("manga-ocr*",)
     assert cfg.orgs["ogkalu"].search == ("comic",)
     assert cfg.orgs["ogkalu"].patterns == ("comic-text*",)
-    assert cfg.ignore == frozenset()
+    assert cfg.ignore == frozenset({"ogkalu/comic-text-segmenter-yolov8m"})
+
+
+def test_shipped_config_reports_only_loadable_candidates() -> None:
+    """The first live run (issue #6) listed 65 unusable repos: Paddle-inference and ONNX builds of
+    PP-OCR, and an ultralytics YOLO model. None of those is a candidate; new safetensors/VL repos are."""
+    cfg = script.load_watch_config(REPO_ROOT / "config" / "model_watch.toml")
+    entries = load_catalog(REPO_ROOT / "config" / "models.toml")
+    paddle = [
+        "PP-OCRv6_medium_rec",  # Paddle inference weights: needs the PaddlePaddle framework
+        "PP-OCRv6_medium_rec_onnx",
+        "PP-OCRv4_server_seal_det",
+        "PP-OCRv3_mobile_det",
+        "korean_PP-OCRv5_mobile_rec",
+        "korean_PP-OCRv5_mobile_rec_onnx",
+        "PP-OCRv6_medium_rec_safetensors",  # in the catalog
+        "korean_PP-OCRv5_mobile_rec_safetensors",  # in the catalog
+        "PaddleOCR-VL-1.6",  # in the catalog
+        "korean_PP-OCRv6_mobile_rec_safetensors",  # new
+        "PP-OCRv7_server_det_safetensors",  # new
+        "PaddleOCR-VL-1.7",  # new
+    ]
+    ogkalu = [
+        "comic-text-segmenter-yolov8m",  # ignored
+        "comic-text-and-bubble-detector",  # in the catalog
+    ]
+    fetch = FakeFetch(
+        listing={
+            ("PaddlePaddle", "OCR"): (200, [{"id": f"PaddlePaddle/{name}"} for name in paddle]),
+            ("ogkalu", "comic"): (200, [{"id": f"ogkalu/{name}"} for name in ogkalu]),
+        }
+    )
+    changes = script.find_new(entries, cfg, fetch)
+    assert sorted(change.repo for change in changes) == [
+        "PaddlePaddle/PP-OCRv7_server_det_safetensors",
+        "PaddlePaddle/PaddleOCR-VL-1.7",
+        "PaddlePaddle/korean_PP-OCRv6_mobile_rec_safetensors",
+    ]
 
 
 @pytest.mark.parametrize(
