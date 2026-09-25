@@ -158,7 +158,8 @@ def test_a_frame_around_the_text_does_not_swallow_the_box() -> None:
     frame_box = (6, 6, crop.shape[2] - 6, crop.shape[1] - 6)
     glyphs = find_glyphs(crop, [frame_box])
     assert glyphs is not None
-    assert int(glyphs.mask.sum()) < 0.6 * (frame_box[2] - frame_box[0]) * (frame_box[3] - frame_box[1])
+    # filling what the frame encloses would mask ~100 % of the box; frame + letters stay well below
+    assert int(glyphs.mask.sum()) < 0.7 * (frame_box[2] - frame_box[0]) * (frame_box[3] - frame_box[1])
 
 
 def test_outline_width_measures_the_outline() -> None:
@@ -287,3 +288,18 @@ def test_sfx_are_left_on_the_page_unless_replaced(mode: str) -> None:
     assert artifact.items == [] and metrics["skipped"] == 1.0
     replaced, _, _ = inpaint_regions(crop, [region], InpaintConfig(), sfx_mode="replace")
     assert [item.method for item in replaced.items] == ["flat"]
+
+
+def test_a_thick_outline_is_removed_even_with_ink_lines_of_the_letters_colour_crossing_it() -> None:
+    from tests.unit.test_ocr_sfx import render_on_art
+
+    strip, box, truth = render_on_art(
+        "쾅!", font="NanumGothic-Bold.ttf", fill=(25, 25, 35), outline=(255, 255, 255), angle=12.0
+    )
+    region = _text_region("r1", "sfx", box)
+    artifact, patches, _ = inpaint_regions(strip, [region], InpaintConfig())
+    (item,) = artifact.items
+    _, mask = patches["r1"]
+    covered = truth[item.box.y0 : item.box.y1, item.box.x0 : item.box.x1]
+    # the white outline leaves no ghost (measuring the outline around the art lines too missed 38 %)
+    assert int((covered & ~mask).sum()) <= 0.001 * int(covered.sum())

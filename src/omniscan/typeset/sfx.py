@@ -20,8 +20,8 @@ from omniscan.core.schemas import RGB, BBox, LayoutItem, Region
 from omniscan.typeset.fit import FontFactory, Shape, fit_shape, line_height, measurer
 from omniscan.typeset.fonts import SFX_FONTS, SfxWeight, font_file, layout_font_name, load_font
 
-_HEAVY_WEIGHT = 0.16  # stroke width / letter height of the original at or above which it is "heavy" ...
-_BOLD_WEIGHT = 0.085  # ... "bold" at or above this, "light" below (calibrated on Hangul lettering)
+_HEAVY_WEIGHT = 0.13  # stroke width / letter height of the original at or above which it is "heavy" ...
+_BOLD_WEIGHT = 0.08  # ... "bold" at or above this, "light" below (calibrated on Hangul lettering)
 _STROKE_SHARE = 0.08  # outline width as a share of the letter size (at least stroke_sfx_px)
 _WORD_SPACING = 0.95  # line pitch of multi-line effects
 _STACK_SPACING = 0.9  # letter pitch of stacked (vertical) effects

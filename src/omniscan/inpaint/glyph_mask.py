@@ -11,8 +11,10 @@ module finds it from the pixels, on the crop's device:
 2. the ink is the cluster that is rarer on the crop's border than inside the boxes (the border is
    the padding around the text, i.e. background); when the border does not tell, the minority;
 3. whatever the ink encloses is part of the lettering too (the fill inside an outline, counters);
-4. the lettering is grown over its outline — one-pixel rings are peeled outwards until their colour
-   matches the background — plus two pixels of anti-aliasing and JPEG ringing.
+4. the letters themselves (ink of their own colour, art lines thinner than their strokes opened
+   away) are grown over their outline — one-pixel rings are peeled outwards until their colour matches
+   the background — plus two pixels of anti-aliasing and JPEG ringing; the rest of the ink cluster
+   (art of the same colour) gets `min_grow_px` only.
 
 An implausible split (too little contrast, almost no ink, mostly ink) returns None and the caller
 keeps its rectangle mask — never worse than before.
@@ -39,6 +41,9 @@ _OUTLINE_TOL = (
 )
 _FAR_BAND_PX = 3  # width of the band sampled as background beyond the largest growth
 _FLOOD_CHECK_EVERY = 16  # flood-fill steps between convergence checks (each check is a device sync)
+_MAX_HALF_STROKE_PX = 40
+_LETTER_COLOUR_TOL = 64.0  # ink pixels further than this (largest channel) from the letters' colour are art
+_OPEN_ROUNDS = 3  # opening rounds that strip art lines thinner than the lettering
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,7 +53,7 @@ class Glyphs:
     ink: torch.Tensor  # bool [h, w]: the ink cluster's pixels (the letters' own colour)
     body: torch.Tensor  # bool [h, w]: the ink plus everything it encloses (outlined fills, counters)
     mask: torch.Tensor  # bool [h, w]: the body grown over outline and anti-aliasing (the pixels to remove)
-    stroke_px: float  # estimated stroke width of the ink, in pixels
+    stroke_px: float  # estimated stroke width of the letters, in pixels
     ink_is_dark: bool  # the ink is darker than the rest of the text boxes
 
 
@@ -65,8 +70,9 @@ def find_glyphs(
 ) -> Glyphs | None:
     """The lettering inside `boxes` (crop-relative) of the uint8 [3, h, w] `crop`, or None.
 
-    The removal mask is the body grown by its outline width plus 2 px, at most
-    `ceil(grow * stroke width) + 2` and always within [`min_grow_px`, `max_grow_px`]. None when the
+    The removal mask is the letters' body grown by its outline width plus 2 px (at most
+    `ceil(grow * stroke width) + 2`, always within [`min_grow_px`, `max_grow_px`]) joined with the
+    whole ink body grown by `min_grow_px`. None when the
     boxes hold too few pixels, the two colour clusters' means are less than `min_contrast` apart
     (RGB distance along the principal axis), or the ink share of the boxes is outside
     [`min_ink`, `max_ink`].
@@ -96,13 +102,73 @@ def find_glyphs(
         return None
     luma = luminance(crop)
     ink_is_dark = float(luma[ink].mean()) < float(luma[inside & ~ink].mean())
-    body = fill_holes(ink)
-    if int((body & inside).sum()) / n_inside > max_ink:
-        body = ink  # the ink encloses most of the boxes (a frame, not letters): keep just the ink
-    stroke = stroke_width(ink)
+    body = _filled(ink, inside, n_inside, max_ink)
+    # the outline is measured around the letters alone: art lines of the letters' colour join the ink
+    # cluster, and rings around them would read as background and hide a thick outline
+    coloured = same_colour(crop, ink)
+    letters, _ = open_thin(coloured)
+    stroke = stroke_width(letters)
     limit = min(max_grow_px, max(min_grow_px, math.ceil(grow * stroke) + _AA_PX))
-    grow_px = min(limit, max(min_grow_px, outline_width(crop, body, limit) + _AA_PX))
-    return Glyphs(ink=ink, body=body, mask=dilate(body, grow_px), stroke_px=stroke, ink_is_dark=ink_is_dark)
+    rim = outline_width(crop, _filled(letters, inside, n_inside, max_ink), limit)
+    grow_px = min(limit, max(min_grow_px, rim + _AA_PX))
+    mask = dilate(body, min_grow_px) | dilate(_filled(coloured, inside, n_inside, max_ink), grow_px)
+    return Glyphs(ink=ink, body=body, mask=mask, stroke_px=stroke, ink_is_dark=ink_is_dark)
+
+
+def _filled(ink: torch.Tensor, inside: torch.Tensor, n_inside: int, max_ink: float) -> torch.Tensor:
+    """`ink` plus what it encloses, unless that covers most of the boxes (a frame, not letters)."""
+    body = fill_holes(ink)
+    return ink if int((body & inside).sum()) / n_inside > max_ink else body
+
+
+def half_stroke(ink: torch.Tensor, max_px: int = _MAX_HALF_STROKE_PX) -> float:
+    """How far erosion eats into the ink before less than half of it is left — about a quarter of the
+    stroke width of the bulk of the ink (a median: thin art lines crossing the letters move it little),
+    interpolated between erosion steps so thin strokes are measured finer than whole pixels."""
+    total = int(ink.sum())
+    if total == 0:
+        return 0.0
+    eroded = ink
+    before = 1.0
+    for step in range(1, max_px + 1):
+        eroded = erode(eroded, 1)
+        left = int(eroded.sum()) / total
+        if left < 0.5:
+            return step - 1 + (before - 0.5) / (before - left)
+        before = left
+    return float(max_px)
+
+
+def same_colour(crop: torch.Tensor, ink: torch.Tensor) -> torch.Tensor:
+    """The ink pixels near the ink's median colour (art of another colour that fell into the ink cluster
+    dropped); the whole ink when that would drop most of it."""
+    core = erode(ink, 1)
+    colour = crop[:, core if bool(core.any()) else ink].float().median(dim=1).values
+    near = (crop.float() - colour[:, None, None]).abs().amax(dim=0) <= _LETTER_COLOUR_TOL
+    return ink & near if 2 * int((ink & near).sum()) >= int(ink.sum()) else ink
+
+
+def open_thin(letters: torch.Tensor) -> tuple[torch.Tensor, int]:
+    """`letters` with strokes much thinner than their own opened away, and the opening radius (their
+    half-stroke, rounded): opened and re-measured until it settles, as thin art lines stop dragging the
+    median down."""
+    total = int(letters.sum())
+    radius = max(1, round(half_stroke(letters)))
+    for _ in range(_OPEN_ROUNDS):
+        opened = dilate(erode(letters, radius), radius) & letters
+        if 2 * int(opened.sum()) < total:
+            break
+        letters = opened
+        settled = max(1, round(half_stroke(opened)))
+        if settled <= radius:
+            break
+        radius = settled
+    return letters, radius
+
+
+def letters_only(crop: torch.Tensor, ink: torch.Tensor) -> tuple[torch.Tensor, int]:
+    """The letters among the ink cluster, for measuring their shape: `same_colour`, then `open_thin`."""
+    return open_thin(same_colour(crop, ink))
 
 
 def principal_axis(pixels: torch.Tensor) -> torch.Tensor | None:
@@ -161,7 +227,9 @@ def outline_width(crop: torch.Tensor, body: torch.Tensor, max_px: int) -> int:
 
     One-pixel rings are peeled off the body outwards; the lettering ends at the first ring whose median
     colour is within `_OUTLINE_TOL` (largest channel difference) of the background's, sampled in a band
-    just beyond `max_px`. `max_px` when the background cannot be sampled or no ring matches it.
+    just beyond `max_px` — never at the first ring, a blend of the ink and what follows it (black into a
+    white outline can blend to the grey of the page). `max_px` when the background cannot be sampled or
+    no ring matches it.
     """
     far = dilate(body, max_px + _FAR_BAND_PX) & ~dilate(body, max_px)
     if int(far.sum()) < _MIN_BORDER_PX:
@@ -175,6 +243,8 @@ def outline_width(crop: torch.Tensor, body: torch.Tensor, max_px: int) -> int:
         previous = grown
         if not bool(ring.any()):
             return px - 1
+        if px == 1:
+            continue  # the ring touching the ink is a blend of ink and whatever follows: it ends nothing
         if float((pixels[:, ring].median(dim=1).values - background).abs().max()) < _OUTLINE_TOL:
             return px - 1
     return max_px
