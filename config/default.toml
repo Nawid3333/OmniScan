@@ -81,6 +81,21 @@ margin_px = 6
 free_grow = 0.10
 stroke_free_px = 3
 stroke_sfx_px = 5
+style = "auto"
+uppercase = "auto"
+bubble_padding = 0.12
+size_spread = 1.15
+shout_spread = 1.35
+hyphenate = true
+sfx_max_px = 240
+
+[sfx]
+detect = true
+max_chars = 8
+lexicon_size_ratio = 1.0
+size_ratio = 2.0
+size_max_chars = 3
+mode = "replace"
 
 [export]
 jpeg_quality = 95

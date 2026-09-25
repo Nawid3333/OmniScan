@@ -426,3 +426,53 @@ def test_config_subset_fingerprints_the_loaded_patterns(
     write_patterns(user, "라이브스코어")  # the user file contributes too: the fingerprint follows it
     expected = hashlib.sha256("구글검색\n스포위키\n라이브스코어".encode()).hexdigest()
     assert stage.config_subset(cfg)["watermark_patterns"] == expected
+
+
+# ---------------------------------------------------------------- sound effects in free text (M10)
+
+
+def test_ocr_stage_turns_onomatopoeia_in_free_text_into_measured_sfx(cfg: Config) -> None:
+    manga = cfg.model_copy(update={"ocr": MANGA_CFG})
+    ctx = prepared(manga)
+    write_mixed_regions(ctx)
+    ctx.gpu = FakeScheduler(
+        {
+            "reader": FakeCropReader(
+                [(KOREAN_LINES[0], 0.95), (KOREAN_LINES[1], 0.9), ("쿠구구궁!!", 0.9), ("쾅!", 0.9)]
+            )
+        }
+    )
+
+    outcome = run_stage(OcrStage(), ctx)
+
+    assert outcome.status == "done" and outcome.metrics["sfx"] == 2.0
+    regions = RegionsArtifact.load(ctx.paths.artifact("ocr.json")).regions
+    assert [r.kind for r in regions] == ["bubble_text", "bubble_text", "sfx", "sfx"]
+
+
+def test_ocr_stage_sfx_detection_can_be_switched_off(cfg: Config) -> None:
+    manga = cfg.model_copy(update={"ocr": MANGA_CFG, "sfx": cfg.sfx.model_copy(update={"detect": False})})
+    ctx = prepared(manga)
+    write_mixed_regions(ctx)
+    ctx.gpu = FakeScheduler(
+        {
+            "reader": FakeCropReader(
+                [(KOREAN_LINES[0], 0.95), (KOREAN_LINES[1], 0.9), ("쿠구구궁!!", 0.9), ("쾅!", 0.9)]
+            )
+        }
+    )
+    assert run_stage(OcrStage(), ctx).status == "done"
+    regions = RegionsArtifact.load(ctx.paths.artifact("ocr.json")).regions
+    assert [r.kind for r in regions] == ["bubble_text", "bubble_text", "free_text", "sfx"]
+
+
+def test_config_subset_fingerprints_the_sfx_lexicon(
+    cfg: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lexicon = tmp_path / "sfx_text.toml"
+    lexicon.write_text('[sfx_text]\nko = ["쾅"]\n', encoding="utf-8")
+    monkeypatch.setattr("omniscan.ocr.stage.default_sfx_text_paths", lambda: [lexicon])
+    first = OcrStage().config_subset(cfg)["sfx"]
+    lexicon.write_text('[sfx_text]\nko = ["쾅", "쿵"]\n', encoding="utf-8")
+    assert OcrStage().config_subset(cfg)["sfx"] != first
+    assert "mode" not in first  # the sfx mode only concerns inpaint and typeset

@@ -12,7 +12,7 @@ from typer.testing import CliRunner
 
 import omniscan.cli
 from omniscan.cli import app
-from omniscan.core.config import Config, ExportConfig, GpuConfig, PathsConfig
+from omniscan.core.config import Config, ExportConfig, GpuConfig, PathsConfig, TypesetConfig
 from omniscan.core.schemas import (
     BBox,
     ExportArtifact,
@@ -22,6 +22,7 @@ from omniscan.core.schemas import (
     LayoutArtifact,
     LayoutItem,
     Manifest,
+    Region,
     Slice,
     SlicesArtifact,
     SourceFile,
@@ -29,7 +30,7 @@ from omniscan.core.schemas import (
 from omniscan.core.stage import make_context, run_stage
 from omniscan.export.stage import ExportStage
 from omniscan.inpaint.patches import save_patches
-from omniscan.typeset.fit import inscribed_box, layout_region
+from omniscan.typeset.plan import plan_layout
 from tests.fixtures import images
 from tests.fixtures.korean_pages import make_korean_page
 
@@ -373,7 +374,7 @@ def test_synthetic_korean_page_export(cfg: Config) -> None:
 
     clean = np.array(page.clean)
     items: list[InpaintItem] = []
-    layout_items: list[LayoutItem] = []
+    regions: list[Region] = []
     patches: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
     for i, truth in enumerate(page.regions):
         region_id = f"r{i + 1:04d}"
@@ -389,10 +390,24 @@ def test_synthetic_korean_page_export(cfg: Config) -> None:
         items.append(
             InpaintItem(region_id=region_id, box=box, method="flat", fill=truth.fill, mask_px=int(mask.sum()))
         )
-        bbox = truth.bubble_bbox
-        assert bbox is not None  # n_bubbles=3, n_free=0, n_sfx=0: every region is a bubble
-        target = inscribed_box(bbox, truth.bubble_polygon, margin_px=6)
-        layout_items.append(layout_region(region_id, ENGLISH[i], target, role="dialogue"))
+        assert truth.bubble_bbox is not None  # n_bubbles=3, n_free=0, n_sfx=0: every region is a bubble
+        regions.append(
+            Region(
+                id=region_id,
+                slice_index=0,
+                kind="bubble_text",
+                bbox=truth.bbox,
+                bubble_bbox=truth.bubble_bbox,
+                reading_order=i,
+                text=truth.text,
+            )
+        )
+    layout_items = plan_layout(
+        regions,
+        {region.id: ENGLISH[i] for i, region in enumerate(regions)},
+        {item.region_id: truth.fill for item, truth in zip(items, page.regions, strict=True)},
+        TypesetConfig(),
+    )
     save_patches(work / "patches.npz", patches)
     InpaintArtifact(items=items).save(work / "inpaint.json")
     LayoutArtifact(items=layout_items).save(work / "layout.json")

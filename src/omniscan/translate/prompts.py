@@ -27,7 +27,9 @@ def chat_json_system(lang: str) -> str:
         f"every numbered region from {sl.name} into natural, idiomatic English suited to comic "
         "lettering: concise, in the character's voice, with no translator notes. Write each "
         "translation as one continuous line without manual line breaks (the letterer re-wraps it). "
-        f'{sl.honorifics}For a region of kind "sfx" give a short English onomatopoeia. Entries under '
+        f'{sl.honorifics}For a region of kind "sfx" (a sound effect) give the English sound effect an '
+        "official release would letter: one short, punchy onomatopoeia such as BOOM, THUD, WHOOSH or "
+        "BA-DUMP, never a description of the sound; a repeated sound stays repeated. Entries under "
         '"Glossary (binding)" are mandatory: whenever a source term appears'
         f"{sl.particle_hint}, its target must appear in your English exactly as written. Entries "
         'under "Glossary (suggested)" are preferred spellings but not mandatory. Answer with JSON '

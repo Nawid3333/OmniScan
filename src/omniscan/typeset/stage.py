@@ -1,4 +1,4 @@
-"""Typeset stage wrapper: ocr.json + final.json + inpaint.json -> layout.json (no GPU, no images)."""
+"""Typeset stage wrapper: ocr.json + final.json + inpaint(_lama).json -> layout.json (no GPU, no images)."""
 
 from __future__ import annotations
 
@@ -23,16 +23,18 @@ class TypesetStage:
     """Fit every final English line into its region's target box (satisfies core.stage.Stage)."""
 
     name: ClassVar[str] = "typeset"
-    version: ClassVar[int] = 1
+    version: ClassVar[int] = 2  # 2: balloon-shaped lines, style presets, chapter-wide sizes, sfx styles
     gpu_group: ClassVar[str | None] = None
 
     def inputs(self, ctx: ChapterContext) -> list[Path]:
         """Files whose content determines this stage's output (upstream artifacts only)."""
-        return [
+        inputs = [
             ctx.paths.artifact("ocr.json"),
             ctx.paths.artifact("final.json"),
             ctx.paths.artifact("inpaint.json"),
         ]
+        lama = ctx.paths.artifact("inpaint_lama.json")  # which sound effects LaMa erased
+        return [*inputs, lama] if lama.is_file() else inputs
 
     def outputs(self, ctx: ChapterContext) -> list[str]:
         """Artifact names (relative to the chapter work dir) this stage writes."""
@@ -40,7 +42,7 @@ class TypesetStage:
 
     def config_subset(self, cfg: Config) -> Mapping[str, Any]:
         """Only the config values that affect this stage's output (hashed for invalidation)."""
-        return cfg.typeset.model_dump()
+        return {**cfg.typeset.model_dump(), "sfx": cfg.sfx.model_dump()}
 
     def run(self, ctx: ChapterContext, models: Mapping[str, Any]) -> Mapping[str, float]:
         """Do the work, write outputs, return metrics (seconds are added by the runner)."""
@@ -56,12 +58,13 @@ class TypesetStage:
 
         regions = RegionsArtifact.load(ocr_path).regions
         lines = {line.region_id: line.text for line in FinalArtifact.load(final_path).lines}
-        fills: dict[str, RGB] = {
-            item.region_id: item.fill
-            for item in InpaintArtifact.load(inpaint_path).items
-            if item.fill is not None
-        }
-        items = plan_layout(regions, lines, fills, ctx.cfg.typeset)
+        inpaint = InpaintArtifact.load(inpaint_path).items
+        fills: dict[str, RGB] = {item.region_id: item.fill for item in inpaint if item.fill is not None}
+        erased = {item.region_id for item in inpaint if item.method == "flat"}
+        lama_path = ctx.paths.artifact("inpaint_lama.json")
+        if lama_path.is_file():
+            erased |= {item.region_id for item in InpaintArtifact.load(lama_path).items}
+        items = plan_layout(regions, lines, fills, ctx.cfg.typeset, sfx=ctx.cfg.sfx, erased=erased)
         LayoutArtifact(items=items).save(ctx.paths.artifact("layout.json"))
         return {
             "items": float(len(items)),
