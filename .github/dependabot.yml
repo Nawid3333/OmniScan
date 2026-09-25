@@ -1,0 +1,14 @@
+# Keeps the workflows' actions current: a runtime GitHub retires (Node 20 in 2026) or a vulnerable action
+# otherwise goes unnoticed until a run breaks. One grouped PR a month at most.
+# Python dependencies are deliberately not listed: Dependabot's network cannot reach AMD's ROCm index
+# (stable.repo.amd.com), so a uv update job can never resolve uv.lock; run `uv lock --upgrade` on the
+# owner's machine instead.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
