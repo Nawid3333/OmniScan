@@ -1,4 +1,26 @@
-# Checkpoint — 2026-09-23, updated 2026-09-24 (Windows native, `V:\OmniScan`)
+# Checkpoint — 2026-09-23, updated 2026-09-25 (Windows native, `V:\OmniScan`)
+
+## 2026-09-25 session (director, cloud session on branch `claude/epic-fermi-90xyvh`, no card)
+Owner: "make it … on the level of when a company translates manhwa and manga … no weird artefacts, good font
+matching and SFX text stylistically matched … the end result is what matters and how it looks". Done, all
+CPU-verified (full `pytest -m "not gpu"`, GUI included, ruff, pyright clean; mutants
+`tests/mutants/glyph_mask.py` + `lettering.py` 20/20 killed) and looked at on synthetic pages over drawn art
+through the real LaMa model — details and numbers in `docs/benchmarks/lettering-quality.md`:
+1. **Glyph-precise cleaning** (`inpaint/glyph_mask.py`): only the lettering (ink + enclosed fill + outline +
+   anti-aliasing) is removed, not the whole box — with PaddleOCR-VL the "line" is the whole region, so LaMa
+   was repainting whole boxes of art. LaMa masks 13-41 % smaller at 100 % text coverage.
+2. **LaMa without lettering as context** (`inpaint/lama_pipeline.py`): a tiled effect leaked its own colour
+   back (each tile masked only its part); every window now masks all text still to clean.
+3. **Balloon-shaped lettering** (`typeset/fit.py`): per-line ellipse widths, line count chosen on size +
+   phrasing, DP-balanced lines, hyphenation; **chapter-wide sizes** (`plan.py`); **presets** `webtoon`
+   (Mali) / `manga` (Kalam capitals) + the owner's own fonts per role; outlines forced to contrast
+   (white captions with black outlines had come out black on black).
+4. **Sound effects** (`ocr/sfx.py`, `typeset/sfx.py`, `config/sfx_text.toml`): lexicon reclassification of
+   free text, measured fill/outline colour, tilt and stroke weight, redraw in a matching face; `[sfx] mode`
+   replace / subtitle / keep. Supersedes the 2026-09-23 "leave SFX as-is" decision (owner's request).
+5. Issue #6 (model-watch false positives) fixed on the same branch.
+**Not done: a run on real chapters** — see `docs/NEXT.md` "2026-09-25: lettering quality pass" for the three
+steps (GPU golden test, `scripts/lettering_demo.py`, re-run Solo Leveling and look).
 
 ## 2026-09-24 session (director, no card)
 1. **Scope decision: dropped cross-platform/multi-GPU portability entirely**, owner's explicit instruction.

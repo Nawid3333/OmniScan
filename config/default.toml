@@ -94,7 +94,7 @@ sfx_max_px = 240
 detect = true
 max_chars = 8
 lexicon_size_ratio = 1.0
-size_ratio = 2.0
+size_ratio = 0.0
 size_max_chars = 3
 mode = "replace"
 

@@ -124,9 +124,11 @@ def test_a_lexicon_word_lettered_smaller_than_dialogue_is_not_an_sfx() -> None:
 def test_huge_short_lettering_is_an_sfx_without_the_lexicon() -> None:
     huge = region("r", "뿌앙", BBox(x0=0, y0=0, x1=300, y1=150))  # ~150 px letters vs ~35 px dialogue
     reference = dialogue_glyph_size(DIALOGUE)
-    assert is_sfx(huge, KO, reference, SfxConfig())
-    assert not is_sfx(huge, KO, None, SfxConfig())  # size alone needs a reference
+    by_size = SfxConfig(size_ratio=2.0)
+    assert is_sfx(huge, KO, reference, by_size)
+    assert not is_sfx(huge, KO, None, by_size)  # size alone needs a reference
     assert not is_sfx(huge, KO, reference, SfxConfig(size_ratio=10.0))
+    assert not is_sfx(huge, KO, reference, SfxConfig())  # off by default: a big sign would pass too
 
 
 @pytest.mark.parametrize(

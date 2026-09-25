@@ -180,8 +180,8 @@ class SfxConfig(BaseModel):
     detect: bool = True  # free text that reads as onomatopoeia (config/sfx_text.toml) becomes kind "sfx"
     max_chars: int = 8  # longer text (letters only, punctuation ignored) is never taken for an SFX
     lexicon_size_ratio: float = 1.0  # a lexicon match needs glyphs >= this x the chapter's dialogue glyphs
-    size_ratio: float = 2.0  # without a lexicon match, glyphs >= this x the dialogue glyphs ...
-    size_max_chars: int = 3  # ... on text of at most this many letters also count as an SFX
+    size_ratio: float = 0.0  # > 0: without a lexicon match, glyphs >= this x the dialogue glyphs ...
+    size_max_chars: int = 3  # ... on text of at most this many letters also count as an SFX (off: big signs)
     mode: Literal["replace", "subtitle", "keep"] = (
         "replace"  # replace: erase and redraw in English; subtitle: keep the art, add a small translation; keep: untouched
     )

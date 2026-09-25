@@ -22,8 +22,8 @@ packaged into CBZ/PDF.
 | translate | working — `omniscan translate` (candidate runs only; needs ocr.json from `omniscan ocr`) |
 | judge | working — `omniscan judge` (final.json) |
 | eval | working — `omniscan eval` (scores ocr.json/final.json against ground-truth SVG text layers) |
-| inpaint | working — `omniscan inpaint` (flat fill; `--lama` for textured art) |
-| typeset | working — `omniscan typeset` (layout.json; needs ocr.json, final.json, inpaint.json) |
+| inpaint | working — `omniscan inpaint` (flat fills, glyph-precise masks; `--lama` rebuilds the art under lettering) |
+| typeset | working — `omniscan typeset` (balloon-shaped lettering, webtoon/manga presets, style-matched SFX) |
 | export | working — `omniscan export` (needs inpaint.json, patches.npz, layout.json) |
 | run | working — `omniscan run` (ingest → export, three passes) |
 | pack | working — `omniscan pack` (CBZ/PDF of finished output) |

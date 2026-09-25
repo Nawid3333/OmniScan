@@ -31,11 +31,28 @@ uv run python scripts/omni_builder.py smoke               # connectivity test of
 Then: ask the owner the questions at the bottom, write the next card while a builder runs the previous one.
 Launch builders as **tracked background calls**; never sleep-poll.
 
+## 2026-09-25: lettering quality pass (director, cloud session — do this first)
+The owner asked for output "on the level of an official translation": no cleaning artifacts, good font
+matching, sound effects redrawn in a matching style. Built and CPU-verified on synthetic pages over drawn art
+with the real LaMa model (`docs/benchmarks/lettering-quality.md`, decisions in `docs/DECISIONS.md` →
+Pipeline design): glyph-precise cleaning, LaMa without lettering as context, balloon-shaped phrase-aware
+lettering with chapter-wide sizes, `webtoon`/`manga` presets with the owner's own fonts pluggable, SFX
+detection by lexicon + style-matched redraw. **Not yet run on real chapters** (the cloud session had no GPU
+and no Hugging Face access). First thing on this machine:
+
+1. `uv run --frozen pytest -q` — including the GPU golden test `test_e2e_synthetic.py`, which the cloud
+   session could not run (its "English drawn where the Korean was" check depends on the new layout).
+2. `uv run python scripts/lettering_demo.py` and look at `data/lettering_demo/*.png`.
+3. `uv run omniscan run SoloLeveling --force -s ocr -s inpaint -s inpaint_lama -s typeset -s export` (ocr,
+   inpaint and typeset stage versions were bumped) and **look at the pages**: SFX hit rate of the lexicon
+   (`sfx` metric of the ocr stage; extend `config/sfx_text.toml` with misses), the chapter's typical size,
+   LaMa on real screentone, any lettering overflow.
+
 ## Ordered queue
 
 | # | ID | What | Tier | State |
 |---|---|---|---|---|
-| 1 | **M10** | Sound effects. **Resolved 2026-09-23: owner's call is "leave as-is for now"** — no detector retraining, no heuristic reclassification. Real dialogue keeps translating normally; incidental art text (e.g. Chapter 2's `r0077`, a background sign OCR'd as `"KMA-"`) stays untranslated, same as today. Revisit if it becomes a real quality issue on more real chapters | — | **done, decision recorded** |
+| 1 | **M10** | Sound effects. 2026-09-23 "leave as-is" was **superseded 2026-09-25** by the owner's request for style-matched SFX: lexicon reclassification after OCR + measured style + redraw (`ocr/sfx.py`, `typeset/sfx.py`); size-only detection exists but is off (signs such as `r0077` would pass it). Still open: the detector itself has no working SFX class — unknown effects outside the lexicon stay free text | director | **built, real-chapter check pending** |
 | 2 | ~~(decision)~~ | **Full KO/ZH PaddleOCR-VL switch — resolved 2026-09-23, no switch.** Owner's call: keep the fast engine (`ppocr`) as the global default; PaddleOCR-VL (`ocr-vl-1.6`) stays an opt-in per series for when the extra quality is worth the extra time. **No code work needed** — this was already fully wired before this session: `cfg.ocr.engine: Literal["ppocr","manga_ocr","paddleocr_vl"]` (`core/config.py`), settable per series in `<library_root>/<series>/series.toml`'s `[ocr]` section (`engine = "paddleocr_vl"`, `rec_model = "ocr-vl-1.6"`) or via the desktop app's Settings → Per-series override editor — documented in `docs/USER_GUIDE.md` under "OCR engines and models". | — | **done, nothing to build** |
 | 3 | ~~**F2c**~~ | Promo filter tier 3: wire the already-built fixed-position `omniscan watermark` tool into `detect`, the way F2b (tier 1) wired its own reclassification. Position-based, no OCR text needed — hooks in at `detect` time, before OCR. **Merged 2026-09-23** (`detect/watermark_position.py`: `_MIN_OVERLAP_IOA = 0.5` IoA threshold, `DetectStage` version 2→3) | T2 | **done, merged** |
 | 4 | ~~**GL2**~~ | Glossary term matcher (`glossary/match.py`) only stripped Korean particles; harmless-but-inert for zh, a real gap for ja. **Merged 2026-09-23**: `find_terms(text, entries, lang)` now takes the source language, `JAPANESE_PARTICLES`/`PARTICLES_BY_LANG` added, zh/en get `()` on purpose (documented correct, not a gap). The builder caught and fixed 5 more `check_locked_terms` call sites in `judge.py` the card's own file list had missed | T2 | **done, merged** |
@@ -125,10 +142,8 @@ benchmarking, GPU-timed measurement, anything requiring the live Ollama server o
 director's own job.
 
 ## Questions for the owner
-1. **Sound effects / incidental art text (M10)** — shown a concrete example (`r0077`, "KMA-" sign,
-   see item 1 above) 2026-09-23; owner reviewed it and is deciding next steps. Worth pursuing
-   (retrain/fine-tune the detector for a real SFX/incidental-text class, or a different approach), or
-   leave such regions as they are for now?
+1. ~~Sound effects (M10)~~ — **resolved 2026-09-25**: style-matched replacement, built (item 1 above). New
+   question: which official release's look should the presets be tuned to (E3 — 2–3 reference pages)?
 2. ~~Full PaddleOCR-VL switch for KO/ZH~~ — **resolved 2026-09-23**: keep `ppocr` as the default, keep
    PaddleOCR-VL opt-in per series (already fully wired, see item 2 above).
 3. Is `omniscan match chapters`/`omniscan reference` against the Solo Leveling `_reference_en` side (item 6)
