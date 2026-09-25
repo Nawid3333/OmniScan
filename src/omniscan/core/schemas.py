@@ -176,6 +176,8 @@ class Region(Model):
     text_color: RGB | None = None
     stroke_color: RGB | None = None
     mask_ref: str | None = None  # key inside masks/<slice>.npz
+    angle: float = 0.0  # baseline rotation of the lettering, degrees counter-clockwise (measured on sfx)
+    weight: float | None = None  # stroke width / letter height of the original lettering (measured on sfx)
 
 
 class RegionsArtifact(Artifact):
@@ -282,6 +284,9 @@ class LayoutItem(Model):
     stroke_px: int = 0
     stroke_color: RGB = (255, 255, 255)
     overflow: bool = False
+    angle: float = (
+        0.0  # the lettering is rotated by this many degrees counter-clockwise around the box centre
+    )
 
 
 class LayoutArtifact(Artifact):

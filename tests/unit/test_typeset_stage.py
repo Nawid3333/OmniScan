@@ -94,6 +94,7 @@ def write_inputs(cfg: Config, chapter: str = CHAPTER, final_lines: dict[str, str
                 fill=(255, 255, 255),
             ),
             InpaintItem(region_id="r0002", box=BBox(x0=0, y0=0, x1=60, y1=40), method="none"),
+            InpaintItem(region_id="r0003", box=BBox(x0=0, y0=300, x1=60, y1=330), method="flat"),
             InpaintItem(
                 region_id="r0004",
                 box=BBox(x0=0, y0=400, x1=200, y1=420),
@@ -114,7 +115,8 @@ def test_typeset_stage_writes_loadable_layout(cfg: Config) -> None:
     artifact = LayoutArtifact.load(ctx.paths.artifact("layout.json"))
     assert [item.region_id for item in artifact.items] == ["r0001", "r0003"]
     assert [item.font_role for item in artifact.items] == ["dialogue", "sfx"]
-    assert [item.font for item in artifact.items] == ["ComicNeue-Bold.ttf", "Bangers-Regular.ttf"]
+    # webtoon preset dialogue; the sfx weight is unknown, so the "bold" effect face
+    assert [item.font for item in artifact.items] == ["Mali-SemiBold.ttf", "Knewave-Regular.ttf"]
     dialogue = artifact.items[0]
     assert dialogue.color == (0, 0, 0)  # white fill -> black text
     assert dialogue.stroke_px == 0
@@ -128,6 +130,36 @@ def test_typeset_stage_writes_loadable_layout(cfg: Config) -> None:
     assert outcome.metrics["items"] == 2.0
     assert outcome.metrics["overflow"] == 1.0
     assert outcome.metrics["skipped"] == 1.0
+
+
+def test_typeset_stage_subtitles_an_sfx_that_was_not_erased(cfg: Config) -> None:
+    write_inputs(cfg)
+    work = cfg.paths.work_root / SERIES / CHAPTER
+    inpaint = InpaintArtifact.load(work / "inpaint.json")
+    InpaintArtifact(items=[item for item in inpaint.items if item.region_id != "r0003"]).save(
+        work / "inpaint.json"
+    )
+    assert run_stage(TypesetStage(), make_context(cfg, SERIES, CHAPTER)).status == "done"
+    sfx = LayoutArtifact.load(work / "layout.json").items[1]
+    assert sfx.region_id == "r0003" and sfx.font_role == "free"  # a small translation ...
+    sfx_region = next(region for region in REGIONS if region.id == "r0003")
+    assert sfx.box.y0 >= sfx_region.bbox.y1  # ... below the original, which stays on the page
+
+
+def test_typeset_stage_reads_what_lama_erased(cfg: Config) -> None:
+    write_inputs(cfg)
+    work = cfg.paths.work_root / SERIES / CHAPTER
+    inpaint = InpaintArtifact.load(work / "inpaint.json")
+    InpaintArtifact(items=[item for item in inpaint.items if item.region_id != "r0003"]).save(
+        work / "inpaint.json"
+    )
+    InpaintArtifact(
+        items=[InpaintItem(region_id="r0003", box=BBox(x0=0, y0=300, x1=60, y1=330), method="lama")]
+    ).save(work / "inpaint_lama.json")
+    ctx = make_context(cfg, SERIES, CHAPTER)
+    assert work / "inpaint_lama.json" in TypesetStage().inputs(ctx)
+    assert run_stage(TypesetStage(), ctx).status == "done"
+    assert LayoutArtifact.load(work / "layout.json").items[1].font_role == "sfx"
 
 
 def test_typeset_stage_is_resumable_and_invalidated(cfg: Config) -> None:

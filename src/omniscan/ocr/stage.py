@@ -22,6 +22,12 @@ from omniscan.gpu.groups import VISION_GROUP
 from omniscan.ingest.strip import load_strip
 from omniscan.ocr.engines import engine_rec_model
 from omniscan.ocr.pipeline import read_region_crops, read_regions
+from omniscan.ocr.sfx import (
+    default_sfx_text_paths,
+    load_sfx_lexicon,
+    measure_lettering_style,
+    reclassify_sfx_regions,
+)
 from omniscan.ocr.watermark_text import (
     default_watermark_text_paths,
     load_watermark_patterns,
@@ -33,7 +39,9 @@ class OcrStage:
     """Read the text of detected regions (ppocr or a crop-reading engine; satisfies core.stage.Stage)."""
 
     name: ClassVar[str] = "ocr"
-    version: ClassVar[int] = 3  # 3: watermark text reclassification
+    version: ClassVar[int] = (
+        4  # 3: watermark text reclassification; 4: sound effects found, lettering measured
+    )
     gpu_group: ClassVar[str | None] = VISION_GROUP
 
     def inputs(self, ctx: ChapterContext) -> list[Path]:
@@ -52,11 +60,17 @@ class OcrStage:
     def config_subset(self, cfg: Config) -> Mapping[str, Any]:
         """Only the config values that affect this stage's output (hashed for invalidation)."""
         patterns = load_watermark_patterns(default_watermark_text_paths())
+        lexicon = load_sfx_lexicon(default_sfx_text_paths())
+        words = "\n".join(f"{lang}:{word}" for lang in sorted(lexicon) for word in sorted(lexicon[lang]))
         return {
             **cfg.ocr.model_dump(),
             "reading_direction": cfg.detect.reading_direction,
             # fingerprint of the watermark text patterns (card F2b): editing either TOML re-runs the stage
             "watermark_patterns": hashlib.sha256("\n".join(patterns).encode("utf-8")).hexdigest(),
+            "sfx": {
+                **cfg.sfx.model_dump(exclude={"mode"}),  # the mode only matters to inpaint and typeset
+                "lexicon": hashlib.sha256(words.encode("utf-8")).hexdigest(),
+            },
         }
 
     def run(self, ctx: ChapterContext, models: Mapping[str, Any]) -> Mapping[str, float]:
@@ -94,5 +108,12 @@ class OcrStage:
         # OCR'd ad/spam text is a source-injected watermark (card F2b): excluded downstream, not removed
         kept = reclassify_watermark_regions(kept, load_watermark_patterns(default_watermark_text_paths()))
         metrics["watermarked"] = float(sum(1 for r in kept if r.kind == "watermark"))
+        # the detector has no working sfx class (M10): onomatopoeia in free text becomes kind "sfx"; the
+        # lettering of effects and free text (fill vs outline colour, an effect's tilt and weight) is
+        # measured for the typesetter
+        if cfg.sfx.detect:
+            kept = reclassify_sfx_regions(kept, load_sfx_lexicon(default_sfx_text_paths()), cfg.sfx)
+        kept = [measure_lettering_style(strip, r) if r.kind in ("sfx", "free_text") else r for r in kept]
+        metrics["sfx"] = float(sum(1 for r in kept if r.kind == "sfx"))
         RegionsArtifact(regions=kept).save(ctx.paths.artifact("ocr.json"))
         return metrics

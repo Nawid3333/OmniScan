@@ -151,10 +151,26 @@ class TypesetConfig(BaseModel):
     min_px: int = 14  # smallest font size tried
     max_px: int = 48  # largest font size tried
     line_spacing: float = 1.15  # line pitch = size * this
-    margin_px: int = 6  # inset of the bubble's inscribed rectangle
+    margin_px: int = 6  # smallest gap between lettering and the balloon's edge
     free_grow: float = 0.10  # free text / SFX boxes are grown by this fraction on every side
     stroke_free_px: int = 3  # outline of free-standing text
-    stroke_sfx_px: int = 5  # outline of sound effects
+    stroke_sfx_px: int = 5  # thinnest outline of sound effects (large ones scale it up)
+    # Lettering style: fonts and capitalisation. auto = manga for Japanese sources, webtoon otherwise.
+    style: Literal["auto", "webtoon", "manga"] = "auto"
+    uppercase: Literal["auto", "always", "never"] = "auto"  # auto = the style's convention (manga: capitals)
+    # Per-role font overrides: a file in the fonts folder or an absolute path ("" = the style's preset),
+    # e.g. a licensed CC Wild Words for font_dialogue.
+    font_dialogue: str = ""
+    font_thought: str = ""
+    font_shout: str = ""
+    font_narration: str = ""
+    font_free: str = ""
+    font_sfx: str = ""  # "" = picked per sound effect from the original's stroke weight
+    bubble_padding: float = 0.12  # share of a balloon's width / height kept free on each side
+    size_spread: float = 1.15  # dialogue may be at most this x the chapter's typical size (0 = no limit)
+    shout_spread: float = 1.35  # the same limit for shouted lines
+    hyphenate: bool = True  # split a word that fits no line even at min_px instead of overflowing
+    sfx_max_px: int = 240  # largest sound-effect lettering
 
 
 class SfxConfig(BaseModel):

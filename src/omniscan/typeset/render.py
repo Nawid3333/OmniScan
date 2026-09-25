@@ -9,7 +9,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from omniscan.core.schemas import RGB, LayoutItem
-from omniscan.typeset.fonts import fonts_dir, load_font
+from omniscan.typeset.fonts import font_file, load_font
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,10 +22,11 @@ class GlyphPatch:
 
 
 def render_item(item: LayoutItem, *, font_path: Path | None = None) -> GlyphPatch | None:
-    """Draw `item` into a straight-alpha RGBA patch (box grown by stroke_px + 2 on every side); None without lines."""
+    """Draw `item` into a straight-alpha RGBA patch (box grown by stroke_px + 2 on every side, then
+    rotated by `item.angle` around the box centre when set); None without lines."""
     if not item.lines:
         return None
-    font = load_font(font_path if font_path is not None else fonts_dir() / item.font, item.size_px)
+    font = load_font(font_path if font_path is not None else font_file(item.font), item.size_px)
     margin = item.stroke_px + 2
     size = (item.box.width + 2 * margin, item.box.height + 2 * margin)
     fill_mask = Image.new("L", size)
@@ -48,10 +49,20 @@ def render_item(item: LayoutItem, *, font_path: Path | None = None) -> GlyphPatc
                 stroke_width=item.stroke_px,
                 stroke_fill=255,
             )
+    x, y = item.box.x0 - margin, item.box.y0 - margin
+    if item.angle:
+        # rotate the coverage masks, not the coloured layers: interpolating straight-alpha colours would
+        # pull the transparent pixels' RGB into the anti-aliased edge
+        centre_x, centre_y = x + size[0] / 2, y + size[1] / 2
+        fill_mask = fill_mask.rotate(item.angle, resample=Image.Resampling.BICUBIC, expand=True)
+        if stroke_mask is not None:
+            stroke_mask = stroke_mask.rotate(item.angle, resample=Image.Resampling.BICUBIC, expand=True)
+        size = fill_mask.size
+        x, y = round(centre_x - size[0] / 2), round(centre_y - size[1] / 2)
     result = _layer(size, item.color, fill_mask)
     if stroke_mask is not None:
         result = Image.alpha_composite(_layer(size, item.stroke_color, stroke_mask), result)
-    return GlyphPatch(x=item.box.x0 - margin, y=item.box.y0 - margin, rgba=np.array(result))
+    return GlyphPatch(x=x, y=y, rgba=np.array(result))
 
 
 def _pen_x(item: LayoutItem, width: float, margin: int) -> float:

@@ -98,3 +98,23 @@ def test_render_item_font_path_override() -> None:
     assert patch is not None
     assert patch.rgba.shape == (76, 124, 4)
     assert (patch.rgba[..., 3] > 0).any()
+
+
+def test_render_item_rotation_keeps_the_centre_and_the_two_colours() -> None:
+    flat = render_item(item(color=(255, 0, 0), stroke_px=3, stroke_color=(0, 0, 255)))
+    tilted = render_item(item(color=(255, 0, 0), stroke_px=3, stroke_color=(0, 0, 255), angle=30.0))
+    assert flat is not None and tilted is not None
+    h, w = tilted.rgba.shape[:2]
+    assert h > flat.rgba.shape[0]  # the rotated block needs more height
+    centre = (BOX.x0 + BOX.x1) / 2, (BOX.y0 + BOX.y1) / 2
+    assert abs(tilted.x + w / 2 - centre[0]) <= 1 and abs(tilted.y + h / 2 - centre[1]) <= 1
+    ink = tilted.rgba[..., 3] > 0
+    rgb = tilted.rgba[ink][:, :3].astype(int)
+    assert (rgb[:, 1] == 0).all()  # only red/blue mixes: no fringe pulled in from transparent pixels
+    rows, _, cols, _ = ink_span(tilted.rgba)
+    assert rows >= 0 and cols >= 0
+
+
+def test_render_item_font_may_be_an_absolute_path() -> None:
+    patch = render_item(item(font=str(fonts_dir() / "Kalam-Bold.ttf")))
+    assert patch is not None and patch.rgba[..., 3].any()

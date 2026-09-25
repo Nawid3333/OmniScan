@@ -30,7 +30,9 @@ def judge_system(lang: str) -> str:
         f"against the {sl.name} source, not by how many candidates agree. Write natural, idiomatic "
         "English suited to comic lettering: concise, in the character's voice, one continuous line "
         f"without manual line breaks, no translator notes. {sl.honorifics}For a region of "
-        'kind "sfx" give a short English onomatopoeia. Entries under "Glossary (binding)" are '
+        'kind "sfx" (a sound effect) give the English sound effect an official release would letter: '
+        "one short, punchy onomatopoeia such as BOOM, THUD, WHOOSH or BA-DUMP, never a description of "
+        'the sound; a repeated sound stays repeated. Entries under "Glossary (binding)" are '
         "mandatory: whenever a source term appears"
         f"{sl.particle_hint}, its target must appear in your English exactly as written. If a region "
         'has "problems", your earlier answer was rejected: fix exactly those problems (each missing '
