@@ -16,11 +16,13 @@ from omniscan.ocr.sfx import (
     dialogue_glyph_size,
     ink_angle,
     is_sfx,
+    levelled,
     load_sfx_lexicon,
     made_of_words,
     measure_lettering_style,
     normalise,
     reclassify_sfx_regions,
+    thinnest_tilt,
 )
 from omniscan.typeset.sfx import weight_class
 from tests.fixtures.korean_pages import FONTS_DIR
@@ -247,3 +249,98 @@ def test_unreadable_art_leaves_the_region_unchanged() -> None:
     strip = torch.full((3, 200, 200), 128, dtype=torch.uint8)
     original = region("s", "쾅", BBox(x0=50, y0=50, x1=150, y1=150), kind="sfx")
     assert measure_lettering_style(strip, original) is original
+
+
+@pytest.mark.parametrize("outline", [None, (255, 255, 255)])
+@pytest.mark.parametrize("angle", [0.0, 15.0, -25.0])
+def test_the_weight_class_survives_tilt_and_outline(
+    outline: tuple[int, int, int] | None, angle: float
+) -> None:
+    for font, expected in (("NanumGothic-Bold.ttf", "bold"), ("NanumGothic-Regular.ttf", "light")):
+        strip, box = render_sfx(
+            "쾅!",
+            font=font,
+            outline=outline,
+            stroke=8,
+            size=150,
+            fill=(20, 20, 20),
+            background=(200, 170, 190),
+            angle=angle,
+        )
+        styled = measure_lettering_style(strip, region("s", "쾅!", box, kind="sfx"))
+        assert weight_class(styled.weight) == expected, (font, styled.weight)
+
+
+def test_an_outline_lining_the_counters_is_not_a_fill() -> None:
+    # a thin "ㅇ" with a thick white outline: its counter is white, which is the outline, not a fill
+    strip, box = render_sfx(
+        "쾅!",
+        font="NanumGothic-Regular.ttf",
+        outline=(255, 255, 255),
+        stroke=8,
+        size=150,
+        fill=(20, 20, 20),
+        background=(200, 170, 190),
+    )
+    styled = measure_lettering_style(strip, region("s", "쾅!", box, kind="sfx"))
+    assert close(styled.text_color, (20, 20, 20)) and close(styled.stroke_color, (255, 255, 255))
+
+
+def test_levelled_undoes_a_tilt() -> None:
+    bar = torch.zeros((200, 300), dtype=torch.bool)
+    for x in range(60, 240):
+        y = 100 - round((x - 150) * 0.364)  # rising 20 degrees to the right
+        bar[y - 4 : y + 4, x] = True
+    assert thinnest_tilt(bar) == pytest.approx(20.0, abs=1.0)
+    assert thinnest_tilt(levelled(bar, thinnest_tilt(bar))) == pytest.approx(0.0, abs=1.0)
+
+
+def render_on_art(
+    text: str, *, font: str, fill: tuple[int, int, int], outline: tuple[int, int, int] | None, angle: float
+) -> tuple[torch.Tensor, BBox, torch.Tensor]:
+    """Lettering over a panel crossed by dark ink lines: strip, lettering box, truth mask of the visible
+    lettering (coverage above 16/255: fainter anti-aliasing changes a pixel by less than that)."""
+    page = Image.new("RGBA", (900, 600), (205, 180, 195, 255))
+    art = ImageDraw.Draw(page)
+    for k in range(9):  # dark ink lines of the art, several running under the lettering
+        art.line([(60 + 90 * k, 80), (300 + 60 * k, 560)], fill=(25, 25, 35, 255), width=3 + k % 3)
+    layer = Image.new("RGBA", (900, 600), (0, 0, 0, 0))
+    ImageDraw.Draw(layer).text(
+        (450, 300),
+        text,
+        font=ImageFont.truetype(str(FONTS_DIR / font), 130),
+        anchor="mm",
+        fill=(*fill, 255),
+        stroke_width=9 if outline else 0,
+        stroke_fill=(*(outline or fill), 255),
+    )
+    if angle:
+        layer = layer.rotate(angle, resample=Image.Resampling.BICUBIC, center=(450, 300))
+    alpha = np.array(layer.getchannel("A"))
+    page.alpha_composite(layer)
+    x0, y0, x1, y1 = layer.getchannel("A").point(lambda v: 255 if v > 40 else 0).getbbox()  # type: ignore[misc]
+    strip = torch.from_numpy(np.array(page.convert("RGB"))).permute(2, 0, 1).contiguous()
+    return strip, BBox(x0=x0, y0=y0, x1=x1, y1=y1), torch.from_numpy(alpha > 16)
+
+
+def test_thin_coloured_lettering_over_ink_lines_keeps_its_weight_and_tilt() -> None:
+    strip, box, _ = render_on_art(
+        "휘익", font="NanumGothic-Regular.ttf", fill=(40, 190, 90), outline=None, angle=-18
+    )
+    styled = measure_lettering_style(strip, region("s", "휘익", box, kind="sfx"))
+    assert close(styled.text_color, (40, 190, 90))
+    assert styled.angle == pytest.approx(-18.0, abs=4.0)
+    assert weight_class(styled.weight) == "light"  # the black art lines are not part of the letters
+
+
+def test_the_weight_does_not_depend_on_the_tilt() -> None:
+    level_strip, level_box = render_sfx(
+        "두근두근", outline=None, fill=(20, 20, 20), background=(230, 225, 235)
+    )
+    tilted_strip, tilted_box = render_sfx(
+        "두근두근", outline=None, fill=(20, 20, 20), background=(230, 225, 235), angle=-25
+    )
+    level = measure_lettering_style(level_strip, region("s", "두근두근", level_box, kind="sfx")).weight
+    tilted = measure_lettering_style(tilted_strip, region("s", "두근두근", tilted_box, kind="sfx")).weight
+    assert level is not None and tilted is not None
+    assert tilted == pytest.approx(level, rel=0.1)  # strokes are measured levelled

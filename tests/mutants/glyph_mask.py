@@ -1,13 +1,19 @@
 """Mutants for the glyph-precise inpaint masks (inpaint/glyph_mask.py, inpaint/pipeline.py).
 
-Run: python scripts/mutate.py run tests/mutants/glyph_mask.py -t tests/unit/test_inpaint_glyph_mask.py
+Run: python scripts/mutate.py run tests/mutants/glyph_mask.py -t tests/unit/test_inpaint_glyph_mask.py \
+     -t tests/unit/test_ocr_sfx.py
 """
 
 G = "src/omniscan/inpaint/glyph_mask.py"
 P = "src/omniscan/inpaint/pipeline.py"
 
 MUTANTS = [
-    (G, "    body = fill_holes(ink)\n", "    body = ink\n", "no hole filling"),
+    (
+        G,
+        "    body = fill_holes(ink)\n    return ink if",
+        "    body = ink\n    return ink if",
+        "no hole filling",
+    ),
     (
         G,
         "            return low_share_inside > low_share_border\n",
@@ -16,7 +22,7 @@ MUTANTS = [
     ),
     (
         G,
-        "    grow_px = min(limit, max(min_grow_px, outline_width(crop, body, limit) + _AA_PX))",
+        "    grow_px = min(limit, max(min_grow_px, rim + _AA_PX))",
         "    grow_px = min(limit, max(min_grow_px, _AA_PX))",
         "no outline growth",
     ),
@@ -34,9 +40,21 @@ MUTANTS = [
     ),
     (
         G,
-        "        body = ink  # the ink encloses most",
-        "        pass  # the ink encloses most",
+        "    return ink if int((body & inside).sum()) / n_inside > max_ink else body",
+        "    return body",
         "keep a frame's filled holes",
+    ),
+    (
+        G,
+        "    return ink & near if 2 * int((ink & near).sum()) >= int(ink.sum()) else ink",
+        "    return ink",
+        "art of another colour kept with the letters",
+    ),
+    (
+        G,
+        "    rim = outline_width(crop, _filled(letters, inside, n_inside, max_ink), limit)",
+        "    rim = outline_width(crop, body, limit)",
+        "outline measured around same-coloured art too",
     ),
     (
         P,

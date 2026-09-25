@@ -199,3 +199,9 @@ def test_a_larger_balloon_never_gets_smaller_lettering(w: int, h: int) -> None:
     small = fit_shape(text, ellipse(w, h), REAL)
     large = fit_shape(text, ellipse(w + 60, h + 40), REAL)
     assert large.best_px >= small.best_px
+
+
+def test_no_little_word_is_stranded_on_a_line_of_its_own() -> None:
+    result = fit_shape("Long time no see, Seong-jin.", ellipse(228, 91), REAL)
+    assert len(result.lines) > 1
+    assert all(len(line.split()) > 1 or len(line) > 5 for line in result.lines), result.lines

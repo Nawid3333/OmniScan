@@ -84,7 +84,7 @@ def inpaint_regions(
                 boxes,
                 grow=cfg.glyph_grow_sfx if region.kind == "sfx" else cfg.glyph_grow,
                 min_grow_px=cfg.glyph_grow_min_px,
-                max_grow_px=cfg.glyph_grow_max_px,
+                max_grow_px=cfg.glyph_grow_max_sfx_px if region.kind == "sfx" else cfg.glyph_grow_max_px,
             )
             if glyphs is not None:
                 glyph_masks += 1

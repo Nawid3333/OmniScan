@@ -147,6 +147,8 @@ _DANGLING = frozenset(
 _SENTENCE_BONUS = -6.0
 _CLAUSE_BONUS = -3.0
 _DANGLING_PENALTY = 8.0
+_LONELY_SHARE = 0.5  # a line of a single word shorter than this share of the mean line length ...
+_LONELY_PENALTY = 6.0  # ... costs this much: a stranded word reads as a mistake
 _SIZE_TOLERANCE = 0.9  # line counts whose largest size is within 10 % of the best compete on phrasing
 _PHRASING_PX = 0.5  # font pixels one unit of break cost is worth when choosing the line count
 _SIZE_STEPS = (
@@ -299,6 +301,17 @@ class _Setter:
             return _DANGLING_PENALTY
         return 0.0
 
+    def phrasing(self, ends: list[int]) -> float:
+        """Phrasing cost of a whole layout: its breaks plus every little word stranded on its own line."""
+        cost = sum(self.break_cost(end) for end in ends[:-1])
+        if len(ends) > 1:
+            mean = self.width(0, len(self.tokens)) / len(ends)
+            starts = [0, *ends[:-1]]
+            for start, end in zip(starts, ends, strict=True):
+                if end - start == 1 and self.width(start, end) < _LONELY_SHARE * mean:
+                    cost += _LONELY_PENALTY
+        return cost
+
     def lines(self, ends: list[int]) -> list[str]:
         """The rendered line strings for line end indices."""
         starts = [0, *ends[:-1]]
@@ -399,7 +412,7 @@ def fit_shape(
             setter = _Setter(tokens, _MeasuredFont(factory(font_path, size)))
             pitch = line_height(size, line_spacing)
             ends = _balanced_ends(setter, shape, n, size, pitch)
-            score = size - _PHRASING_PX * sum(setter.break_cost(end) for end in ends[:-1])
+            score = size - _PHRASING_PX * setter.phrasing(ends)
             if chosen is None or score > chosen[0]:
                 chosen = (score, size, setter.lines(ends), pitch)
     assert chosen is not None  # the best line count itself always qualifies

@@ -144,6 +144,7 @@ class InpaintConfig(BaseModel):
     glyph_grow_sfx: float = 1.6  # ... for sound effects, whose outlines are thicker
     glyph_grow_min_px: int = 2  # growth is clamped to [min, max] pixels
     glyph_grow_max_px: int = 12
+    glyph_grow_max_sfx_px: int = 32  # sound effects are big and their outlines thick
     glyph_ring_px: int = 4  # band around the glyphs that must be flat for a flat fill of just the glyphs
 
 
