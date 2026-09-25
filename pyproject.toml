@@ -71,9 +71,10 @@ packages = ["src/omniscan"]
 # not need it (only torch.compile does), so require it on Linux only. Keeps uv.lock installable on Windows.
 [tool.uv]
 override-dependencies = ["triton; sys_platform == 'linux'"]
-# setuptools: every torch build resolves it to 81.0.0 (GHSA-5rjg-fvgr-3xxf, a MANIFEST.in exclusion bypass
-# on macOS sdists, patched in 83.0.0) — NOT overridden here. AMD's rocm10 index only carries 81.0.0 itself,
-# so forcing >=83.0.0 makes omniscan[rocm-gfx1201] (this project's own machine) unresolvable entirely; the
+# setuptools: every torch build resolves it to 81.0.0 (GHSA-h35f-9h28-mq5c / CVE-2026-59890, a MANIFEST.in
+# exclusion bypass on macOS sdists, patched in 83.0.0; Dependabot alert #1, dismissed 2026-09-24) — NOT
+# overridden here. AMD's rocm10 index only carries 81.0.0 itself, so forcing >=83.0.0 makes
+# omniscan[rocm-gfx1201] (this project's own machine) unresolvable entirely; the
 # advisory only matters when *building/publishing* an sdist on a case-insensitive-normalizing macOS
 # filesystem, which this project never does (no sdist is ever published). Accepted, not fixed.
 
