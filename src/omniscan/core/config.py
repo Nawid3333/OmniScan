@@ -139,6 +139,12 @@ class InpaintConfig(BaseModel):
     lama_context_px: int = (
         32  # a region needs at least this much context inside the window on every side, else it is skipped
     )
+    glyph_mask: bool = True  # remove only the text's own ink (+ outline, anti-aliasing), not whole line boxes
+    glyph_grow: float = 1.0  # the ink is grown by this many estimated stroke widths
+    glyph_grow_sfx: float = 1.6  # ... for sound effects, whose outlines are thicker
+    glyph_grow_min_px: int = 2  # growth is clamped to [min, max] pixels
+    glyph_grow_max_px: int = 12
+    glyph_ring_px: int = 4  # band around the glyphs that must be flat for a flat fill of just the glyphs
 
 
 class TypesetConfig(BaseModel):
@@ -149,6 +155,19 @@ class TypesetConfig(BaseModel):
     free_grow: float = 0.10  # free text / SFX boxes are grown by this fraction on every side
     stroke_free_px: int = 3  # outline of free-standing text
     stroke_sfx_px: int = 5  # outline of sound effects
+
+
+class SfxConfig(BaseModel):
+    """Sound effects: finding them among free text after OCR, and how the English version replaces them."""
+
+    detect: bool = True  # free text that reads as onomatopoeia (config/sfx_text.toml) becomes kind "sfx"
+    max_chars: int = 8  # longer text (letters only, punctuation ignored) is never taken for an SFX
+    lexicon_size_ratio: float = 1.0  # a lexicon match needs glyphs >= this x the chapter's dialogue glyphs
+    size_ratio: float = 2.0  # without a lexicon match, glyphs >= this x the dialogue glyphs ...
+    size_max_chars: int = 3  # ... on text of at most this many letters also count as an SFX
+    mode: Literal["replace", "subtitle", "keep"] = (
+        "replace"  # replace: erase and redraw in English; subtitle: keep the art, add a small translation; keep: untouched
+    )
 
 
 class ExportConfig(BaseModel):
@@ -182,6 +201,7 @@ class Config(BaseSettings):
     ocr: OcrConfig = OcrConfig()
     inpaint: InpaintConfig = InpaintConfig()
     typeset: TypesetConfig = TypesetConfig()
+    sfx: SfxConfig = SfxConfig()
     export: ExportConfig = ExportConfig()
     filter: FilterConfig = FilterConfig()
 
@@ -244,6 +264,7 @@ SERIES_SECTIONS = (
     "ocr",
     "inpaint",
     "typeset",
+    "sfx",
     "export",
     "filter",
 )  # machine-level sections are not per series

@@ -1,4 +1,4 @@
-"""Inpaint stage wrapper: ingest/slices/ocr + chapter JPEGs -> inpaint.json + patches.npz (flat fill only)."""
+"""Inpaint stage wrapper: ingest/slices/ocr + chapter JPEGs -> inpaint.json + patches.npz (flat fills + LaMa masks)."""
 
 from __future__ import annotations
 
@@ -19,9 +19,7 @@ class InpaintStage:
     """Flat-fill the text of every OCR region (satisfies core.stage.Stage); no GPU model group needed."""
 
     name: ClassVar[str] = "inpaint"
-    version: ClassVar[int] = (
-        2  # 2: strips decoded before the CUDA staging-buffer fix (2026-09-19) held duplicated pages
-    )
+    version: ClassVar[int] = 3  # 3: glyph-precise masks; sfx left alone unless sfx.mode = "replace"
     gpu_group: ClassVar[str | None] = None
 
     def inputs(self, ctx: ChapterContext) -> list[Path]:
@@ -39,7 +37,7 @@ class InpaintStage:
 
     def config_subset(self, cfg: Config) -> Mapping[str, Any]:
         """Only the config values that affect this stage's output (hashed for invalidation)."""
-        return cfg.inpaint.model_dump()
+        return {**cfg.inpaint.model_dump(), "sfx_mode": cfg.sfx.mode}
 
     def run(self, ctx: ChapterContext, models: Mapping[str, Any]) -> Mapping[str, float]:
         """Do the work, write outputs, return metrics (seconds are added by the runner)."""
@@ -49,7 +47,9 @@ class InpaintStage:
         ingest = IngestArtifact.load(ctx.paths.artifact("ingest.json"))
         strip = load_strip(ctx, ingest)
         regions = RegionsArtifact.load(ctx.paths.artifact("ocr.json")).regions
-        artifact, patches, metrics = inpaint_regions(strip, regions, ctx.cfg.inpaint)
+        artifact, patches, metrics = inpaint_regions(
+            strip, regions, ctx.cfg.inpaint, sfx_mode=ctx.cfg.sfx.mode
+        )
         save_patches(ctx.paths.artifact("patches.npz"), patches)
         artifact.save(ctx.paths.artifact("inpaint.json"))
         return metrics

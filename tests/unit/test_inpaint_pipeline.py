@@ -57,6 +57,7 @@ def test_white_bubble_is_flat_filled() -> None:
         "needs_lama": 0.0,
         "skipped": 0.0,
         "mask_px": 3036.0,
+        "glyph_masks": 0.0,  # the rectangle flat fill succeeded first
     }
 
 
@@ -84,7 +85,10 @@ def test_skips_watermark_and_lineless_and_flags_lama() -> None:
         "flat": 0.0,
         "needs_lama": 2.0,
         "skipped": 2.0,
-        "mask_px": 1196.0 + 4876.0,
+        # r0003 sits on plain white (no ink to find): its dilated line box; r0004's random pixels split
+        # into two "ink" clusters whose grown mask covers almost the whole dilated box (4876 px)
+        "mask_px": 1196.0 + 4856.0,
+        "glyph_masks": 1.0,
     }
 
 
@@ -99,6 +103,7 @@ def test_no_regions_gives_empty_artifact() -> None:
         "needs_lama": 0.0,
         "skipped": 0.0,
         "mask_px": 0.0,
+        "glyph_masks": 0.0,
     }
 
 
@@ -138,7 +143,7 @@ def test_korean_pages_flat_background(seed: int) -> None:
         if kind == "free_text":
             assert item.method == "flat"  # the ring is the flat background
         if kind == "sfx":
-            assert item.needs_lama is True
+            assert item.method == "flat"  # only the glyphs, whose surrounding band is the flat background
         if item.method == "flat":
             assert item.fill is not None and item.needs_lama is False
             pixels, mask = patches[item.region_id]
