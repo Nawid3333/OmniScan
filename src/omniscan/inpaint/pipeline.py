@@ -11,6 +11,10 @@ from omniscan.core.schemas import BBox, InpaintArtifact, InpaintItem, OcrLine, R
 from omniscan.inpaint.flat import flat_fill, line_mask
 from omniscan.inpaint.glyph_mask import find_glyphs, local_ring
 
+# The band around glyphs must be flat almost everywhere before they are flat-filled: a line of the art
+# crossing the lettering is a few percent of that band, and must be rebuilt by LaMa, not cut by a fill.
+_GLYPH_FLAT_QUANTILE = 0.98
+
 
 def _union(lines: Sequence[OcrLine]) -> BBox:
     """Smallest box containing every line box of a region."""
@@ -37,7 +41,8 @@ def inpaint_regions(
     1. the whole line-box mask flat-filled when the ring around it is one colour (bubble interiors;
        never for sfx, whose boxes are mostly art);
     2. with `cfg.glyph_mask`, only the glyphs (inpaint/glyph_mask.py) flat-filled when the band around
-       them is one colour (text touching a bubble outline, lettering on a flat panel);
+       them is one colour almost everywhere (text touching a bubble outline, lettering on a flat panel;
+       art crossing the lettering rules it out);
     3. otherwise `needs_lama=True`, with the glyph mask when one was found (LaMa then only rebuilds the
        lettering, not the art around it) or the line-box mask.
     """
@@ -90,6 +95,7 @@ def inpaint_regions(
                     flat_tol=cfg.flat_tol,
                     min_ring_px=cfg.min_ring_px,
                     ring_mask=local_ring(mask, cfg.glyph_ring_px),
+                    quantile=_GLYPH_FLAT_QUANTILE,
                 )
         ok = result is not None and result.ok
         item = InpaintItem(

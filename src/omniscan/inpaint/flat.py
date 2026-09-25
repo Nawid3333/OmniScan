@@ -46,9 +46,11 @@ def flat_fill(
     flat_tol: float,
     min_ring_px: int,
     ring_mask: torch.Tensor | None = None,
+    quantile: float = 0.9,
 ) -> FlatResult:
-    """Replace masked pixels with the ring's median colour when the ring is uniform enough; the ring is
-    `ring_mask` when given (e.g. the band around glyphs), else every unmasked pixel of the crop."""
+    """Replace masked pixels with the ring's median colour when the ring is uniform enough (the
+    `quantile` of its pixels' colour deviations is within `flat_tol`); the ring is `ring_mask` when given
+    (e.g. the band around glyphs), else every unmasked pixel of the crop."""
     ring = crop[:, ~mask if ring_mask is None else ring_mask]
     if not bool(mask.any()) or ring.shape[1] < min_ring_px:
         return FlatResult(crop.clone(), None, False)
@@ -57,7 +59,7 @@ def flat_fill(
     dev = (ring_f - median[:, None]).abs().amax(dim=0)  # per ring pixel: worst-channel deviation
     if dev.numel() > _QUANTILE_SAMPLE_CAP:
         dev = dev[:: math.ceil(dev.numel() / _QUANTILE_SAMPLE_CAP)]
-    if float(torch.quantile(dev, 0.9)) > flat_tol:
+    if float(torch.quantile(dev, quantile)) > flat_tol:
         return FlatResult(crop.clone(), None, False)
     values = median.round().tolist()  # one sync for all three channels
     fill = (int(values[0]), int(values[1]), int(values[2]))
