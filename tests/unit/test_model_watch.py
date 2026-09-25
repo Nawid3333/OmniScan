@@ -621,6 +621,11 @@ def test_model_watch_workflow() -> None:
     assert job["runs-on"] == "ubuntu-latest"
     steps_text = "\n".join(str(step.get("run", "")) + str(step.get("uses", "")) for step in job["steps"])
     assert "scripts/model_watch.py" in steps_text
+    # Without these the script exits 0 on changes and writes no report, so the issue step
+    # never runs (a refactor dropped them once, and only the HF_TOKEN check noticed).
+    assert "--fail-on-change" in steps_text
+    assert "--markdown model-watch.md" in steps_text
+    assert "--json model-watch.json" in steps_text
     assert "gh issue create" in steps_text
     assert "gh issue comment" in steps_text
     assert "actions/upload-artifact" in steps_text

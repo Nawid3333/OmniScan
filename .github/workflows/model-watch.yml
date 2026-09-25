@@ -23,11 +23,16 @@ jobs:
 
       - uses: astral-sh/setup-uv@v6
 
+      # --fail-on-change makes the script exit 3 on changes (without it, it exits 0 and the issue
+      # step never runs); --markdown/--json write the report the issue and the artifact carry.
+      # --no-project --with httpx: the script needs only httpx, not the project's GPU stack.
       - name: Compare catalog against upstream model repos
         id: watch
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }} # optional; empty raises no header
         run: |
           set +e
-          uv run scripts/model_watch.py
+          uv run --no-project --with httpx python scripts/model_watch.py --markdown model-watch.md --json model-watch.json --fail-on-change
           code=$?
           set -e
           echo "code=$code" >> "$GITHUB_OUTPUT"
