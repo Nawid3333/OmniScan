@@ -333,6 +333,19 @@ def test_an_erased_sfx_is_redrawn_in_the_originals_style() -> None:
     assert item.size_px > TypesetConfig().max_px  # effects are not held to the dialogue sizes
 
 
+def test_an_effect_does_not_grow_into_its_neighbours_lettering() -> None:
+    # two effects side by side, 6 px apart: grown by free_grow each would reach over the other
+    left = make_region("r1", "sfx", BBox(x0=100, y0=300, x1=300, y1=400), text="파앗")
+    right = make_region("r2", "sfx", BBox(x0=306, y0=320, x1=450, y1=390), text="철컥", reading_order=1)
+    alone = plan([left], {"r1": "Fwoosh"}, erased={"r1"})[0]
+    first, second = plan([left, right], {"r1": "Fwoosh", "r2": "Clank"}, erased={"r1", "r2"})
+    assert first.box.x1 <= 306 and second.box.x0 >= 300
+    assert alone.box.x1 > 306  # without the neighbour it uses the grown box
+    below = make_region("r3", "bubble_text", BBox(x0=0, y0=405, x1=400, y1=500), reading_order=2)
+    (effect, _) = plan([left, below], {"r1": "Fwoosh", "r3": "Hey"}, erased={"r1"})
+    assert effect.box.y1 <= 405
+
+
 def test_an_sfx_that_stayed_on_the_page_gets_a_subtitle_below_it() -> None:
     region = make_region("r1", "sfx", SFX_BOX, text="쾅")
     (item,) = plan([region], {"r1": "Boom"}, erased=set())

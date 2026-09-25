@@ -37,16 +37,21 @@ matching, sound effects redrawn in a matching style. Built and CPU-verified on s
 with the real LaMa model (`docs/benchmarks/lettering-quality.md`, decisions in `docs/DECISIONS.md` →
 Pipeline design): glyph-precise cleaning, LaMa without lettering as context, balloon-shaped phrase-aware
 lettering with chapter-wide sizes, `webtoon`/`manga` presets with the owner's own fonts pluggable, SFX
-detection by lexicon + style-matched redraw. **Not yet run on real chapters** (the cloud session had no GPU
+detection by lexicon + a whole-page CRAFT sweep for the effects the detector misses + style-matched
+redraw, watermarks erased. **Not yet run on real chapters** (the cloud session had no GPU
 and no Hugging Face access). First thing on this machine:
 
 1. `uv run --frozen pytest -q` — including the GPU golden test `test_e2e_synthetic.py`, which the cloud
    session could not run (its "English drawn where the Korean was" check depends on the new layout).
 2. `uv run python scripts/lettering_demo.py` and look at `data/lettering_demo/*.png`.
-3. `uv run omniscan run SoloLeveling --force -s ocr -s inpaint -s inpaint_lama -s typeset -s export` (ocr,
-   inpaint and typeset stage versions were bumped) and **look at the pages**: SFX hit rate of the lexicon
-   (`sfx` metric of the ocr stage; extend `config/sfx_text.toml` with misses), the chapter's typical size,
-   LaMa on real screentone, any lettering overflow.
+3. `uv run python scripts/sfx_sweep_check.py --out data/sweep_check` — the sound-effect sweep with this
+   machine's models (PaddleOCR-VL reads the swept effects here; the cloud session only had the PP-OCRv5
+   Korean recogniser: 26/30). The first run downloads CRAFT (78 MB) from EasyOCR's GitHub release; to serve
+   it from our own release, upload `craft_mlt_25k.zip` (sha256 in `config/models.toml`) to `models-v1`.
+4. `uv run omniscan run SoloLeveling --force -s detect -s ocr -s inpaint -s inpaint_lama -s typeset -s export`
+   (detect, ocr, inpaint and typeset stage versions were bumped) and **look at the pages**: SFX found by
+   the sweep (`sweep_*` metrics of the ocr stage; extend `config/sfx_text.toml` with misses), watermarks
+   gone, the chapter's typical size, LaMa on real screentone, any lettering overflow.
 
 ## Ordered queue
 

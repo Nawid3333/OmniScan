@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +12,7 @@ import pytest
 import torch
 from PIL import Image
 
-from omniscan.core.config import Config, GpuConfig, OcrConfig, PathsConfig
+from omniscan.core.config import Config, GpuConfig, OcrConfig, PathsConfig, SfxConfig
 from omniscan.core.schemas import BBox, Region, RegionsArtifact
 from omniscan.core.stage import ChapterContext, make_context, run_chapter, run_stage
 from omniscan.ingest.stage import IngestStage
@@ -37,6 +38,7 @@ def cfg(tmp_path: Path) -> Config:
             models_dir=tmp_path / "models",
         ),
         ocr=OcrConfig(tile_px=400),
+        sfx=SfxConfig(sweep=False),  # the sweep's own tests below switch it on
     )
 
 
@@ -66,7 +68,7 @@ class FakeLineDetector:
         self.script = script or {}
         self.next_index = 0
 
-    def detect(self, tiles: list[torch.Tensor]) -> list[list[LineBox]]:
+    def detect(self, tiles: Sequence[torch.Tensor]) -> list[list[LineBox]]:
         out = []
         for _ in tiles:
             out.append([LineBox(box=box, score=score) for box, score in self.script.get(self.next_index, [])])
@@ -391,6 +393,29 @@ def test_ocr_stage_reclassifies_ad_text_as_watermark(
     assert regions[1].text == AD_1 and regions[2].text == AD_2  # watermark regions keep their OCR text
 
 
+def test_stored_watermark_regions_pass_through_unread(cfg: Config) -> None:
+    manga = cfg.model_copy(update={"ocr": MANGA_CFG})
+    ctx = prepared(manga)
+    zone = Region(id="r0001", slice_index=0, kind="watermark", bbox=BBox(x0=0, y0=0, x1=400, y1=20))
+    RegionsArtifact(
+        regions=[
+            zone,
+            Region(id="r0002", slice_index=0, kind="bubble_text", bbox=BBox(x0=10, y0=50, x1=390, y1=200)),
+        ]
+    ).save(ctx.paths.artifact("regions.json"))
+    reader = FakeReader(("あいう", 0.9))
+    ctx.gpu = FakeScheduler({"reader": reader})
+
+    outcome = run_stage(OcrStage(), ctx)
+
+    assert outcome.status == "done"
+    assert reader.n_crops == 1  # only the dialogue was read
+    assert outcome.metrics["watermarked"] == 1.0 and outcome.metrics["regions_dropped"] == 0.0
+    regions = RegionsArtifact.load(ctx.paths.artifact("ocr.json")).regions
+    assert regions[0] == zone  # unread, unchanged, still first: inpaint erases its whole box
+    assert regions[1].text == "あいう"
+
+
 def test_ocr_stage_reruns_when_the_watermark_patterns_change(
     cfg: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -476,3 +501,67 @@ def test_config_subset_fingerprints_the_sfx_lexicon(
     lexicon.write_text('[sfx_text]\nko = ["쾅", "쿵"]\n', encoding="utf-8")
     assert OcrStage().config_subset(cfg)["sfx"] != first
     assert "mode" not in first  # the sfx mode only concerns inpaint and typeset
+
+
+# ---------------------------------------------------------------- the whole-page sweep (ocr/sweep.py)
+
+
+class FakeSweeper:
+    """Scripted CRAFT: the same word boxes (tile pixels) in the first tile, none elsewhere."""
+
+    def __init__(self, words: list[tuple[tuple[float, float, float, float], float]]) -> None:
+        self.words = words
+        self.calls = 0
+
+    def detect(
+        self, tiles: list[torch.Tensor]
+    ) -> list[list[tuple[tuple[float, float, float, float], float]]]:
+        self.calls += 1
+        return [self.words if i == 0 else [] for i in range(len(tiles))]
+
+
+class QueueReader:
+    """Crop reader answering each call with the next scripted list of readings."""
+
+    def __init__(self, *calls: list[tuple[str, float]]) -> None:
+        self.calls = list(calls)
+        self.sizes: list[int] = []
+
+    def read(self, crops: list[torch.Tensor]) -> list[tuple[str, float]]:
+        self.sizes.append(len(crops))
+        return self.calls.pop(0)[: len(crops)]
+
+
+def test_the_sweep_adds_the_effects_the_detector_missed(cfg: Config) -> None:
+    swept = cfg.model_copy(update={"ocr": MANGA_CFG, "sfx": SfxConfig()})
+    ctx = prepared(swept)  # one detected region at (10, 50, 390, 200)
+    words = [
+        ((60.0, 100.0, 200.0, 140.0), 0.9),  # inside the detected region: its own text
+        ((40.0, 230.0, 120.0, 290.0), 0.95),  # an effect in the art
+        ((200.0, 240.0, 260.0, 280.0), 0.9),  # something else in the art
+    ]
+    # the region, then (crop, bare letters) for each of the two words outside it
+    reader = QueueReader([("대사", 0.95)], [("광!", 0.9), ("광!", 0.8), ("나무", 0.9), ("나무", 0.9)])
+    ctx.gpu = FakeScheduler({"reader": reader, "sfx_sweeper": FakeSweeper(words)})
+
+    outcome = run_stage(OcrStage(), ctx)
+
+    assert outcome.status == "done"
+    assert reader.sizes == [1, 4]
+    assert outcome.metrics["sweep_candidates"] == 2.0 and outcome.metrics["sweep_sfx"] == 1.0
+    assert outcome.metrics["sweep_unknown"] == 1.0 and outcome.metrics["sfx"] == 1.0
+    regions = RegionsArtifact.load(ctx.paths.artifact("ocr.json")).regions
+    assert [(r.id, r.kind) for r in regions] == [("r0001", "bubble_text"), ("r0002", "sfx")]
+    effect = regions[1]
+    assert effect.bbox == BBox(x0=40, y0=230, x1=120, y1=290)
+    assert effect.text == "광!" and effect.ocr_alt is None  # 꽝, 쾅, 광... are equally close: kept as read
+    assert effect.lines[0].engine == "ocr-rec-manga-ocr-2025+craft"
+
+
+def test_the_sweep_stays_off_without_sfx_detection(cfg: Config) -> None:
+    off = cfg.model_copy(update={"ocr": MANGA_CFG, "sfx": SfxConfig(detect=False)})
+    ctx = prepared(off)
+    sweeper = FakeSweeper([((40.0, 230.0, 120.0, 290.0), 0.95)])
+    ctx.gpu = FakeScheduler({"reader": QueueReader([("대사", 0.95)]), "sfx_sweeper": sweeper})
+    assert run_stage(OcrStage(), ctx).status == "done"
+    assert sweeper.calls == 0

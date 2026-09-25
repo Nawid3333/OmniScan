@@ -146,6 +146,7 @@ class InpaintConfig(BaseModel):
     glyph_grow_max_px: int = 12
     glyph_grow_max_sfx_px: int = 32  # sound effects are big and their outlines thick
     glyph_ring_px: int = 4  # band around the glyphs that must be flat for a flat fill of just the glyphs
+    remove_watermarks: bool = True  # erase watermarks (ad text, stored fixed-position zones); never lettered
 
 
 class TypesetConfig(BaseModel):
@@ -178,6 +179,8 @@ class SfxConfig(BaseModel):
     """Sound effects: finding them among free text after OCR, and how the English version replaces them."""
 
     detect: bool = True  # free text that reads as onomatopoeia (config/sfx_text.toml) becomes kind "sfx"
+    sweep: bool = True  # also look for effects the detector missed: CRAFT over the whole page (ocr/sweep.py)
+    sweep_min_px: int = 24  # swept lettering with smaller letters is left alone (signs, background text)
     max_chars: int = 8  # longer text (letters only, punctuation ignored) is never taken for an SFX
     lexicon_size_ratio: float = 1.0  # a lexicon match needs glyphs >= this x the chapter's dialogue glyphs
     size_ratio: float = 0.0  # > 0: without a lexicon match, glyphs >= this x the dialogue glyphs ...

@@ -63,6 +63,7 @@ whose card lists no language have `langs = []` and a catalog note explaining why
 | `ocr-rec-manga-ocr-base` | recognizer | ja | 445 MB | Apache-2.0 | [kha-white/manga-ocr-base](https://huggingface.co/kha-white/manga-ocr-base)@`aa6573bd` | ~1.5 GB VRAM, 8 GB RAM; CPU ok |
 | `ocr-rec-manga-ocr-2025` | recognizer | ja | 122 MB | Apache-2.0 | [jzhang533/manga-ocr-base-2025](https://huggingface.co/jzhang533/manga-ocr-base-2025)@`1e64d5be` | ~1.5 GB VRAM, 8 GB RAM; CPU ok |
 | `inpaint-big-lama` | inpaint | — (script-agnostic) | 206 MB | Apache-2.0 | [Sanster/models — `add_big_lama`](https://github.com/Sanster/models/releases/download/add_big_lama/big-lama.pt) | — (pending H1) |
+| `sfx-detector-craft` | text detector (sound-effect sweep) | — (script-agnostic) | 78 MB | MIT | [JaidedAI/EasyOCR — `pre-v1.1.6`](https://github.com/JaidedAI/EasyOCR/releases/download/pre-v1.1.6/craft_mlt_25k.zip) (CRAFT, clovaai) | ~1 GB VRAM at a 1280 px tile; CPU ok (~3 s a tile) |
 
 Notes on the table:
 
@@ -97,7 +98,8 @@ the local daemon still proxies the requests).
 ## Install layout and licences
 
 Zip models are extracted into `paths.models_dir`, so a model lives at `<models_dir>/<id>/`; the
-LaMa file goes to `<models_dir>/lama/big-lama.pt`. hf models are downloaded into
+LaMa file goes to `<models_dir>/lama/big-lama.pt` and the CRAFT zip (read in place) to
+`<models_dir>/craft/craft_mlt_25k.zip`. hf models are downloaded into
 `<models_dir>/<id>/` with a `.installed.json` marker (revision, verified file count and sizes).
 Every download is sha256-verified against the catalog (`[model.files]` for hf entries, the zip hash
 for mirrored assets). The pipeline loads each Hugging Face model from that installed folder when
@@ -106,7 +108,9 @@ required models that are missing.
 
 Licences: all Apache-2.0 weights keep their upstream licences (the RT-DETR-v2 detector from the
 `ogkalu` Hugging Face account, PP-OCR v5/v6 and PaddleOCR-VL by PaddlePaddle, big-lama from
-Sanster's `models` repo, manga-ocr from `kha-white`). The Ollama LLMs are governed by the Gemma
+Sanster's `models` repo, manga-ocr from `kha-white`); CRAFT (`sfx-detector-craft`) is MIT
+(clovaai/CRAFT-pytorch, the weights as EasyOCR re-hosts them; the network is re-implemented in
+`ocr/craft.py`). The Ollama LLMs are governed by the Gemma
 Terms of Use and require agreeing to them in the Ollama client.
 
 Excluded on purpose (no catalog entries): the Paddle-inference builds of PP-OCR models (the repos

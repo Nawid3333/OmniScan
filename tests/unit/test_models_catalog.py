@@ -51,6 +51,8 @@ IDS = (
     # --- manga-ocr (card O1a)
     "ocr-rec-manga-ocr-base",
     "ocr-rec-manga-ocr-2025",
+    # --- the sound-effect sweep
+    "sfx-detector-craft",
 )
 
 LEGACY_IDS = IDS[:8]  # the entries that shipped before O1a
@@ -164,6 +166,10 @@ def test_real_catalog_matches_pipeline_contracts() -> None:
     assert entries["detector-comic-text-bubble"].upstream_repo == DetectConfig().repo
     assert entries["ocr-det-ppocrv5-server"].upstream_repo == OcrConfig().det_repo
     assert entries["ocr-rec-korean-ppocrv5-mobile"].upstream_repo == OcrConfig().rec_repo
+    assert entries["sfx-detector-craft"].install_path == "craft/craft_mlt_25k.zip"
+    assert (
+        entries["sfx-detector-craft"].role == "text_detector" and not entries["sfx-detector-craft"].required
+    )
 
 
 def test_real_catalog_ollama_names_match_profiles_and_judge() -> None:

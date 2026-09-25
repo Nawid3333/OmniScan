@@ -13,6 +13,7 @@ releases do for effects woven into the art.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from pathlib import Path
 
 from omniscan.core.config import TypesetConfig
@@ -77,6 +78,27 @@ def _grown(box: BBox, share: float) -> BBox:
     return BBox(x0=max(0, box.x0 - dx), y0=max(0, box.y0 - dy), x1=box.x1 + dx, y1=box.y1 + dy)
 
 
+def _clear_of(box: BBox, grown: BBox, others: Sequence[BBox]) -> BBox:
+    """`grown` (grown from `box`) cut back on the side facing each of `others` it reaches into — the
+    lettering of a neighbour the effect does not itself overlap keeps its room."""
+    x0, y0, x1, y1 = grown.x0, grown.y0, grown.x1, grown.y1
+    for other in others:
+        gap_x = max(other.x0 - box.x1, box.x0 - other.x1)
+        gap_y = max(other.y0 - box.y1, box.y0 - other.y1)
+        if max(gap_x, gap_y) < 0 or other.x1 <= x0 or other.x0 >= x1 or other.y1 <= y0 or other.y0 >= y1:
+            continue  # overlapping the effect itself, or out of reach
+        if gap_x >= gap_y:
+            if other.x0 >= box.x1:
+                x1 = min(x1, other.x0)
+            else:
+                x0 = max(x0, other.x1)
+        elif other.y0 >= box.y1:
+            y1 = min(y1, other.y0)
+        else:
+            y0 = max(y0, other.y1)
+    return BBox(x0=x0, y0=y0, x1=x1, y1=y1)
+
+
 def _arrangements(text: str, target: BBox, angle: float) -> list[tuple[list[str], float]]:
     """Candidate (lines, line spacing): one line; the words on separate lines; letters stacked."""
     words = text.split()
@@ -110,12 +132,18 @@ def _fits(width: float, height: float, target: BBox, angle: float) -> bool:
 
 
 def layout_sfx(
-    region: Region, text: str, cfg: TypesetConfig, *, font_factory: FontFactory = load_font
+    region: Region,
+    text: str,
+    cfg: TypesetConfig,
+    *,
+    neighbours: Sequence[BBox] = (),
+    font_factory: FontFactory = load_font,
 ) -> LayoutItem:
-    """The English effect filling the original's box (grown by `cfg.free_grow`) in the original's style."""
+    """The English effect filling the original's box (grown by `cfg.free_grow`, but not into the
+    `neighbours` — other regions' boxes) in the original's style."""
     path = sfx_font(region, cfg)
     factory = measurer(font_factory)
-    target = _grown(region.bbox, cfg.free_grow)
+    target = _clear_of(region.bbox, _grown(region.bbox, cfg.free_grow), neighbours)
     angle = region.angle
     best: tuple[int, list[str], float] | None = None
     for lines, spacing in _arrangements(text.upper(), target, angle):

@@ -16,7 +16,10 @@ from omniscan.core.schemas import IngestArtifact, RegionsArtifact, SlicesArtifac
 from omniscan.core.stage import ChapterContext
 from omniscan.detect.postprocess import Det, build_regions, merge_detections, tile_det_to_strip
 from omniscan.detect.tiles import keep_tiles, plan_tiles
-from omniscan.detect.watermark_position import reclassify_watermark_position_regions
+from omniscan.detect.watermark_position import (
+    add_watermark_zone_regions,
+    reclassify_watermark_position_regions,
+)
 from omniscan.gpu.groups import VISION_GROUP
 from omniscan.ingest.strip import load_strip
 from omniscan.watermark.resolve import resolve_watermark_regions
@@ -28,8 +31,9 @@ class DetectStage:
 
     name: ClassVar[str] = "detect"
     version: ClassVar[int] = (
-        3  # 2: strips decoded before the CUDA staging-buffer fix (2026-09-19) held duplicated pages
+        4  # 2: strips decoded before the CUDA staging-buffer fix (2026-09-19) held duplicated pages
         # 3: fixed-position watermark reclassification (F2c)
+        # 4: a watermark region for every stored fixed-position box (erased by inpaint)
     )
     gpu_group: ClassVar[str | None] = VISION_GROUP
 
@@ -91,6 +95,7 @@ class DetectStage:
         # a fixed-position watermark stored for this series (card F2c) reclassifies overlapping regions
         watermark_boxes = resolve_watermark_regions(WatermarkStore(ctx.series.work_dir).list(), ingest)
         regions = reclassify_watermark_position_regions(regions, watermark_boxes)
+        regions = add_watermark_zone_regions(regions, watermark_boxes, slices.slices)
         RegionsArtifact(regions=regions).save(ctx.paths.artifact("regions.json"))
         return {
             "tiles": float(len(tiles)),

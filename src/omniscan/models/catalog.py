@@ -17,7 +17,9 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from omniscan.core.config import DEFAULT_TOML, USER_CONFIG_DIR
 
 ModelKind = Literal["vision", "ocr", "inpaint", "llm"]
-ModelRole = Literal["detector", "text_line_detector", "recognizer", "vlm_ocr", "inpaint", "llm"]
+ModelRole = Literal[
+    "detector", "text_line_detector", "text_detector", "recognizer", "vlm_ocr", "inpaint", "llm"
+]
 ModelFormat = Literal["zip", "file", "hf", "ollama", "cloud"]
 Backend = Literal["cuda", "rocm", "mps", "xpu", "cpu"]
 
@@ -50,7 +52,7 @@ class ModelEntry(BaseModel):
     used_by: list[str] = Field(default_factory=list)
     # descriptive (optional) fields: the settings screen shows them, defaults keep old entries valid
     role: ModelRole | None = None  # what the model does inside the pipeline
-    family: str = ""  # ppocrv6 / ppocrv5 / paddleocr-vl / manga-ocr / comic-detector / lama / llm
+    family: str = ""  # ppocrv6 / ppocrv5 / paddleocr-vl / manga-ocr / comic-detector / craft / lama / llm
     size_class: str = ""  # tiny / small / medium / server / mobile / base / ...
     langs: list[str] = Field(
         default_factory=list

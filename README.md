@@ -13,12 +13,12 @@ packaged into CBZ/PDF.
 | ingest | working — `omniscan ingest` |
 | slice | working — `omniscan slice` |
 | promo filter | module only — `omniscan filter run` / `filter restore` |
-| watermark regions | module only — `omniscan watermark add` / `list` / `remove` |
+| watermark regions | working — `omniscan watermark add` / `list` / `remove`; watermarks (stored zones, ad/site text) are erased by `inpaint` |
 | glossary | working — `omniscan reference` (bootstrap from imported official `_reference_en` chapters) + `omniscan glossary list` / `export` / `import` / `propose` (from raw OCR text, no reference needed) |
 | story memory | working — `omniscan story summarize` (per-chapter summaries, fed automatically into later chapters' translate/judge prompts) |
 | chapter matching | working — `omniscan match chapters DIR_A DIR_B` (perceptual-hash alignment between two independently-sourced chapter sets) |
 | detect | working — `omniscan detect` (regions.json; no text yet) |
-| ocr | working — `omniscan ocr` (ocr.json) |
+| ocr | working — `omniscan ocr` (ocr.json; sound effects found by lexicon and a whole-page CRAFT sweep) |
 | translate | working — `omniscan translate` (candidate runs only; needs ocr.json from `omniscan ocr`) |
 | judge | working — `omniscan judge` (final.json) |
 | eval | working — `omniscan eval` (scores ocr.json/final.json against ground-truth SVG text layers) |

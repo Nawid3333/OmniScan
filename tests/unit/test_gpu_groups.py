@@ -17,7 +17,7 @@ from typer.testing import CliRunner
 
 import omniscan.cli
 from omniscan.cli import app
-from omniscan.core.config import Config, GpuConfig, OcrConfig, OllamaConfig, PathsConfig
+from omniscan.core.config import Config, GpuConfig, OcrConfig, OllamaConfig, PathsConfig, SfxConfig
 from omniscan.core.schemas import BBox, OcrLine, Region, RegionsArtifact, Slice, SlicesArtifact
 from omniscan.detect.model import Detector, RawDet
 from omniscan.ocr.lines import LineBox
@@ -28,8 +28,10 @@ runner = CliRunner()
 
 
 def cli_cfg(tmp_path: Path) -> Config:
-    """CPU-only config with all paths under tmp_path and an unreachable Ollama (nothing to evict)."""
+    """CPU-only config with all paths under tmp_path, an unreachable Ollama (nothing to evict) and no
+    sound-effect sweep (its own tests below switch it on)."""
     return Config(
+        sfx=SfxConfig(sweep=False),
         gpu=GpuConfig(device="cpu"),
         paths=PathsConfig(
             library_root=tmp_path / "library",
@@ -292,6 +294,37 @@ def test_vision_group_for_paddleocr_vl_loads_the_reader_not_the_detector(
     assert seen["reader"] == (cfg.ocr, manager.device, cfg.paths.models_dir)
     assert manager._groups[VISION_GROUP].est_gib == 6.6  # 3.0 detector + 3.6 for the 0.9 B VLM
     manager.release()
+
+
+def test_vision_group_loads_the_sound_effect_sweeper_when_the_sweep_is_on(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from omniscan.gpu.groups import VISION_GROUP, build_vram_manager
+    from omniscan.ocr.craft import CraftDetector
+
+    sweeper = object()
+    seen: dict[str, Any] = {}
+
+    def fake_craft_load(device: torch.device, models_dir: Path) -> object:
+        seen["craft"] = (device, models_dir)
+        return sweeper
+
+    monkeypatch.setattr(Detector, "load", lambda cfg_, device, models_dir=None: "detector")
+    monkeypatch.setattr(LineDetector, "load", lambda cfg_, device, models_dir=None: "lines")
+    monkeypatch.setattr(LineRecognizer, "load", lambda cfg_, device, models_dir=None: "recognizer")
+    monkeypatch.setattr(CraftDetector, "load", fake_craft_load)
+
+    cfg = cli_cfg(tmp_path).model_copy(update={"sfx": SfxConfig()})
+    manager = build_vram_manager(cfg)
+    models = manager.acquire(VISION_GROUP)
+
+    assert models["sfx_sweeper"] is sweeper
+    assert seen["craft"] == (manager.device, cfg.paths.models_dir)
+    assert manager._groups[VISION_GROUP].est_gib == 4.0  # CRAFT's fp32 activations on top
+    manager.release()
+
+    off = cli_cfg(tmp_path).model_copy(update={"sfx": SfxConfig(detect=False)})
+    assert "sfx_sweeper" not in build_vram_manager(off).acquire(VISION_GROUP)
 
 
 def test_vision_group_for_unknown_engine_raises(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

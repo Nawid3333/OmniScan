@@ -12,10 +12,13 @@ from PIL import Image, ImageDraw, ImageFont
 from omniscan.core.config import SfxConfig
 from omniscan.core.schemas import BBox, Lang, OcrLine, Region, RegionKind
 from omniscan.ocr.sfx import (
+    closest_sfx,
     default_sfx_text_paths,
     dialogue_glyph_size,
+    edit_distance,
     ink_angle,
     is_sfx,
+    jamo,
     levelled,
     load_sfx_lexicon,
     made_of_words,
@@ -346,3 +349,44 @@ def test_the_weight_does_not_depend_on_the_tilt() -> None:
     tilted = measure_lettering_style(tilted_strip, region("s", "두근두근", tilted_box, kind="sfx")).weight
     assert level is not None and tilted is not None
     assert tilted == pytest.approx(level, rel=0.1)  # strokes are measured levelled
+
+
+# ---------------------------------------------------------------- misread effects (closest_sfx)
+
+
+def test_jamo_splits_hangul_syllables_into_letters() -> None:
+    assert jamo("쾅") == "\u110f\u116a\u11bc"  # ㅋ ㅘ ㅇ
+    assert jamo("아") == "\u110b\u1161"  # no final consonant
+    assert jamo("ドン!") == "ドン!"  # anything else is kept
+
+
+def test_edit_distance_counts_single_letter_edits() -> None:
+    assert edit_distance("", "") == 0
+    assert edit_distance("kitten", "sitting") == 3
+    assert edit_distance(jamo("광"), jamo("쾅")) == 1  # one stroke of the initial consonant
+    assert edit_distance(jamo("철커"), jamo("철컥")) == 1  # a lost final consonant
+
+
+def test_closest_sfx_spells_a_misread_effect_as_the_lexicon_does() -> None:
+    assert closest_sfx("번쩍", KO, 1) == ("번쩍", 0, True)
+    assert closest_sfx("번찍", KO, 1) == ("번쩍", 1, True)
+    assert closest_sfx("스을", KO, 1) == ("스윽", 1, True)
+    assert closest_sfx("쿠구궁", KO, 0) == ("쿠구궁", 0, True)  # exact: nothing to correct
+
+
+def test_closest_sfx_prefers_a_repeated_sound() -> None:
+    # 쿵쿵 and 쿵쿡 are both one stroke from 쿵쿨; effects repeat a sound
+    assert closest_sfx("쿵쿨", frozenset({"쿵", "쿡"}), 1) == ("쿵쿵", 1, True)
+
+
+def test_closest_sfx_flags_equally_close_spellings() -> None:
+    spelling, edits, unique = closest_sfx("광", frozenset({"쾅", "꽝"}), 1) or ("", 0, True)
+    assert (edits, unique) == (1, False) and spelling in {"쾅", "꽝"}
+
+
+def test_closest_sfx_rejects_words_that_are_too_far() -> None:
+    assert closest_sfx("괜찮아요", KO, 2) is None
+    assert closest_sfx("다음날", KO, 2) is None
+    assert closest_sfx("번찍", KO, 0) is None
+    assert closest_sfx("", KO, 1) is None
+    assert closest_sfx("쾅", frozenset(), 1) is None

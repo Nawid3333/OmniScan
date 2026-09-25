@@ -868,3 +868,27 @@ upstream_revision = "1e64d5beb41ee6bee72c200838ddb93ad541482a"
 "special_tokens_map.json" = "b6d346be366a7d1d48332dbc9fdf3bf8960b5d879522b7799ddba59e76237ee3"
 "tokenizer_config.json" = "ca618a7be4e00dfed2d4aa46008eb8c892d2ec32f497c9d6c354b93af833ac0f"
 "vocab.txt" = "344fbb6b8bf18c57839e924e2c9365434697e0227fac00b88bb4899b78aa594d"
+
+[[model]]
+# not required: the sound-effect sweep (sfx.sweep) downloads it on first use; not mirrored yet, so the
+# mirror's 404 falls back to EasyOCR's own GitHub release (the same zip, sha256-checked)
+id = "sfx-detector-craft"
+name = "Sound-effect sweep (CRAFT)"
+kind = "vision"
+required = false
+format = "file"
+size_mb = 78
+license = "MIT"
+description = "Finds lettering anywhere on the page, so sound effects drawn into the art are translated too."
+used_by = ["sfx.sweep"]
+min_vram_gb = 1.0
+min_ram_gb = 4
+cpu_speed = "ok"
+role = "text_detector"
+family = "craft"
+notes = "CRAFT (clovaai/CRAFT-pytorch, MIT): the craft_mlt_25k weights EasyOCR ships"
+mirror_url = "https://github.com/Nawid3333/OmniScan/releases/download/models-v1/craft_mlt_25k.zip"
+sha256 = "8dc6a1c703a89ed56308ef742d26ebd45c656248cbbbda6e7fe60e569f873e65"
+bytes = 77251756
+upstream_url = "https://github.com/JaidedAI/EasyOCR/releases/download/pre-v1.1.6/craft_mlt_25k.zip"
+install_path = "craft/craft_mlt_25k.zip"

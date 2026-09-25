@@ -1,11 +1,12 @@
 """Tier-3 promo filter: reclassify detected regions that overlap a series' stored fixed-position
-watermark box (see watermark/store.py, watermark/resolve.py) as kind="watermark"."""
+watermark box (see watermark/store.py, watermark/resolve.py) as kind="watermark", and add a
+watermark region for every stored box so the inpaint stage erases it even where nothing was detected."""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 
-from omniscan.core.schemas import BBox, Region
+from omniscan.core.schemas import BBox, Region, Slice
 
 _MIN_OVERLAP_IOA = 0.5  # a region needs at least half its own area inside a stored watermark zone
 
@@ -43,3 +44,28 @@ def reclassify_watermark_position_regions(
         else region
         for region in regions
     ]
+
+
+def add_watermark_zone_regions(
+    regions: Sequence[Region], watermark_boxes: Sequence[BBox], slices: Sequence[Slice]
+) -> list[Region]:
+    """`regions` plus one kind="watermark" region (no text) per stored watermark box, ids continuing
+    after the last region's, each in the slice holding its centre after that slice's other regions; a
+    box whose centre lies in a blank or filtered slice (or outside every slice) adds nothing."""
+    out = list(regions)
+    for box in watermark_boxes:
+        centre = (box.y0 + box.y1) / 2
+        owner = next((s for s in slices if s.y0 <= centre < s.y1), None)
+        if owner is None or owner.blank or owner.filtered:
+            continue
+        out.append(
+            Region(
+                id=f"r{len(out) + 1:04d}",
+                slice_index=owner.index,
+                kind="watermark",
+                bbox=box,
+                reading_order=sum(1 for r in out if r.slice_index == owner.index),
+                confidence=1.0,
+            )
+        )
+    return out

@@ -1,8 +1,8 @@
 """VRAM model groups for the pipeline stages: one manager per command, model groups registered here.
 
 The vision group holds the comic detector plus the OCR models the configured engine needs (ppocr:
-line detector + recognizer; manga_ocr and paddleocr_vl: the crop reader); they are always resident
-together. Loaders
+line detector + recognizer; manga_ocr and paddleocr_vl: the crop reader) and, with `sfx.sweep`, the
+CRAFT sound-effect sweeper; they are always resident together. Loaders
 import their models lazily so importing this module — and `omniscan --help` — stays free of heavy
 model libraries.
 """
@@ -53,6 +53,10 @@ def build_vram_manager(cfg: Config) -> WarmupVramManager:
             ocr = {"reader": PaddleOcrVlReader.load(cfg.ocr, device, models_dir=cfg.paths.models_dir)}
         else:
             raise ValueError(f"OCR engine {engine!r} is not available yet")
+        if cfg.sfx.detect and cfg.sfx.sweep:
+            from omniscan.ocr.craft import CraftDetector  # deferred
+
+            ocr["sfx_sweeper"] = CraftDetector.load(device, cfg.paths.models_dir)
         return {"detector": Detector.load(cfg.detect, device, models_dir=cfg.paths.models_dir), **ocr}
 
     def load_inpaint(device: torch.device) -> dict[str, Any]:
@@ -64,8 +68,11 @@ def build_vram_manager(cfg: Config) -> WarmupVramManager:
 
     device = resolve_device(cfg.gpu.device)
     manager = WarmupVramManager(device, cfg.gpu.vram_budget_gib, ollama_url=cfg.ollama.local_url)
-    # 3.0 GiB comic detector + line OCR; paddleocr_vl's 0.9 B VLM (3.4 GiB fp32) on top makes 6.6
-    est_gib = 6.6 if cfg.ocr.engine == "paddleocr_vl" else 3.0
+    # 3.0 GiB comic detector + line OCR; paddleocr_vl's 0.9 B VLM (3.4 GiB fp32) on top makes 6.6; the
+    # sound-effect sweep's CRAFT adds ~1 GiB (fp32 VGG16 activations of a 1280 px tile)
+    est_gib = (6.6 if cfg.ocr.engine == "paddleocr_vl" else 3.0) + (
+        1.0 if cfg.sfx.detect and cfg.sfx.sweep else 0.0
+    )
     manager.register(VISION_GROUP, load_vision, est_gib=est_gib)
     manager.register(INPAINT_GROUP, load_inpaint, est_gib=2.0)
     # The warm-up runs on its own daemon thread and must not block the caller; resolve_device is the

@@ -19,6 +19,13 @@ through the real LaMa model — details and numbers in `docs/benchmarks/letterin
    free text, measured fill/outline colour, tilt and stroke weight, redraw in a matching face; `[sfx] mode`
    replace / subtitle / keep. Supersedes the 2026-09-23 "leave SFX as-is" decision (owner's request).
 5. Issue #6 (model-watch false positives) fixed on the same branch.
+6. Second request the same day ("Filter the watermarks … are you not replacing the sfx … I had an EasyOCR
+   pipeline"): **watermarks are erased** (`inpaint.remove_watermarks`; stored zones become regions on every
+   page; `detect` v4, `ocr` v5, `inpaint` v4) and a **whole-page SFX sweep** with CRAFT, EasyOCR's detector
+   (`ocr/craft.py`, `ocr/sweep.py`, catalog `sfx-detector-craft`, `sfx.sweep` on): detector alone 4/30
+   effects on synthetic painted pages, sweep 26/30 with the PP-OCRv5 Korean recogniser (bare-letters
+   reading + jamo-level fuzzy lexicon match), 0 stray regions; effects no longer grow into neighbours
+   (`typeset` v3). `scripts/sfx_sweep_check.py` reproduces it with this machine's models.
 **Not done: a run on real chapters** — see `docs/NEXT.md` "2026-09-25: lettering quality pass" for the three
 steps (GPU golden test, `scripts/lettering_demo.py`, re-run Solo Leveling and look).
 
