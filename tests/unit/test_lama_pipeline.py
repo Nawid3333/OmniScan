@@ -257,3 +257,67 @@ def test_two_regions_run_in_order_and_none_gives_an_empty_artifact() -> None:
     assert empty[0].items == [] and empty[1] == {}
     assert empty[2] == {"regions": 0.0, "skipped_too_large": 0.0, "mask_px": 0.0}
     assert fake2.calls == []
+
+
+# ---------------------------------------------------------------- no lettering as context
+
+
+def test_every_tile_masks_the_whole_region_not_just_its_own_part() -> None:
+    strip = noisy_strip(3, 1400, 800)
+    box = BBox(x0=100, y0=200, x1=613, y1=280)  # tiled: 513 px wide
+    flat_mask = torch.zeros((80, 513), dtype=torch.bool)
+    flat_mask[10:40, 20:490] = True
+    fake = FakeInpainter()
+    lama_regions(
+        strip,
+        artifact_with("r0001", box, needs_lama=True),
+        {"r0001": np_patch(flat_mask)},
+        fake,
+        InpaintConfig(),
+    )
+    grown = dilate_mask(flat_mask, 4)
+    tiles = _tile_boxes(box, 512 - 2 * 32, 32)
+    assert len(fake.calls) == len(tiles) == 2
+    for tile, (_image, mask) in zip(tiles, fake.calls, strict=True):
+        wx, _wy, _w, _h = window_origin(tile, 800, 1400, 512)
+        inside = grown[:, max(0, wx - box.x0) : wx + 512 - box.x0]
+        assert int(mask.sum()) == int(inside.sum())  # every masked pixel of the region inside the window
+
+
+def test_a_neighbouring_region_waiting_for_lama_is_masked_too() -> None:
+    strip = noisy_strip(5, 1400, 800)
+    first, second = BBox(x0=100, y0=100, x1=200, y1=150), BBox(x0=250, y0=100, x1=350, y1=150)
+    mask = torch.ones((50, 100), dtype=torch.bool)
+    inpaint = InpaintArtifact(
+        items=[
+            InpaintItem(region_id=rid, box=box, method="none", needs_lama=True)
+            for rid, box in (("r0001", first), ("r0002", second))
+        ]
+    )
+    fake = FakeInpainter()
+    lama_regions(strip, inpaint, {"r0001": np_patch(mask), "r0002": np_patch(mask)}, fake, InpaintConfig())
+    first_mask = fake.calls[0][1]
+    assert bool(first_mask[100:150, 250:350].all())  # r0002's lettering is no context for r0001
+    second_image = fake.calls[1][0]
+    wx, wy, _w, _h = window_origin(second, 800, 1400, 512)  # r0001 (x 100..200) is inside this window
+    done = second_image[:, 100 - wy : 150 - wy, 100 - wx : 200 - wx]
+    assert bool((done == torch.tensor((1, 2, 3), dtype=torch.uint8)[:, None, None]).all())  # its LaMa result
+
+
+def test_flat_filled_neighbours_are_clean_context() -> None:
+    strip = noisy_strip(8, 1400, 800)
+    lama_box, flat_box = BBox(x0=100, y0=100, x1=200, y1=150), BBox(x0=250, y0=100, x1=350, y1=150)
+    mask = torch.ones((50, 100), dtype=torch.bool)
+    flat_pixels = np.full((50, 100, 3), 200, dtype=np.uint8)
+    inpaint = InpaintArtifact(
+        items=[
+            InpaintItem(region_id="r0001", box=lama_box, method="none", needs_lama=True),
+            InpaintItem(region_id="r0002", box=flat_box, method="flat", fill=(200, 200, 200)),
+        ]
+    )
+    fake = FakeInpainter()
+    lama_regions(
+        strip, inpaint, {"r0001": np_patch(mask), "r0002": (flat_pixels, mask.numpy())}, fake, InpaintConfig()
+    )
+    ((image, _mask),) = fake.calls
+    assert bool((image[:, 100:150, 250:350] == 200).all())
