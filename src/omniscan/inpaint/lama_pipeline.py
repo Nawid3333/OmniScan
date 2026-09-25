@@ -11,14 +11,7 @@ import torch.nn.functional as F  # noqa: N812 — torch's standard alias
 
 from omniscan.core.config import InpaintConfig
 from omniscan.core.schemas import BBox, InpaintArtifact, InpaintItem
-
-
-def dilate_mask(mask: torch.Tensor, px: int) -> torch.Tensor:
-    """Bool [h, w] mask grown by `px` on all sides (max pool), same shape and device."""
-    if px <= 0:
-        return mask.clone()
-    grown = F.max_pool2d(mask.float()[None, None], kernel_size=2 * px + 1, stride=1, padding=px)
-    return grown[0, 0] > 0
+from omniscan.gpu.morph import dilate as dilate_mask
 
 
 def window_origin(box: BBox, strip_w: int, strip_h: int, window: int) -> tuple[int, int, int, int]:

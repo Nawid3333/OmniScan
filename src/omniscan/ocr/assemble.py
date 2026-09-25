@@ -10,6 +10,7 @@ import torch
 
 from omniscan.core.schemas import RGB, BBox, Lang, OcrLine, Region
 from omniscan.detect.postprocess import Box
+from omniscan.gpu.morph import luminance, otsu_threshold
 from omniscan.ocr.lines import LineBox
 
 _MIN_INK_PX = 16  # a smaller minority cluster is more likely noise/anti-aliasing than real ink
@@ -98,9 +99,8 @@ def _sample_text_color(strip: torch.Tensor, boxes: Sequence[Box]) -> RGB | None:
     pixels = torch.cat([crop.reshape(3, -1) for crop in crops], dim=1).float()
     if pixels.shape[1] < _MIN_INK_PX:
         return None
-    luminance = 0.299 * pixels[0] + 0.587 * pixels[1] + 0.114 * pixels[2]
-    threshold = _otsu_threshold(luminance)
-    low = luminance < threshold
+    luma = luminance(pixels)
+    low = luma < otsu_threshold(luma)
     low_count = int(low.sum())
     high_count = pixels.shape[1] - low_count
     if low_count == 0 or high_count == 0:
@@ -110,28 +110,6 @@ def _sample_text_color(strip: torch.Tensor, boxes: Sequence[Box]) -> RGB | None:
         return None
     values = minority.median(dim=1).values.round().tolist()
     return (int(values[0]), int(values[1]), int(values[2]))
-
-
-def _otsu_threshold(luminance: torch.Tensor) -> float:
-    """The luminance cutoff maximising between-class variance of a two-way split (Otsu's method).
-
-    `luminance < cutoff` is the "low" side, `luminance >= cutoff` the "high" side: `torch.histc`'s
-    256 bins each span exactly one luminance unit ([i, i+1) for bin i), so the bin index maximising
-    variance must be offset by +1 to become a correct exclusive cutoff — a value sitting exactly on
-    an integer luminance (e.g. 40.0, in bin 40) must land on the same side as the rest of its bin.
-    """
-    hist = torch.histc(luminance, bins=256, min=0, max=256)
-    weights = torch.arange(256, dtype=torch.float32, device=hist.device)
-    cum_weight = torch.cumsum(hist, dim=0)
-    cum_moment = torch.cumsum(hist * weights, dim=0)
-    total_weight = cum_weight[-1]
-    total_moment = cum_moment[-1]
-    weight_lo = cum_weight.clamp(min=1e-6)
-    weight_hi = (total_weight - cum_weight).clamp(min=1e-6)
-    mean_lo = cum_moment / weight_lo
-    mean_hi = (total_moment - cum_moment) / weight_hi
-    variance = cum_weight * (total_weight - cum_weight) * (mean_lo - mean_hi) ** 2
-    return float(torch.argmax(variance)) + 1.0
 
 
 def _line_bbox(box: Box, strip_width: int, strip_height: int) -> BBox:

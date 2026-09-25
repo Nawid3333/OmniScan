@@ -39,9 +39,17 @@ def line_mask(
     return mask
 
 
-def flat_fill(crop: torch.Tensor, mask: torch.Tensor, *, flat_tol: float, min_ring_px: int) -> FlatResult:
-    """Replace masked pixels with the ring's median colour when the ring is uniform enough."""
-    ring = crop[:, ~mask]
+def flat_fill(
+    crop: torch.Tensor,
+    mask: torch.Tensor,
+    *,
+    flat_tol: float,
+    min_ring_px: int,
+    ring_mask: torch.Tensor | None = None,
+) -> FlatResult:
+    """Replace masked pixels with the ring's median colour when the ring is uniform enough; the ring is
+    `ring_mask` when given (e.g. the band around glyphs), else every unmasked pixel of the crop."""
+    ring = crop[:, ~mask if ring_mask is None else ring_mask]
     if not bool(mask.any()) or ring.shape[1] < min_ring_px:
         return FlatResult(crop.clone(), None, False)
     ring_f = ring.float()
