@@ -9,8 +9,9 @@ reads as a sound effect (`is_sfx`):
   most `max_chars` long, and
 - they are made of lexicon words (config/sfx_text.toml; 쾅쾅쾅 and 두근두근 are repeats of 쾅 and 두근)
   lettered at least `lexicon_size_ratio` x as large as the chapter's dialogue, or
-- with no lexicon match, the text is very short (`size_max_chars`) and lettered at least `size_ratio`
-  x as large as the dialogue — big standalone lettering in the art is an effect.
+- with no lexicon match and `size_ratio` set (off by default: a big shop sign or title would pass
+  too), the text is very short (`size_max_chars`) and lettered at least `size_ratio` x as large as
+  the dialogue — big standalone lettering in the art is usually an effect.
 
 `measure_lettering_style` then reads the look of every effect and every free-text caption off the
 strip — fill and outline colour (a white caption with a black outline is not "black text"), and for
@@ -128,7 +129,9 @@ def is_sfx(region: Region, words: frozenset[str], reference: float | None, cfg: 
     ratio = size / reference if size is not None and reference else None
     if made_of_words(normalise(region.text), words):
         return ratio is None or ratio >= cfg.lexicon_size_ratio
-    return ratio is not None and count <= cfg.size_max_chars and ratio >= cfg.size_ratio
+    return (
+        cfg.size_ratio > 0 and ratio is not None and count <= cfg.size_max_chars and ratio >= cfg.size_ratio
+    )
 
 
 def reclassify_sfx_regions(

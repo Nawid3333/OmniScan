@@ -7,7 +7,7 @@ Each has the **default I will use until you answer**, so nothing is blocked unle
 - At a natural pause I ask 2–3 relevant questions (not all at once), then record your answer in the *Decisions* table
   at the bottom with the date, and delete the question from the lists.
 - A "blocks" entry means real work cannot proceed or cannot be validated without your answer.
-- Ordered roughly by how soon the answer matters. Last updated 2026-09-23.
+- Ordered roughly by how soon the answer matters. Last updated 2026-09-25.
 
 ## A. Data and accounts (needed soon)
 
@@ -50,7 +50,6 @@ Each has the **default I will use until you answer**, so nothing is blocked unle
 | D1 | **Honorifics**: keep `-nim / -ssi / hyung / noona / sunbae` romanised (current) or localise (Mr./Senior/Brother)? Per-series override? | Prompt text, glossary policy | Keep romanised |
 | D2 | **Name romanisation**: Revised Romanization with hyphenated given names (Seong-jin) — or your preference? Family name first or last? | Glossary bootstrap, consistency across chapters | Revised Romanization, given-name hyphen, family name first as in the source |
 | D3 | **Profanity / adult content**: keep as written, soften, or per-series? Cloud models may refuse some content — fall back to a local model automatically? | Judge/candidate selection, refusal handling | Keep as written; fall back to local on refusal |
-| D4 | **SFX**: translate to English onomatopoeia, keep the original with a small caption, or full stylised replacement (M10)? What order of priority? | Whether SFX is skipped in v1 | Translate candidates only; typeset later |
 | D5 | **Judge default**: run the cloud judge on every line, or only on lines where candidates disagree/flags exist (saves tokens)? | Cost, speed | Only on disagreements/flags |
 | D6 | **Human review gates**: fully automatic, or a mandatory pause after the first chapter of a series for glossary approval, and before export? | Pipeline shape, UI | Pause after chapter 1 for glossary approval; otherwise automatic |
 | D7 | **Reference mode**: auto-lock terms consistent in ≥ 3 reference chapters — right threshold? Whose translation counts as authoritative (official release vs fan)? | Glossary quality | 3 chapters, official release first |
@@ -61,10 +60,8 @@ Each has the **default I will use until you answer**, so nothing is blocked unle
 | ID | Question | Blocks / why it matters | Default until answered |
 |---|---|---|---|
 | E1 | **Output format**: keep webtoon slices (target ~3000 px), one continuous strip, or per-page? JPEG quality / PNG / WebP? CBZ or PDF as the default package? | Export stage, slice height | Slices of ~3000 px, JPEG q95, CBZ on request |
-| E2 | **Fonts**: free OFL defaults, or your own (commercial) lettering fonts? Per-series font roles? | Typesetter look; fonts cannot be bundled if commercial | OFL defaults, your fonts pluggable |
-| E3 | Can you show **2–3 reference pages of the look you want** (official English release style you like)? | Typesetting targets (size, stroke, alignment) | A neutral webtoon style |
+| E3 | Can you show **2–3 reference pages of the look you want** (official English release style you like)? | Tuning the presets (size, stroke, alignment) against a look you like | The `webtoon` preset (Mali, mixed case); `manga` (Kalam capitals) for Japanese sources |
 | E4 | **Watermarks**: do you remove source-site watermarks? Which series have fixed-position ones? | B15 usage, C11 priority | Not removed |
-| E5 | **Quality bar**: "indistinguishable from an official release" or "clean and readable"? | Inpainting model (LaMa vs diffusion), time per chapter | Clean and readable first, upgrade later |
 | E6 | **Speed target**: minutes per chapter you can accept (overnight batches?) | Batch sizing, cloud vs local choices | No target yet |
 
 ## F. Process and scope
@@ -103,4 +100,7 @@ Each has the **default I will use until you answer**, so nothing is blocked unle
 | 2026-09-23 | SFX / incidental art text (M10) | Leave as-is for now: no detector retraining, no heuristic reclassification. Real dialogue keeps translating normally; incidental art text the detector picks up (e.g. a background sign) stays untranslated, same as today. Revisit if it becomes a real quality issue on more real chapters |
 | 2026-09-23 | `omniscan serve` torch-free (F14) | Fixed rather than deferred: `inpaint/patches.py`'s `load_patches` never touched torch in its own body — only `save_patches` did — so the module-level `import torch` was moved into a `TYPE_CHECKING` guard, making `load_patches` (and `omniscan serve`, which only calls it) importable without torch. Card F14, merged |
 | 2026-09-24 | Portability (P1/P2, B2, B3, M13) | **Reverted.** Owner: "just make this program work on my setup, strip everything else." The project now explicitly targets one machine (Windows 11 + AMD ROCm gfx1201) — `cpu`/`cuda`/`mps` torch extras removed from `pyproject.toml`, docs rewritten to drop the "any OS/any GPU" framing. `.github/workflows/ci.yml` was rewritten the same day and, once pushed, verified green (F15, resolved 2026-09-25) |
+| 2026-09-25 | Quality bar (E5) | Owner: output must look like an official translation — "no weird artefacts, good font matching and SFX text stylistically matched in translation like official translations would do". Built: glyph-precise cleaning, balloon-shaped lettering with chapter-wide sizes, lettering presets, style-matched SFX (`docs/DECISIONS.md` Pipeline design, `docs/benchmarks/lettering-quality.md`) |
+| 2026-09-25 | SFX (D4, M10) | Full stylised replacement, as official releases do: effects are found among free text by an onomatopoeia lexicon after OCR and redrawn in the original's colours, outline, tilt and stroke weight; `[sfx] mode = "subtitle"` (small translation next to the kept original) and `"keep"` remain available. **Supersedes the 2026-09-23 "leave as-is" decision** at the owner's request |
+| 2026-09-25 | Fonts (E2) | Free OFL/Apache presets shipped (`webtoon`: Mali; `manga`: Kalam in capitals; SFX faces by weight), every role overridable with the owner's own licensed fonts (`[typeset] font_dialogue = "<path>"`, ...) — commercial fonts are never committed |
 | 2026-09-24 | OCR per-language defaults | Global fix chosen over a per-series opt-in: `core/config.py` now resolves `ocr.engine`/`det_model`/`rec_model` from `ocr.lang` (ko/zh → paddleocr_vl, ja → ppocr-v6-medium) whenever a TOML source sets `lang` without its own engine choice — closes F10 and the gap where a zh/ja series with no series.toml override silently got Korean-tuned OCR |

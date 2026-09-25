@@ -79,13 +79,28 @@ Every key in `config/default.toml`:
 | `inpaint.mask_dilate_px` | line boxes are grown by this to form the text mask, in px | yes |
 | `inpaint.flat_tol` | 90th-percentile colour deviation of the ring under which a flat fill is accepted | yes |
 | `inpaint.min_ring_px` | fewer ring pixels than this → no flat fill | yes |
+| `inpaint.glyph_mask` | remove only the lettering's own pixels (+ outline, anti-aliasing) instead of whole line boxes | yes |
+| `inpaint.glyph_grow`, `inpaint.glyph_grow_sfx` | the letters are grown by at most this many stroke widths (text / sound effects) | yes |
+| `inpaint.glyph_grow_min_px`, `inpaint.glyph_grow_max_px`, `inpaint.glyph_grow_max_sfx_px` | limits of that growth, in px | yes |
+| `inpaint.glyph_ring_px` | band around the glyphs that must be flat for a flat fill of just the glyphs, in px | yes |
 | `typeset.min_px` | smallest font size tried, in px | yes (`omniscan typeset`) |
-| `typeset.max_px` | largest font size tried, in px | yes (`omniscan typeset`) |
+| `typeset.max_px` | largest dialogue size, in px | yes (`omniscan typeset`) |
 | `typeset.line_spacing` | line pitch as a multiple of the font size | yes (`omniscan typeset`) |
-| `typeset.margin_px` | inset of the bubble's inscribed rectangle, in px | yes (`omniscan typeset`) |
+| `typeset.margin_px` | smallest gap between lettering and the balloon's edge, in px | yes (`omniscan typeset`) |
+| `typeset.bubble_padding` | share of a balloon's width / height kept free on each side | yes (`omniscan typeset`) |
 | `typeset.free_grow` | free text / SFX boxes are grown by this fraction on every side | yes (`omniscan typeset`) |
 | `typeset.stroke_free_px` | outline width of free-standing text, in px | yes (`omniscan typeset`) |
-| `typeset.stroke_sfx_px` | outline width of sound effects, in px | yes (`omniscan typeset`) |
+| `typeset.stroke_sfx_px` | thinnest outline of sound effects, in px (large effects scale it up) | yes (`omniscan typeset`) |
+| `typeset.style` | lettering preset: `auto` (manga for Japanese sources, webtoon otherwise), `webtoon`, `manga` | yes (`omniscan typeset`) |
+| `typeset.uppercase` | letter dialogue in capitals: `auto` (the style's convention), `always`, `never` | yes (`omniscan typeset`) |
+| `typeset.font_dialogue`, `font_thought`, `font_shout`, `font_narration`, `font_free`, `font_sfx` | your own font for a role: a file in the fonts folder or an absolute path (empty = the preset) | yes (`omniscan typeset`) |
+| `typeset.size_spread`, `typeset.shout_spread` | dialogue / shouts at most this × the chapter's typical balloon size (0 = no limit) | yes (`omniscan typeset`) |
+| `typeset.hyphenate` | hyphenate a word that fits no line even at `min_px` instead of overflowing | yes (`omniscan typeset`) |
+| `typeset.sfx_max_px` | largest sound-effect lettering, in px | yes (`omniscan typeset`) |
+| `sfx.detect` | turn free text that reads as onomatopoeia (`config/sfx_text.toml`) into sound effects | yes (`omniscan ocr`) |
+| `sfx.max_chars`, `sfx.lexicon_size_ratio` | longest effect (letters) and how large vs the dialogue a lexicon match must be lettered | yes (`omniscan ocr`) |
+| `sfx.size_ratio`, `sfx.size_max_chars` | `size_ratio` > 0: very short lettering this much larger than the dialogue is an effect too (off by default: big signs pass) | yes (`omniscan ocr`) |
+| `sfx.mode` | `replace` (erase and redraw in English), `subtitle` (keep the art, small translation below), `keep` | yes (`omniscan inpaint`, `typeset`) |
 | `ocr.det_repo` | Hugging Face repo of the PP-OCRv5 text-line detector | yes (`omniscan ocr`) |
 | `ocr.det_revision` | pin the detector to a specific Hugging Face revision | yes (empty = latest) |
 | `ocr.rec_repo` | Hugging Face repo of the recognition model; also recorded per line as its engine | yes (`omniscan ocr`) |
@@ -362,10 +377,13 @@ catalog and the qualification suite (card O1c) are the source of truth.
 ### `omniscan inpaint`
 
 Remove the source text from every OCR region and record the result (`inpaint.json` + `patches.npz`).
-For every region with text lines a mask covers its text; where the surroundings of the text are one
-flat colour (a white or dark bubble interior) the masked pixels are replaced by exactly that colour.
-Regions on textured art cannot be cleaned this way — they are recorded with a `needs_lama` flag, and
-SFX regions always are.
+Where the surroundings of a region's line boxes are one flat colour (a white or dark bubble interior)
+the boxes are filled with exactly that colour. Otherwise only the lettering itself is removed
+(`inpaint.glyph_mask`): its ink is found from the pixels, together with whatever the ink encloses and
+the outline around the letters, and when the band around those glyphs is flat they alone are filled.
+The rest — lettering on textured art — is recorded with a `needs_lama` flag and its glyph mask, so
+LaMa only rebuilds the letters, not the art around them. Sound effects are erased only with
+`sfx.mode = "replace"` (the default).
 
 With `--lama` a second stage (`inpaint_lama`) cleans exactly those regions with the LaMa model
 (TorchScript `big-lama.pt`, Apache-2.0): for every such region a fixed 512×512 window of the strip
@@ -373,7 +391,9 @@ around it is inpainted on the GPU in fp32 and stored as a patch in `patches_lama
 `inpaint_lama.json`); export applies `patches.npz` first and `patches_lama.npz` after it. The weights
 (205 MB) are downloaded from `inpaint.lama_url` into `paths.models_dir/lama/` on first use and their
 sha256 is checked; regions wider or taller than
-`inpaint.lama_window - 2 * inpaint.lama_context_px` are skipped. The pixels themselves stay out of
+`inpaint.lama_window - 2 * inpaint.lama_context_px` are tiled. No lettering serves as context: each
+window masks every region still to be cleaned that reaches into it, and finished regions (flat or LaMa)
+are written back before the next one runs. The pixels themselves stay out of
 the JSON: the `.npz` files hold one cleaned crop plus its mask per region, and the later export stage
 applies them. Like `translate`, this needs `ocr.json`, which no stage produces yet.
 
@@ -814,19 +834,55 @@ composites.
 | `--chapter`, `-c <str>` | chapter folder name; repeatable. Default: all |
 | `--force` | re-run even if up to date |
 
-Needs `ocr.json`, `final.json` and `inpaint.json` in the chapter work dir; a chapter missing one of
-them fails (exit 1). Per region, in reading order: bubble text is fitted into the bubble's inscribed
-ellipse box (the original text box wins when it is strictly larger), free text and SFX into their text
-box grown by `typeset.free_grow`. The font role follows the region kind (bubble text → dialogue,
-free text → free, SFX → sfx) and with it the default font. The colour is the region's `text_color`
-when it carries one, else black on light bubble fills and white on dark ones (decided from the
-inpaint fill's luminance); free text and SFX are white with an outline
-(`typeset.stroke_free_px` / `typeset.stroke_sfx_px`). Watermark regions are never laid out. Writes
-`layout.json` + `manifest.json` in the chapter work dir. Exit codes as for `ingest`.
+Needs `ocr.json`, `final.json` and `inpaint.json` in the chapter work dir (and reads
+`inpaint_lama.json` when it exists, to know which sound effects were erased); a chapter missing one
+of them fails (exit 1). Per region, in reading order: bubble text is shaped to an ellipse inside the
+bubble (see "Lettering and sound effects" below), free text is fitted into its text box grown by
+`typeset.free_grow`, sound effects follow `sfx.mode`. The colour is the region's measured
+`text_color` when it carries one, else black on light bubble fills and white on dark ones; free text
+gets an outline (`typeset.stroke_free_px`) in its measured outline colour, or black/white by contrast.
+Watermark regions are never laid out. Writes `layout.json` + `manifest.json` in the chapter work dir.
+Exit codes as for `ingest`.
 
 ```bash
 uv run omniscan typeset DemoSeries
 ```
+
+### Lettering and sound effects
+
+**Balloons.** Lettering follows the balloon the way a professional letterer sets it: every line's width
+is the balloon's width at that height (an ellipse inside the bubble, `typeset.bubble_padding` kept free),
+so lines are short at the top and bottom and longest in the middle; every line count is tried, and
+among the layouts that let the text grow (nearly) largest the one that breaks best wins — after a
+sentence or a clause, never after "the"/"a"/"to", no little word stranded on its own line. A word that
+fits no line even at `typeset.min_px` is hyphenated. Sizes are kept consistent across the chapter:
+dialogue is at most `typeset.size_spread` × the chapter's typical balloon size (shouted lines —
+capitals, or ending in "!!" — `typeset.shout_spread`).
+
+**Styles and fonts.** `typeset.style` picks a preset: `webtoon` (Mali, mixed case — the clean look of
+official English webtoons) or `manga` (Kalam in capitals — the hand-lettered look official English manga
+get from CC Wild Words); `auto` uses `manga` for Japanese sources. Any role can use your own licensed
+font:
+
+```toml
+[typeset]
+style = "manga"
+font_dialogue = "C:/Users/me/Fonts/CCWildWords-Regular.ttf"
+```
+
+**Sound effects.** The text detector does not report sound effects on real pages, so after OCR a
+free-text region becomes a sound effect when its letters are onomatopoeia from `config/sfx_text.toml`
+(ko/ja/zh; repeats and stretched letters count: 쾅쾅쾅, 쿠구구궁, ドドド; add your own words in
+`~/.config/omniscan/sfx_text.toml`). The OCR stage measures each effect's fill and outline colour, tilt
+and stroke weight; the translator is asked for the English effect an official release would letter;
+and with `sfx.mode = "replace"` the English effect is drawn over the erased original in that style —
+same colours and outline, same tilt, a heavy / bold-brush / light-marker face matching the original's
+weight, stacked letter by letter when the original ran down a tall column. Where the original stays on
+the page (`sfx.mode = "subtitle"`, or it could not be erased) a small outlined translation is set just
+below it; `sfx.mode = "keep"` leaves effects untranslated.
+
+To look at the result without a chapter: `uv run python scripts/lettering_demo.py` letters synthetic
+pages over drawn art with this exact code (LaMa included) into `data/lettering_demo/`.
 
 ### `omniscan eval`
 
