@@ -73,6 +73,7 @@ glyph_grow_min_px = 2
 glyph_grow_max_px = 12
 glyph_grow_max_sfx_px = 32
 glyph_ring_px = 4
+remove_watermarks = true
 
 [typeset]
 min_px = 14
@@ -92,6 +93,8 @@ sfx_max_px = 240
 
 [sfx]
 detect = true
+sweep = true
+sweep_min_px = 24
 max_chars = 8
 lexicon_size_ratio = 1.0
 size_ratio = 0.0

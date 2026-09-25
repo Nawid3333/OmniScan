@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from omniscan.core.schemas import BBox, Region, RegionKind
+from omniscan.core.schemas import BBox, Region, RegionKind, Slice
 from omniscan.detect.watermark_position import (
     _ioa,
+    add_watermark_zone_regions,
     reclassify_watermark_position_regions,
     region_overlaps_watermark,
 )
@@ -109,3 +110,32 @@ def test_a_position_reclassified_region_is_excluded_from_translation() -> None:
     (watermark,) = reclassify_watermark_position_regions([stamp], [WATERMARK])
     assert watermark.kind == "watermark"
     assert translatable([watermark]) == []
+
+
+# ---------------------------------------------------------------- add_watermark_zone_regions
+
+
+def test_every_stored_box_becomes_a_watermark_region_in_its_slice() -> None:
+    slices = [Slice(index=0, y0=0, y1=500), Slice(index=1, y0=500, y1=1000)]
+    detected = [
+        region("free_text", BBox(x0=0, y0=600, x1=50, y1=650), "r0001").model_copy(update={"slice_index": 1})
+    ]
+    zones = [BBox(x0=0, y0=450, x1=100, y1=540), BBox(x0=0, y0=900, x1=100, y1=990)]
+    out = add_watermark_zone_regions(detected, zones, slices)
+    assert out[0] is detected[0]
+    assert [(r.id, r.kind, r.slice_index, r.bbox, r.reading_order) for r in out[1:]] == [
+        ("r0002", "watermark", 0, zones[0], 0),  # centre y 495: slice 0
+        ("r0003", "watermark", 1, zones[1], 1),  # after the slice's detected region
+    ]
+    assert all(not r.lines and not r.text for r in out[1:])
+    assert translatable(out[1:]) == []
+
+
+def test_no_zone_region_in_a_blank_or_filtered_slice() -> None:
+    slices = [Slice(index=0, y0=0, y1=100, blank=True), Slice(index=1, y0=100, y1=200, filtered=True)]
+    zones = [
+        BBox(x0=0, y0=10, x1=50, y1=40),
+        BBox(x0=0, y0=110, x1=50, y1=140),
+        BBox(x0=0, y0=300, x1=9, y1=320),
+    ]
+    assert add_watermark_zone_regions([], zones, slices) == []

@@ -27,7 +27,7 @@ from tests.fixtures.korean_pages import KOREAN_LINES
 
 AD_1 = '구글검색 "먹튀검증 스포위키"'  # found on Solo Leveling raw pages (card F2b)
 AD_2 = "라이브스코어 스포츠중계 가상토토 전문가 정기/오목 웹툰"
-SEED_PATTERNS = ("구글검색", "라이브스코어", "가상토토", "스포위키")
+SEED_PATTERNS = ("구글검색", "라이브스코어", "가상토토", "스포위키", "http", "www.")
 
 
 def write_patterns(path: Path, *patterns: str) -> Path:

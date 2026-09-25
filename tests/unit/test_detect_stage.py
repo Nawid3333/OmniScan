@@ -235,6 +235,7 @@ def test_detect_stage_reclassifies_fixed_position_watermarks(tmp_path: Path) -> 
     # page 1 and tile 4's at (20, 230, 80, 270). A stored zone at fractions (0.2, 0.2, 0.8, 0.4)
     # resolves to x 20..80, y file.y0+30..file.y0+60: on page 1 that is (20, 30, 80, 60), which
     # holds 60x30 of the first region's own 60x40 area (IoA 0.75); the second region stays clear.
+    # The zone itself also becomes a watermark region on every page, so inpaint erases it everywhere.
     cfg = stage_cfg(tmp_path)
     script = {
         0: [RawDet("text_free", 0.6, (20, 30, 80, 70))],
@@ -248,10 +249,18 @@ def test_detect_stage_reclassifies_fixed_position_watermarks(tmp_path: Path) -> 
     outcome = run_stage(DetectStage(), ctx)
 
     assert outcome.status == "done"
-    assert outcome.metrics["regions"] == 2.0 and outcome.metrics["watermarked"] == 1.0
+    assert outcome.metrics["regions"] == 5.0 and outcome.metrics["watermarked"] == 4.0
     artifact = RegionsArtifact.load(ctx.paths.artifact("regions.json"))
     kinds = {(r.bbox.x0, r.bbox.y0, r.bbox.x1, r.bbox.y1): r.kind for r in artifact.regions}
-    assert kinds == {(20, 30, 80, 70): "watermark", (20, 230, 80, 270): "free_text"}
+    assert kinds == {
+        (20, 30, 80, 70): "watermark",
+        (20, 230, 80, 270): "free_text",
+        (20, 30, 80, 60): "watermark",
+        (20, 180, 80, 210): "watermark",
+        (20, 330, 80, 360): "watermark",
+    }
+    assert [r.id for r in artifact.regions] == ["r0001", "r0002", "r0003", "r0004", "r0005"]
+    assert all(not r.lines and not r.text for r in artifact.regions[2:])
 
 
 def test_detect_stage_invalidated_by_a_new_watermark_region(cfg: Config) -> None:

@@ -141,7 +141,7 @@ def test_inpaint_stage_missing_inputs_fail_with_documented_messages(cfg: Config)
     assert "ocr.json missing — run the ocr stage first" in outcome.error
 
 
-def test_inpaint_stage_skips_watermark_and_sfx_needs_lama(cfg: Config) -> None:
+def test_inpaint_stage_erases_watermark_and_sfx(cfg: Config) -> None:
     write_pages(cfg)
     ctx = make_context(cfg, SERIES, CHAPTER)
     assert run_stage(IngestStage(), ctx).status == "done"
@@ -168,16 +168,42 @@ def test_inpaint_stage_skips_watermark_and_sfx_needs_lama(cfg: Config) -> None:
 
     outcome = run_stage(InpaintStage(), ctx)
     assert outcome.status == "done"
-    assert outcome.metrics["regions"] == 1.0
-    assert outcome.metrics["flat"] == 0.0
+    assert outcome.metrics["regions"] == 2.0
+    assert outcome.metrics["flat"] == 1.0
     assert outcome.metrics["needs_lama"] == 1.0
-    assert outcome.metrics["skipped"] == 1.0
-    assert outcome.metrics["mask_px"] == 3456.0  # the sfx line box dilated by 3
+    assert outcome.metrics["skipped"] == 0.0
     artifact = InpaintArtifact.load(work / "inpaint.json")
-    (item,) = artifact.items
-    assert item.region_id == "r0002"
-    assert item.method == "none"
-    assert item.needs_lama is True
+    # the watermark's box sits on the flat page: filled; an sfx box is never flat-filled whole
+    assert [(item.region_id, item.method, item.needs_lama) for item in artifact.items] == [
+        ("r0001", "flat", False),
+        ("r0002", "none", True),
+    ]
+    assert artifact.items[1].mask_px == 3456  # the sfx line box dilated by 3
+
+
+def test_inpaint_stage_keeps_watermarks_when_told_to(cfg: Config) -> None:
+    cfg = cfg.model_copy(update={"inpaint": cfg.inpaint.model_copy(update={"remove_watermarks": False})})
+    write_pages(cfg)
+    ctx = make_context(cfg, SERIES, CHAPTER)
+    assert run_stage(IngestStage(), ctx).status == "done"
+    write_slices(cfg)
+    work = cfg.paths.work_root / SERIES / CHAPTER
+    RegionsArtifact(
+        regions=[
+            Region(
+                id="r0001",
+                slice_index=0,
+                kind="watermark",
+                bbox=LINE_BOX,
+                lines=[OcrLine(bbox=LINE_BOX, text="wm", score=0.9, engine="test")],
+            )
+        ]
+    ).save(work / "ocr.json")
+
+    outcome = run_stage(InpaintStage(), ctx)
+    assert outcome.status == "done"
+    assert outcome.metrics["regions"] == 0.0 and outcome.metrics["skipped"] == 1.0
+    assert InpaintArtifact.load(work / "inpaint.json").items == []
 
 
 # ---------------------------------------------------------------- CLI

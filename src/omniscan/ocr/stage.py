@@ -4,7 +4,9 @@ The strip is cut into overlapping tiles (only tiles that touch a region), the li
 batches, lines are merged across tiles, assigned to regions, cropped and read by the recognizer, and
 the results are assembled into the regions of ocr.json via ocr/pipeline.py. With `ocr.engine` set to
 a crop-reading engine (manga_ocr or paddleocr_vl) every region is read as one whole crop instead and
-no line detection runs.
+no line detection runs. Stored fixed-position watermarks pass through unread; with `sfx.sweep` CRAFT
+then looks over every active tile for sound effects the detector missed (ocr/sweep.py), read by the
+same engine.
 """
 
 from __future__ import annotations
@@ -16,8 +18,9 @@ from typing import Any, ClassVar
 
 from omniscan.core.config import Config
 from omniscan.core.paths import list_images
-from omniscan.core.schemas import IngestArtifact, RegionsArtifact
+from omniscan.core.schemas import IngestArtifact, RegionsArtifact, SlicesArtifact
 from omniscan.core.stage import ChapterContext
+from omniscan.detect.tiles import keep_tiles, plan_tiles
 from omniscan.gpu.groups import VISION_GROUP
 from omniscan.ingest.strip import load_strip
 from omniscan.ocr.engines import engine_rec_model
@@ -28,6 +31,7 @@ from omniscan.ocr.sfx import (
     measure_lettering_style,
     reclassify_sfx_regions,
 )
+from omniscan.ocr.sweep import SweepRules, sweep
 from omniscan.ocr.watermark_text import (
     default_watermark_text_paths,
     load_watermark_patterns,
@@ -40,7 +44,8 @@ class OcrStage:
 
     name: ClassVar[str] = "ocr"
     version: ClassVar[int] = (
-        4  # 3: watermark text reclassification; 4: sound effects found, lettering measured
+        5  # 3: watermark text reclassification; 4: sound effects found, lettering measured;
+        # 5: stored watermark regions passed through unread, whole-page sweep for missed effects
     )
     gpu_group: ClassVar[str | None] = VISION_GROUP
 
@@ -85,34 +90,69 @@ class OcrStage:
         regions = RegionsArtifact.load(regions_path)
         strip = load_strip(ctx, ingest)
         cfg = ctx.cfg
+        # a stored fixed-position watermark (F2c) is never translated: not read, erased whole by inpaint
+        to_read = [r for r in regions.regions if r.kind != "watermark"]
         if cfg.ocr.engine == "ppocr":
+            engine = cfg.ocr.rec_model or cfg.ocr.rec_repo.split("/")[-1]
+            reader = models["recognizer"]
             ocr_regions, metrics = read_regions(
                 strip,
-                regions.regions,
+                to_read,
                 models["line_detector"],
-                models["recognizer"],
+                reader,
                 cfg.ocr,
                 direction=cfg.detect.reading_direction,
-                engine=cfg.ocr.rec_model or cfg.ocr.rec_repo.split("/")[-1],
+                engine=engine,
             )
         else:
-            engine = engine_rec_model(cfg.ocr)
-            if engine is None:
+            rec_model = engine_rec_model(cfg.ocr)
+            if rec_model is None:
                 raise ValueError(f"OCR engine '{cfg.ocr.engine}' needs ocr.rec_model")
-            ocr_regions, metrics = read_region_crops(
-                strip, regions.regions, models["reader"], cfg.ocr, engine=engine
-            )
+            engine, reader = rec_model, models["reader"]
+            ocr_regions, metrics = read_region_crops(strip, to_read, reader, cfg.ocr, engine=engine)
         # false-positive detections read as junk with a low score (or nothing at all): leave those pixels alone
         kept = [r for r in ocr_regions if r.lines and r.confidence >= ctx.cfg.ocr.drop_conf]
         metrics["regions_dropped"] = float(len(ocr_regions) - len(kept))
-        # OCR'd ad/spam text is a source-injected watermark (card F2b): excluded downstream, not removed
-        kept = reclassify_watermark_regions(kept, load_watermark_patterns(default_watermark_text_paths()))
-        metrics["watermarked"] = float(sum(1 for r in kept if r.kind == "watermark"))
-        # the detector has no working sfx class (M10): onomatopoeia in free text becomes kind "sfx"; the
-        # lettering of effects and free text (fill vs outline colour, an effect's tilt and weight) is
-        # measured for the typesetter
+        # OCR'd ad/spam text is a source-injected watermark (card F2b): never translated, erased by inpaint
+        patterns = load_watermark_patterns(default_watermark_text_paths())
+        kept = reclassify_watermark_regions(kept, patterns)
+        order = {r.id: i for i, r in enumerate(regions.regions)}
+        kept = sorted(
+            [*kept, *(r for r in regions.regions if r.kind == "watermark")], key=lambda r: order[r.id]
+        )
+        # the detector has no working sfx class (M10): onomatopoeia in free text becomes kind "sfx", and
+        # the sweep finds the effects (and stamped watermarks) it missed; the lettering of effects and
+        # free text (fill vs outline colour, an effect's tilt and weight) is measured for the typesetter
         if cfg.sfx.detect:
-            kept = reclassify_sfx_regions(kept, load_sfx_lexicon(default_sfx_text_paths()), cfg.sfx)
+            lexicon = load_sfx_lexicon(default_sfx_text_paths())
+            kept = reclassify_sfx_regions(kept, lexicon, cfg.sfx)
+            if cfg.sfx.sweep:
+                slices = SlicesArtifact.load(ctx.paths.artifact("slices.json")).slices
+                active = [(s.y0, s.y1) for s in slices if not s.blank and not s.filtered]
+                tiles = keep_tiles(
+                    plan_tiles(ingest.strip_width, ingest.strip_height, cfg.ocr.tile_px, cfg.ocr.overlap),
+                    active,
+                )
+                rules = SweepRules(
+                    words=lexicon.get(cfg.ocr.lang, frozenset()),
+                    watermark_patterns=tuple(patterns),
+                    min_score=cfg.ocr.drop_conf,
+                    max_chars=cfg.sfx.max_chars,
+                    engine=f"{engine}+craft",
+                    lang=cfg.ocr.lang,
+                )
+                kept, swept = sweep(
+                    strip,
+                    kept,
+                    slices,
+                    tiles,
+                    models["sfx_sweeper"],
+                    reader,
+                    rules,
+                    min_px=cfg.sfx.sweep_min_px,
+                )
+                metrics.update(swept)
+        metrics["watermarked"] = float(sum(1 for r in kept if r.kind == "watermark"))
         kept = [measure_lettering_style(strip, r) if r.kind in ("sfx", "free_text") else r for r in kept]
         metrics["sfx"] = float(sum(1 for r in kept if r.kind == "sfx"))
         RegionsArtifact(regions=kept).save(ctx.paths.artifact("ocr.json"))

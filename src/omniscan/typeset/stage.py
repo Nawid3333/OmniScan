@@ -23,7 +23,9 @@ class TypesetStage:
     """Fit every final English line into its region's target box (satisfies core.stage.Stage)."""
 
     name: ClassVar[str] = "typeset"
-    version: ClassVar[int] = 2  # 2: balloon-shaped lines, style presets, chapter-wide sizes, sfx styles
+    version: ClassVar[int] = (
+        3  # 2: balloon-shaped lines, style presets, chapter-wide sizes, sfx styles; 3: effects keep clear of neighbours
+    )
     gpu_group: ClassVar[str | None] = None
 
     def inputs(self, ctx: ChapterContext) -> list[Path]:

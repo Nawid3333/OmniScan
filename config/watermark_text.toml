@@ -1,5 +1,5 @@
-# Text patterns that mark a detected region as a source-injected ad/watermark, never translated or
-# typeset (docs/OPEN_QUESTIONS.md E4: watermarks are not removed, only excluded from translation).
+# Text patterns that mark a detected region as a source-injected ad/watermark: never translated or
+# typeset, and erased from the page by the inpaint stage (`inpaint.remove_watermarks`, on by default).
 # Patterns are matched as a case-insensitive substring of the region's OCR'd text (whitespace collapsed
 # the same way translate.prompts.source_text does). Keep entries specific (brand/site names), not
 # generic words, so real dialogue is never misclassified.
@@ -9,4 +9,6 @@ patterns = [
     "라이브스코어",   # "LiveScore" (gambling/sports-betting brand)
     "가상토토",       # "virtual toto" (a Korean sports-betting product)
     "스포위키",       # "SpoWiki" (a specific ad-site brand)
+    "http",           # a web address stamped on the page: no dialogue carries one
+    "www.",
 ]

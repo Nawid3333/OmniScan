@@ -46,6 +46,9 @@ _MIN_ANGLE = 8.0  # smaller tilts are the letters' own shapes (or invisible): le
 _MAX_ANGLE = 45.0  # steeper tilts are vertical lettering (stacked by the typesetter), not a tilt
 _FILL_CONTRAST = 60.0  # an enclosed area this far (max channel) from the background is a fill colour
 _MIN_OUTLINE_PX = 2  # thinner rings around the letters are anti-aliasing, not an outline
+_HANGUL_FIRST = 0xAC00  # 가: the precomposed Hangul syllables block, 19 initials x 21 vowels x 28 finals
+_HANGUL_COUNT = 19 * 21 * 28
+_MAX_SPELLINGS = 16  # equally close word sequences kept per position by `closest_sfx`
 
 
 def default_sfx_text_paths() -> list[Path]:
@@ -102,6 +105,67 @@ def made_of_words(core: str, words: frozenset[str]) -> bool:
                 reachable[end] = True
                 break
     return reachable[-1]
+
+
+def jamo(text: str) -> str:
+    """`text` with every Hangul syllable split into its letters (initial, vowel, final consonant), so a
+    misread stroke costs one edit, not a whole syllable: "쾅" -> "쾅"; other characters stay as they are."""
+    out: list[str] = []
+    for c in text:
+        code = ord(c) - _HANGUL_FIRST
+        if 0 <= code < _HANGUL_COUNT:
+            initial, rest = divmod(code, 21 * 28)
+            vowel, final = divmod(rest, 28)
+            out.append(chr(0x1100 + initial) + chr(0x1161 + vowel) + (chr(0x11A7 + final) if final else ""))
+        else:
+            out.append(c)
+    return "".join(out)
+
+
+def edit_distance(a: str, b: str) -> int:
+    """Levenshtein distance between two strings (insertions, deletions, substitutions cost 1)."""
+    previous = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        current = [i]
+        for j, cb in enumerate(b, 1):
+            current.append(min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (ca != cb)))
+        previous = current
+    return previous[-1]
+
+
+def closest_sfx(core: str, words: frozenset[str], max_edits: int) -> tuple[str, int, bool] | None:
+    """The sequence of lexicon `words` (repeats allowed) closest to the normalised `core` in letter
+    edits (`jamo`), each word read against a stretch of `core` with as many syllables: (its spelling,
+    the edits, whether it is the only closest spelling), or None when none is within `max_edits`.
+    Among equally close spellings the ones with the fewest different words win — effects repeat a
+    sound (쿵쿨 is 쿵쿵 rather than 쿵쿡)."""
+    if not core or not words:
+        return None
+    by_length: dict[int, list[tuple[str, str]]] = {}
+    for word in sorted(words):
+        by_length.setdefault(len(word), []).append((word, jamo(word)))
+    # best[end]: (edits, the closest word sequences for core[:end]), a handful kept per end
+    empty: set[tuple[str, ...]] = {()}
+    best: list[tuple[int, set[tuple[str, ...]]] | None] = [(0, empty)] + [None] * len(core)
+    for end in range(1, len(core) + 1):
+        for length, entries in by_length.items():
+            head = best[end - length] if length <= end else None
+            if head is None or head[0] > max_edits:
+                continue
+            piece = jamo(core[end - length : end])
+            for word, letters in entries:
+                edits = head[0] + edit_distance(piece, letters)
+                current = best[end]
+                if current is None or edits < current[0]:
+                    best[end] = (edits, {(*seq, word) for seq in head[1]})
+                elif edits == current[0] and len(current[1]) < _MAX_SPELLINGS:
+                    current[1].update((*seq, word) for seq in head[1])
+    found = best[-1]
+    if found is None or found[0] > max_edits:
+        return None
+    fewest = min(len(set(seq)) for seq in found[1])
+    closest = sorted("".join(seq) for seq in found[1] if len(set(seq)) == fewest)
+    return closest[0], found[0], len(set(closest)) == 1
 
 
 def glyph_size(region: Region) -> float | None:

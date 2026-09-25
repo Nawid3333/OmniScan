@@ -198,7 +198,14 @@ def plan_layout(
         if sfx_cfg.mode == "keep":
             continue
         if sfx_cfg.mode == "replace" and (erased is None or region.id in erased):
-            items[region.id] = layout_sfx(region, text, cfg, font_factory=font_factory)
+            others = [
+                box
+                for other in regions
+                if other.id != region.id
+                for box in (other.bbox, other.bubble_bbox)
+                if box is not None
+            ]
+            items[region.id] = layout_sfx(region, text, cfg, neighbours=others, font_factory=font_factory)
         else:
             font = role_font("free", lettering_style(region, cfg), cfg)
             items[region.id] = layout_sfx_subtitle(

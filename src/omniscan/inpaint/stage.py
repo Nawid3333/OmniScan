@@ -19,7 +19,9 @@ class InpaintStage:
     """Flat-fill the text of every OCR region (satisfies core.stage.Stage); no GPU model group needed."""
 
     name: ClassVar[str] = "inpaint"
-    version: ClassVar[int] = 3  # 3: glyph-precise masks; sfx left alone unless sfx.mode = "replace"
+    version: ClassVar[int] = (
+        4  # 3: glyph-precise masks, sfx only with sfx.mode = "replace"; 4: watermarks erased
+    )
     gpu_group: ClassVar[str | None] = None
 
     def inputs(self, ctx: ChapterContext) -> list[Path]:

@@ -83,6 +83,7 @@ Every key in `config/default.toml`:
 | `inpaint.glyph_grow`, `inpaint.glyph_grow_sfx` | the letters are grown by at most this many stroke widths (text / sound effects) | yes |
 | `inpaint.glyph_grow_min_px`, `inpaint.glyph_grow_max_px`, `inpaint.glyph_grow_max_sfx_px` | limits of that growth, in px | yes |
 | `inpaint.glyph_ring_px` | band around the glyphs that must be flat for a flat fill of just the glyphs, in px | yes |
+| `inpaint.remove_watermarks` | erase watermarks (ad/site text, stored fixed-position zones) from the page; they are never lettered either way | yes |
 | `typeset.min_px` | smallest font size tried, in px | yes (`omniscan typeset`) |
 | `typeset.max_px` | largest dialogue size, in px | yes (`omniscan typeset`) |
 | `typeset.line_spacing` | line pitch as a multiple of the font size | yes (`omniscan typeset`) |
@@ -98,6 +99,8 @@ Every key in `config/default.toml`:
 | `typeset.hyphenate` | hyphenate a word that fits no line even at `min_px` instead of overflowing | yes (`omniscan typeset`) |
 | `typeset.sfx_max_px` | largest sound-effect lettering, in px | yes (`omniscan typeset`) |
 | `sfx.detect` | turn free text that reads as onomatopoeia (`config/sfx_text.toml`) into sound effects | yes (`omniscan ocr`) |
+| `sfx.sweep` | also look over the whole page (CRAFT) for the effects the detector missed; needs `sfx.detect` | yes (`omniscan ocr`) |
+| `sfx.sweep_min_px` | swept lettering with smaller letters is left alone (signs, background text), in px | yes (`omniscan ocr`) |
 | `sfx.max_chars`, `sfx.lexicon_size_ratio` | longest effect (letters) and how large vs the dialogue a lexicon match must be lettered | yes (`omniscan ocr`) |
 | `sfx.size_ratio`, `sfx.size_max_chars` | `size_ratio` > 0: very short lettering this much larger than the dialogue is an effect too (off by default: big signs pass) | yes (`omniscan ocr`) |
 | `sfx.mode` | `replace` (erase and redraw in English), `subtitle` (keep the art, small translation below), `keep` | yes (`omniscan inpaint`, `typeset`) |
@@ -383,7 +386,9 @@ the boxes are filled with exactly that colour. Otherwise only the lettering itse
 the outline around the letters, and when the band around those glyphs is flat they alone are filled.
 The rest — lettering on textured art — is recorded with a `needs_lama` flag and its glyph mask, so
 LaMa only rebuilds the letters, not the art around them. Sound effects are erased only with
-`sfx.mode = "replace"` (the default).
+`sfx.mode = "replace"` (the default). Watermarks are erased too (`inpaint.remove_watermarks`, on by
+default): ad/site text like any lettering, a stored fixed-position zone as a whole box (flat-filled on a
+plain margin, rebuilt by LaMa over art).
 
 With `--lama` a second stage (`inpaint_lama`) cleans exactly those regions with the LaMa model
 (TorchScript `big-lama.pt`, Apache-2.0): for every such region a fixed 512×512 window of the strip
@@ -571,9 +576,12 @@ filter above cannot catch them. The OCR stage therefore reclassifies a detected 
 `watermark` when its read text contains one of the patterns in `config/watermark_text.toml`
 (plus your own `~/.config/omniscan/watermark_text.toml`; both files' lists are combined, edits take
 effect on the next OCR run). Watermarked regions are excluded from translation, scoring and
-evaluation like the fixed-position ones — they are **not** removed from the image, so the original
-ad text stays on the page. To teach the filter a new site, append its specific brand or site name to
-the user file (a pattern is matched as a case-insensitive substring of the OCR'd text):
+evaluation like the fixed-position ones, and the inpaint stage erases them from the page
+(`inpaint.remove_watermarks = false` keeps them). The shipped list also catches stamped web addresses
+("http", "www."); the sound-effect sweep (below) checks the text it finds in the art against the same
+patterns, so a site stamp the detector missed is erased as well. To teach the filter a new site, append
+its specific brand or site name to the user file (a pattern is matched as a case-insensitive substring
+of the OCR'd text):
 
 ```toml
 [watermark_text]
@@ -873,7 +881,14 @@ font_dialogue = "C:/Users/me/Fonts/CCWildWords-Regular.ttf"
 **Sound effects.** The text detector does not report sound effects on real pages, so after OCR a
 free-text region becomes a sound effect when its letters are onomatopoeia from `config/sfx_text.toml`
 (ko/ja/zh; repeats and stretched letters count: 쾅쾅쾅, 쿠구구궁, ドドド; add your own words in
-`~/.config/omniscan/sfx_text.toml`). The OCR stage measures each effect's fill and outline colour, tilt
+`~/.config/omniscan/sfx_text.toml`). Most effects drawn into the art are not detected at all, so with
+`sfx.sweep` (on by default) the OCR stage also runs CRAFT — the scene-text detector EasyOCR uses (MIT,
+downloaded on first use, `sfx-detector-craft` in `omniscan models list`) — over every page: lettering
+outside the detected regions is cut out, turned level when tilted, read twice by the chapter's OCR
+engine (the crop, and the letters alone in black on white without the art around them), and kept as a
+sound effect when it is a lexicon word within a misread stroke or two (광! for 쾅!, 번찍 for 번쩍; the
+lexicon's spelling is used when only one word is that close, the raw reading kept in `ocr_alt`).
+Anything else it finds stays untouched — an unknown word may be part of the art. The OCR stage measures each effect's fill and outline colour, tilt
 and stroke weight; the translator is asked for the English effect an official release would letter;
 and with `sfx.mode = "replace"` the English effect is drawn over the erased original in that style —
 same colours and outline, same tilt, a heavy / bold-brush / light-marker face matching the original's
@@ -882,7 +897,9 @@ the page (`sfx.mode = "subtitle"`, or it could not be erased) a small outlined t
 below it; `sfx.mode = "keep"` leaves effects untranslated.
 
 To look at the result without a chapter: `uv run python scripts/lettering_demo.py` letters synthetic
-pages over drawn art with this exact code (LaMa included) into `data/lettering_demo/`.
+pages over drawn art with this exact code (LaMa included) into `data/lettering_demo/`, and
+`uv run python scripts/sfx_sweep_check.py` counts how many of ten drawn-in effects the sweep finds with
+this machine's models (`--fonts <folder>` letters them in extra faces, `--out` saves the pages).
 
 ### `omniscan eval`
 
@@ -1035,10 +1052,11 @@ uv run omniscan watermark list DemoSeries
 uv run omniscan watermark remove DemoSeries 0
 ```
 
-Stored watermark regions affect the chapters on the next `detect` run of the series: any detected
-region whose box mostly (>= 50 % of its own area) falls inside a stored watermark zone is excluded
-from translation, scoring and evaluation the same way tier 1 (text-pattern) and tier 2 (image-hash)
-matches are. Existing chapters re-detect automatically, because the detect stage now depends on
+Stored watermark regions affect the chapters on the next `detect` run of the series: every stored
+zone becomes a watermark region on every page (erased whole by the inpaint stage, see
+`inpaint.remove_watermarks`), and any detected region whose box mostly (>= 50 % of its own area) falls
+inside a stored watermark zone is excluded from translation, scoring and evaluation the same way tier 1
+(text-pattern) and tier 2 (image-hash) matches are. Existing chapters re-detect automatically, because the detect stage now depends on
 `watermarks.json`.
 
 ### `omniscan pack`

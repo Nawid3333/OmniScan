@@ -61,7 +61,7 @@ def test_white_bubble_is_flat_filled() -> None:
     }
 
 
-def test_skips_watermark_and_lineless_and_flags_lama() -> None:
+def test_skips_lineless_and_kept_watermarks_and_flags_lama() -> None:
     generator = torch.Generator().manual_seed(3)
     strip = torch.full((3, 300, 400), 255, dtype=torch.uint8)
     strip[:, 200:260, 100:300] = torch.randint(0, 256, (3, 60, 200), generator=generator, dtype=torch.uint8)
@@ -71,7 +71,7 @@ def test_skips_watermark_and_lineless_and_flags_lama() -> None:
         region("r0003", "sfx", BBox(x0=20, y0=20, x1=60, y1=40)),
         region("r0004", "bubble_text", BBox(x0=150, y0=210, x1=250, y1=250)),
     ]
-    artifact, patches, metrics = inpaint_regions(strip, regions, InpaintConfig())
+    artifact, patches, metrics = inpaint_regions(strip, regions, InpaintConfig(remove_watermarks=False))
     assert [item.region_id for item in artifact.items] == ["r0003", "r0004"]
     assert set(patches) == {"r0003", "r0004"}
     for item in artifact.items:
@@ -90,6 +90,46 @@ def test_skips_watermark_and_lineless_and_flags_lama() -> None:
         "mask_px": 1196.0 + 4856.0,
         "glyph_masks": 1.0,
     }
+
+
+def test_watermark_text_is_erased_like_lettering() -> None:
+    # ad text stamped on a flat margin: its read line is flat-filled like any other lettering
+    strip = torch.full((3, 200, 300), 240, dtype=torch.uint8)
+    strip[:, 90:110, 100:200] = 30
+    box = BBox(x0=100, y0=90, x1=200, y1=110)
+    artifact, patches, _ = inpaint_regions(strip, [region("r0001", "watermark", box)], InpaintConfig())
+    (item,) = artifact.items
+    assert item.method == "flat" and item.fill == (240, 240, 240)
+    pixels, _ = patches["r0001"]
+    assert int(pixels.min()) == 240
+
+
+def test_a_stored_watermark_zone_is_erased_whole() -> None:
+    # a fixed-position zone nothing was read in, over busy art: LaMa gets the whole box grown by
+    # mask_dilate_px — never a glyph mask, whatever ink the zone holds
+    generator = torch.Generator().manual_seed(5)
+    strip = torch.randint(0, 256, (3, 200, 300), generator=generator, dtype=torch.uint8)
+    strip[:, 50:70, 60:200] = 0
+    zone = BBox(x0=40, y0=40, x1=220, y1=80)
+    artifact, _, metrics = inpaint_regions(
+        strip, [region("r0001", "watermark", zone, lines=[])], InpaintConfig()
+    )
+    (item,) = artifact.items
+    assert item.needs_lama is True and item.method == "none"
+    assert item.mask_px == (180 + 6) * (40 + 6)
+    assert metrics["glyph_masks"] == 0.0
+
+
+def test_a_stored_watermark_zone_on_a_flat_margin_is_flat_filled() -> None:
+    strip = torch.full((3, 200, 300), 255, dtype=torch.uint8)
+    strip[:, 170:190, 200:290] = 90  # a grey logo in the corner
+    zone = BBox(x0=190, y0=160, x1=295, y1=195)
+    artifact, patches, _ = inpaint_regions(
+        strip, [region("r0001", "watermark", zone, lines=[])], InpaintConfig()
+    )
+    (item,) = artifact.items
+    assert item.method == "flat" and item.fill == (255, 255, 255)
+    assert int(patches["r0001"][0].min()) == 255
 
 
 def test_no_regions_gives_empty_artifact() -> None:
