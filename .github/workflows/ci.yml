@@ -27,10 +27,11 @@ permissions:
 jobs:
   test:
     runs-on: ${{ inputs.windows-runner || 'windows-latest' }}
+    timeout-minutes: 30 # a normal run takes ~5 min; a hung one would otherwise hold the runner 6 h
     steps:
       - uses: actions/checkout@v5
 
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0 (no floating major tags since v8: pinned)
 
       - name: Sync (rocm-gfx1201 + gui)
         run: uv sync --extra rocm-gfx1201 --extra gui
