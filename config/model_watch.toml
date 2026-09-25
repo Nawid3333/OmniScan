@@ -6,12 +6,19 @@
 # Per org: `search` terms for the listing API (GET /api/models?author=<org>&search=<term>) and
 # `patterns` — fnmatch patterns, matched case-insensitively against the repo NAME without the org.
 # `ignore`: full repo ids ("<org>/<name>") that are already known and not wanted in the catalog.
+#
+# PP-OCR: only the `*_safetensors` repos are watched. PaddlePaddle publishes every PP-OCR model three
+# times — Paddle-inference weights (`<name>`, need the PaddlePaddle framework, which has no ROCm build:
+# docs/DECISIONS.md), an ONNX conversion (`<name>_onnx`, excluded on purpose: docs/MODELS.md) and the
+# safetensors build (`<name>_safetensors`) that transformers loads. Only the last can enter the catalog.
 
-ignore = []
+# comic-text-segmenter-yolov8m: a YOLOv8 (ultralytics) model; docs/PLAN.md rules out ultralytics YOLO
+# (AGPL), and the catalog already carries the same author's RT-DETR-v2 comic-text-and-bubble-detector.
+ignore = ["ogkalu/comic-text-segmenter-yolov8m"]
 
 [orgs."PaddlePaddle"]
 search = ["OCR"]
-patterns = ["PP-OCRv*", "*PP-OCRv*_rec*", "PaddleOCR-VL*"]
+patterns = ["*PP-OCRv*_safetensors", "PaddleOCR-VL*"]
 
 [orgs."kha-white"]
 search = ["manga-ocr"]
