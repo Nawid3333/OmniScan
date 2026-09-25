@@ -5,9 +5,14 @@
    `pyproject.toml`'s `cpu`/`cuda`/`mps` extras, `[tool.uv.conflicts]` and their index/source entries are
    removed — `rocm-gfx1201` is now the project's only backend (`uv.lock` regenerated, `uv sync --extra
    rocm-gfx1201 --extra gui` verified clean, full `pytest -m "not gpu"` green). `HANDOFF.md`/`PLAN.md`/
-   `README.md`/`CLAUDE.md` updated to match. **`.github/workflows/ci.yml` still references the removed
-   `cpu` extra and will fail on the next push** — deleting/rewriting it was blocked by the harness's own
-   CI-safety guard (requires the owner's own action, not the director's); see `docs/OPEN_QUESTIONS.md`.
+   `README.md`/`CLAUDE.md` updated to match. `.github/workflows/ci.yml` was rewritten the same day (F15,
+   `66046868`) to a single `windows-latest` job syncing `rocm-gfx1201 + gui`, no OS/GPU matrix. **Resolved
+   2026-09-25: pushed and verified green** — `uv sync --extra rocm-gfx1201 --extra gui` installs cleanly on
+   a GitHub-hosted runner with no AMD GPU (answers F15's open question), and `main`'s CI has been green
+   since (the one red run in between, `66046868`'s own first push, failed on an unrelated pre-existing
+   `test_model_watch_workflow` regression from an earlier commit, since fixed). `runner-images.yml` was
+   added after this to test `ci.yml` against upcoming `windows-latest` images. See `docs/OPEN_QUESTIONS.md`
+   (F15, resolved).
 2. **OCR per-language defaults added** (`core/config.py::_apply_lang_ocr_defaults`): previously there was no
    language-aware default at all — every series silently got Korean PP-OCRv5 models unless its own
    `series.toml` hand-set `engine`/`rec_model`. Now a series.toml (or the repo default) that sets `ocr.lang`
