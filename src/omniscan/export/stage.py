@@ -1,4 +1,10 @@
-"""Export stage wrapper: patches + layout + slices -> the released English slices in the output folder."""
+"""Export stage wrapper: patches + layout + slices -> the released English slices in the output folder.
+
+The output images are the non-filtered slices, or the pieces between the hand-set output cuts (edits.json
+`cuts`, export/segments.py). Order on the strip: the automatic cleaning (patches.npz, then patches_lama.npz), the hand cleanup
+(cleanup.json, in painting order), then the lettering. A hand cleanup painted on a strip of another size (the
+chapter was re-imported) is skipped and counted as `cleanup_stale`.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +13,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from omniscan.cleanup.store import CLEANUP_FILE, CLEANUP_NPZ, fits_strip, load_arrays, load_cleanup
 from omniscan.core.config import Config
 from omniscan.core.paths import list_images
 from omniscan.core.schemas import (
@@ -15,11 +22,12 @@ from omniscan.core.schemas import (
     IngestArtifact,
     InpaintArtifact,
     LayoutArtifact,
-    Slice,
     SlicesArtifact,
 )
 from omniscan.core.stage import ChapterContext
-from omniscan.export.composite import apply_patches, blend_rgba
+from omniscan.edits.store import EDITS_FILE, load_edits
+from omniscan.export.composite import apply_cleanup, apply_patches, blend_rgba, snapshot
+from omniscan.export.segments import Segment, output_segments
 from omniscan.gpu.codec.base import JpegCodec
 from omniscan.gpu.codec.select import get_codec
 from omniscan.ingest.strip import load_strip
@@ -58,7 +66,7 @@ class ExportStage:
             ctx.paths.artifact("patches.npz"),
             ctx.paths.artifact("layout.json"),
         ]
-        for name in ("inpaint_lama.json", "patches_lama.npz"):
+        for name in ("inpaint_lama.json", "patches_lama.npz", CLEANUP_FILE, CLEANUP_NPZ, EDITS_FILE):
             path = ctx.paths.artifact(name)
             if path.is_file():
                 inputs.append(path)
@@ -79,6 +87,12 @@ class ExportStage:
                 raise FileNotFoundError(f"{name} missing — run the {stage} stage first")
         ingest = IngestArtifact.load(ctx.paths.artifact("ingest.json"))
         strip = load_strip(ctx, ingest)
+        # the hand cleanup (cleanup.json) goes on last; its "restore" patches need the raw pixels, kept first
+        cleanup = load_cleanup(ctx.paths)
+        stale_cleanup = cleanup is not None and not fits_strip(cleanup, ingest)
+        cleanup_patches = [] if cleanup is None or stale_cleanup else cleanup.patches
+        cleanup_arrays = load_arrays(ctx.paths) if cleanup_patches else {}
+        originals = {p.id: snapshot(strip, p.box) for p in cleanup_patches if p.method == "restore"}
         patches = float(
             apply_patches(
                 strip,
@@ -89,6 +103,7 @@ class ExportStage:
         lama_json, lama_npz = ctx.paths.artifact("inpaint_lama.json"), ctx.paths.artifact("patches_lama.npz")
         if lama_json.is_file() and lama_npz.is_file():  # LaMa overrides the flat-fill placeholder
             patches += apply_patches(strip, InpaintArtifact.load(lama_json).items, load_patches(lama_npz))
+        cleaned = apply_cleanup(strip, cleanup_patches, cleanup_arrays, originals)
         glyph_items = overflow_items = 0
         for item in LayoutArtifact.load(ctx.paths.artifact("layout.json")).items:
             overflow_items += int(item.overflow)
@@ -98,9 +113,10 @@ class ExportStage:
             blend_rgba(strip, glyph)
             glyph_items += 1
         slices = SlicesArtifact.load(ctx.paths.artifact("slices.json")).slices
+        segments = output_segments(slices, ingest.strip_height, load_edits(ctx.paths).cuts)
         codec = get_codec(ctx.cfg)
         try:
-            files = _write_slices(ctx, strip, slices, codec)
+            files = _write_slices(ctx, strip, segments, codec)
         finally:
             close = getattr(codec, "close", None)
             if close is not None:
@@ -116,20 +132,22 @@ class ExportStage:
             "patches": patches,
             "glyph_items": float(glyph_items),
             "overflow_items": float(overflow_items),
+            "cleanup_patches": float(cleaned),
+            "cleanup_stale": float(stale_cleanup),
         }
 
 
 def _write_slices(
-    ctx: ChapterContext, strip: torch.Tensor, slices: list[Slice], codec: JpegCodec
+    ctx: ChapterContext, strip: torch.Tensor, segments: list[Segment], codec: JpegCodec
 ) -> list[ExportFile]:
-    """Delete stale NNNN.jpg files from the output folder, then encode and write the kept slices in order."""
+    """Delete stale NNNN.jpg files from the output folder, then encode and write the segments in order."""
     output = ctx.paths.output_dir
     output.mkdir(parents=True, exist_ok=True)
     for path in output.iterdir():
         if path.is_file() and _STALE_FILE.fullmatch(path.name):
             path.unlink()
     files: list[ExportFile] = []
-    for number, s in enumerate((s for s in slices if not s.filtered), start=1):
+    for number, s in enumerate(segments, start=1):
         data = codec.encode(
             strip[:, s.y0 : s.y1, :],
             quality=ctx.cfg.export.jpeg_quality,
@@ -140,7 +158,7 @@ def _write_slices(
         files.append(
             ExportFile(
                 name=name,
-                slice_index=s.index,
+                slice_index=s.slice_index,
                 width=int(strip.shape[2]),
                 height=s.y1 - s.y0,
                 bytes=len(data),

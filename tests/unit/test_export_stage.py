@@ -11,10 +11,13 @@ from PIL import Image
 from typer.testing import CliRunner
 
 import omniscan.cli
+from omniscan.cleanup.store import add_patch
 from omniscan.cli import app
 from omniscan.core.config import Config, ExportConfig, GpuConfig, PathsConfig, TypesetConfig
 from omniscan.core.schemas import (
     BBox,
+    ChapterEdits,
+    CleanupArtifact,
     ExportArtifact,
     IngestArtifact,
     InpaintArtifact,
@@ -225,6 +228,72 @@ def test_lama_patches_override_the_flat_fill(cfg: Config) -> None:
     assert (
         np.abs(decoded[222:258, 122:218] - np.array(lama_color)) <= 6
     ).all()  # inset by 2 px (JPEG ringing)
+
+
+def test_hand_cleanup_goes_on_last_and_restore_brings_the_raw_back(cfg: Config) -> None:
+    write_pages(cfg)
+    write_ingest(cfg)
+    write_slices(cfg, [(0, 400), (400, 800), (800, 1200)], filtered={1})
+    write_flat_patch(cfg)  # white rectangle at strip (120, 220)-(220, 260)
+    write_layout(cfg)
+    paths = make_context(cfg, SERIES, CHAPTER).paths
+    add_patch(
+        paths,
+        page=0,
+        box=BBox(x0=120, y0=220, x1=170, y1=260),
+        mask=np.ones((40, 50), bool),
+        method="restore",
+    )
+    add_patch(
+        paths,
+        page=0,
+        box=BBox(x0=400, y0=300, x1=450, y1=340),
+        mask=np.ones((40, 50), bool),
+        method="fill",
+        color=(0, 0, 255),
+    )
+
+    outcome = run_stage(ExportStage(), make_context(cfg, SERIES, CHAPTER))
+    assert outcome.status == "done"
+    assert outcome.metrics["cleanup_patches"] == 2.0 and outcome.metrics["cleanup_stale"] == 0.0
+    decoded = np.asarray(Image.open(output_dir(cfg) / "0001.jpg").convert("RGB")).astype(int)
+    assert (np.abs(decoded[224:256, 124:166] - np.array(PAGE_COLOR)) <= 8).all()  # the raw page is back
+    assert (np.abs(decoded[224:256, 174:216] - 255) <= 8).all()  # the rest of the automatic fill stays
+    assert (np.abs(decoded[304:336, 404:446] - np.array([0, 0, 255])) <= 8).all()  # the hand fill
+
+    # a cleanup painted on another strip size (a re-imported chapter) is skipped
+    stale = CleanupArtifact.load(paths.artifact("cleanup.json")).model_copy(update={"strip_height": 999})
+    stale.save(paths.artifact("cleanup.json"))
+    outcome = run_stage(ExportStage(), make_context(cfg, SERIES, CHAPTER))
+    assert outcome.metrics["cleanup_stale"] == 1.0 and outcome.metrics["cleanup_patches"] == 0.0
+    decoded = np.asarray(Image.open(output_dir(cfg) / "0001.jpg").convert("RGB")).astype(int)
+    assert (np.abs(decoded[224:256, 124:166] - 255) <= 8).all()
+
+
+def test_hand_set_output_cuts_decide_the_images(cfg: Config) -> None:
+    write_pages(cfg)
+    write_ingest(cfg)
+    write_slices(cfg, [(0, 400), (400, 800), (800, 1200)], filtered={1})
+    write_flat_patch(cfg)
+    write_layout(cfg)
+    ChapterEdits(cuts=[250, 1000]).save(cfg.paths.work_root / SERIES / CHAPTER / "edits.json")
+    ctx = make_context(cfg, SERIES, CHAPTER)
+    outcome = run_stage(ExportStage(), ctx)
+    assert outcome.status == "done"
+    export = ExportArtifact.load(ctx.paths.artifact("export.json"))
+    # 0..250, 250..400 (the filtered 400..800 is left out), 800..1000, 1000..1200
+    assert [(f.name, f.slice_index, f.height) for f in export.files] == [
+        ("0001.jpg", 0, 250),
+        ("0002.jpg", 0, 150),
+        ("0003.jpg", 2, 200),
+        ("0004.jpg", 2, 200),
+    ]
+    assert sorted(p.name for p in output_dir(cfg).iterdir()) == [
+        "0001.jpg",
+        "0002.jpg",
+        "0003.jpg",
+        "0004.jpg",
+    ]
 
 
 def test_reexport_deletes_only_stale_numbered_files(cfg: Config) -> None:

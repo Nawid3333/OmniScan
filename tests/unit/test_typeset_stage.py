@@ -126,7 +126,7 @@ def test_typeset_stage_writes_loadable_layout(cfg: Config) -> None:
     assert sfx.stroke_px == cfg.typeset.stroke_sfx_px
     assert sfx.overflow is True  # the long SFX line does not fit its tiny box
     record = ctx.manifest.stages["typeset"]
-    assert record.status == "done" and record.outputs == ["layout.json"]
+    assert record.status == "done" and record.outputs == ["layout.json", "layout_auto.json"]
     assert outcome.metrics["items"] == 2.0
     assert outcome.metrics["overflow"] == 1.0
     assert outcome.metrics["skipped"] == 1.0
