@@ -16,6 +16,7 @@ from omniscan.cli import app
 from omniscan.core.config import Config, ExportConfig, GpuConfig, PathsConfig, TypesetConfig
 from omniscan.core.schemas import (
     BBox,
+    ChapterEdits,
     CleanupArtifact,
     ExportArtifact,
     IngestArtifact,
@@ -267,6 +268,32 @@ def test_hand_cleanup_goes_on_last_and_restore_brings_the_raw_back(cfg: Config) 
     assert outcome.metrics["cleanup_stale"] == 1.0 and outcome.metrics["cleanup_patches"] == 0.0
     decoded = np.asarray(Image.open(output_dir(cfg) / "0001.jpg").convert("RGB")).astype(int)
     assert (np.abs(decoded[224:256, 124:166] - 255) <= 8).all()
+
+
+def test_hand_set_output_cuts_decide_the_images(cfg: Config) -> None:
+    write_pages(cfg)
+    write_ingest(cfg)
+    write_slices(cfg, [(0, 400), (400, 800), (800, 1200)], filtered={1})
+    write_flat_patch(cfg)
+    write_layout(cfg)
+    ChapterEdits(cuts=[250, 1000]).save(cfg.paths.work_root / SERIES / CHAPTER / "edits.json")
+    ctx = make_context(cfg, SERIES, CHAPTER)
+    outcome = run_stage(ExportStage(), ctx)
+    assert outcome.status == "done"
+    export = ExportArtifact.load(ctx.paths.artifact("export.json"))
+    # 0..250, 250..400 (the filtered 400..800 is left out), 800..1000, 1000..1200
+    assert [(f.name, f.slice_index, f.height) for f in export.files] == [
+        ("0001.jpg", 0, 250),
+        ("0002.jpg", 0, 150),
+        ("0003.jpg", 2, 200),
+        ("0004.jpg", 2, 200),
+    ]
+    assert sorted(p.name for p in output_dir(cfg).iterdir()) == [
+        "0001.jpg",
+        "0002.jpg",
+        "0003.jpg",
+        "0004.jpg",
+    ]
 
 
 def test_reexport_deletes_only_stale_numbered_files(cfg: Config) -> None:

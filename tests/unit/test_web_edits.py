@@ -472,3 +472,19 @@ def test_preview_without_final_json_shows_the_cleaning_only(lettering_client: Te
     assert response.status_code == 200
     pixels = np.asarray(Image.open(io.BytesIO(response.content)).convert("RGB")).astype(int)
     assert (np.abs(pixels[45:55, 55:65]) <= 30).all()  # the raw black mark, nothing drawn on top
+
+
+def test_output_cuts_get_put_reset_and_crossings(client: TestClient, work: Path) -> None:
+    SlicesArtifact(
+        strip_width=200,
+        strip_height=600,
+        bands=[],
+        slices=[Slice(index=0, y0=0, y1=300), Slice(index=1, y0=300, y1=600)],
+    ).save(work / "slices.json")
+    state = client.get(f"{BASE}/cuts").json()
+    assert state == {"cuts": None, "auto": [300], "strip_height": 600, "crossings": []}
+    state = client.put(f"{BASE}/cuts", json={"cuts": [230, 30]}).json()
+    assert state["cuts"] == [30, 230]
+    assert state["crossings"] == [{"cut": 30, "region_id": "r0001"}, {"cut": 230, "region_id": "r0002"}]
+    assert client.put(f"{BASE}/cuts", json={"cuts": [700]}).status_code == 422
+    assert client.put(f"{BASE}/cuts", json={"cuts": None}).json()["cuts"] is None

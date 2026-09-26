@@ -219,3 +219,12 @@ def test_hand_lettering_set_replace_revert_and_follow_a_moved_region(paths: Chap
         store.revert_layout(paths, "r0001")
     with pytest.raises(ValueError):
         store.set_layout(paths, "r0002", {"size_px": 1})  # below LayoutEdit's minimum
+
+
+def test_output_cuts_are_sorted_validated_and_reset(paths: ChapterPaths) -> None:
+    assert store.set_cuts(paths, [400, 200, 400]) == [200, 400]
+    assert store.load_edits(paths).cuts == [200, 400]
+    with pytest.raises(ValueError, match="outside the strip"):
+        store.set_cuts(paths, [100, 600])  # the strip is 600 rows: a cut must lie strictly inside
+    assert store.load_edits(paths).cuts == [200, 400]
+    assert store.set_cuts(paths, None) is None and store.load_edits(paths).cuts is None

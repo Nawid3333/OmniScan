@@ -1115,7 +1115,7 @@ returns every profile's suggestion); hand cleanup: `GET …/cleanup`, `POST …/
 `GET …/cleanup/{id}.png`; lettering: `GET /api/fonts`, `GET …/layout/live`, `PUT …/layout/{id}` (the
 region's whole hand lettering: `font`, `size_px`, `color`, `stroke_px`, `stroke_color`, `align`, `angle`,
 `box`, `lines`, `hidden`), `DELETE …/layout/{id}` and `GET …/preview/{page}.png` (the rendered page). Every
-write takes `Content-Type: application/json`.
+write takes `Content-Type: application/json`. Output cuts: `GET …/cuts` and `PUT …/cuts` (`{"cuts": [rows] | null}`).
 
 ```bash
 uv run omniscan serve
@@ -1411,6 +1411,13 @@ shows one raw page at a time with every text region as a box:
 - **Preview.** *preview* shows the page as the release will look — raw page, automatic cleaning, your
   hand cleanup and the lettering with your edits — rendered on the spot (CPU, no pipeline run). It is a
   preview: the export decodes and composites the strip on the GPU, so single pixels may differ.
+- **Output cuts** (in the **Slicer** view). The processing slices stay the slicer's; where the finished
+  images split is yours to choose: *Edit output cuts* starts from the slicer's cuts; click to add a cut,
+  drag one to move it, × removes it, *Reset to one image per slice* goes back. With *snap to calm rows* a
+  cut jumps into a uniform band within 60 rows (a clean place between panels). A cut that runs through a
+  region's text or bubble is drawn red ("cuts through r0003") so no balloon is split across two images.
+  Export writes one image per piece between the cuts; the rows of filtered (promo) slices stay out. Stored
+  as `cuts` in `edits.json`; changing them never re-runs detection or OCR.
 - **Render.** *Render (inpaint → export)* re-runs only the render stages (inpaint, LaMa, typeset,
   export) for the chapter, so the finished pages in the Reader view show your edits without
   re-translating the chapter.

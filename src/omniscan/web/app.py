@@ -40,6 +40,7 @@ from omniscan.core.schemas import (
     SlicesArtifact,
 )
 from omniscan.edits import store as edit_store
+from omniscan.export.segments import cut_crossings
 from omniscan.filter.decide import effective_decision, restore
 from omniscan.glossary.match import find_terms, term_present
 from omniscan.glossary.store import GlossaryStore
@@ -98,6 +99,12 @@ class LayoutBody(Model):
     box: BBox | None = None
     lines: list[str] | None = None
     hidden: bool = False
+
+
+class CutsBody(Model):
+    """Body of the output cuts PUT request: strip rows where the exported images split (null = per slice)."""
+
+    cuts: list[int] | None = Field(max_length=2000)
 
 
 class CleanupBody(Model):
@@ -651,6 +658,35 @@ def create_app(
         buf = io.BytesIO()
         Image.fromarray(rgba).save(buf, format="PNG")
         return Response(content=buf.getvalue(), media_type="image/png")
+
+    def cuts_state(series: str, chapter: str) -> dict[str, object]:
+        """The chapter's output cuts: hand-set (or null), the slicer's own, and the cuts crossing a region."""
+        paths = chapter_paths(series, chapter)
+        slices = run_edit(lambda: edit_store.load_slices(paths))
+        hand = edit_store.load_edits(paths).cuts
+        auto = [s.y0 for s in slices.slices[1:]]
+        effective = auto if hand is None else hand
+        crossings = cut_crossings(effective, edit_store.current_regions(paths))
+        return {
+            "cuts": hand,
+            "auto": auto,
+            "strip_height": slices.strip_height,
+            "crossings": [{"cut": cut, "region_id": region_id} for cut, region_id in crossings],
+        }
+
+    @app.get("/api/series/{series}/chapters/{chapter}/cuts")
+    def get_cuts(series: str, chapter: str) -> dict[str, object]:
+        """Where the exported images split: the hand-set output cuts (null = one image per slice), the
+        slicer's own cuts, and every cut that runs through a region's text or bubble."""
+        return cuts_state(series, chapter)
+
+    @app.put("/api/series/{series}/chapters/{chapter}/cuts")
+    async def put_cuts(series: str, chapter: str, request: Request) -> dict[str, object]:
+        """Set the output cuts by hand (strip rows), or reset them with null; export applies them."""
+        body = await json_body(request, CutsBody)
+        paths = chapter_paths(series, chapter)
+        run_edit(lambda: edit_store.set_cuts(paths, body.cuts))
+        return cuts_state(series, chapter)
 
     @app.get("/api/fonts")
     def list_fonts() -> list[str]:

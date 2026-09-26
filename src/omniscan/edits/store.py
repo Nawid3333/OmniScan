@@ -394,3 +394,20 @@ def hand_lettered_ids(paths: ChapterPaths) -> list[str]:
     current = current_regions(paths)
     claimed = set(match_layout_edits(current, load_edits(paths)).values())
     return [region.id for region in current if region.id in claimed]
+
+
+def set_cuts(paths: ChapterPaths, cuts: list[int] | None) -> list[int] | None:
+    """Set the chapter's output cuts (strip rows; sorted, de-duplicated, clamped to the strip's inside) or
+    reset them to one image per slice (None); returns what was stored. ValueError for a cut outside the strip."""
+    with _LOCK:
+        height = load_slices(paths).strip_height
+        stored = None
+        if cuts is not None:
+            outside = [c for c in cuts if not 0 < c < height]
+            if outside:
+                raise ValueError(f"cut {outside[0]} lies outside the strip (0 < cut < {height})")
+            stored = sorted(set(cuts))
+        edits = load_edits(paths)
+        edits.cuts = stored
+        save_edits(paths, edits)
+        return stored
