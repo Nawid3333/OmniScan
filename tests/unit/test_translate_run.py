@@ -9,7 +9,8 @@ from typing import Any
 
 import pytest
 
-from omniscan.core.schemas import BBox, Candidate, CandidateRun, GlossaryEntry, Region
+from omniscan.core.schemas import BBox, Candidate, CandidateRun, GlossaryEntry, MemoryEntry, Region
+from omniscan.learn.apply import TranslationHints
 from omniscan.llm.ollama import ChatResponse, OllamaRateLimitError
 from omniscan.translate.profiles import TranslationProfile
 from omniscan.translate.prompts import (
@@ -19,7 +20,7 @@ from omniscan.translate.prompts import (
     translategemma_prompt,
     translategemma_template,
 )
-from omniscan.translate.run import run_profile
+from omniscan.translate.run import MEMORY_NOTE, run_profile
 
 MODEL = "test-model"
 
@@ -334,3 +335,42 @@ def test_a_region_with_any_letter_is_still_sent() -> None:
     run = run_profile(client, profile(style="translategemma"), [region("r0001", text="파!")], [])
     assert len(client.calls) == 1
     assert run.candidates[0].text == "Pa!"
+
+
+# ---------------------------------------------------------------- learned translation memory
+
+
+def test_hints_answer_known_lines_and_show_memory_and_wording() -> None:
+    regions = [
+        region("r0001", text="안녕  하세요"),
+        region("r0002", text="어디 가요?"),
+        region("r0003", text="안녕 하세요 형"),
+    ]
+    hints = TranslationHints(
+        exact={"안녕 하세요": "Hello there"},
+        entries=(
+            MemoryEntry(source="안녕 하세요", english="Hello there", chapter="1"),
+            MemoryEntry(source="어디 가니?", english="Where to?", chapter="1"),
+            MemoryEntry(source="배고파", english="I'm hungry", chapter="1"),
+        ),
+        preferences=(("Hunter", "Hunters"),),
+        examples=5,
+    )
+    client = FakeClient([json_reply(["r0002", "r0003"])])
+    run = run_profile(client, profile(), regions, [], hints=hints)
+    assert [(c.region_id, c.text, c.notes) for c in run.candidates] == [
+        ("r0001", "Hello there", MEMORY_NOTE),
+        ("r0002", "T r0002", None),
+        ("r0003", "T r0003", None),
+    ]
+    assert run.usage["memory"] == 1.0 and region_ids(client.calls[0]) == ["r0002", "r0003"]
+    user = client.calls[0]["messages"][1]["content"]
+    memory = user.split("Translation memory", 1)[1].split("\n\n", 1)[0]
+    assert "- 안녕 하세요 => Hello there" in memory and "- 어디 가니? => Where to?" in memory
+    assert "배고파" not in memory  # nothing like the lines being translated
+    assert "Editor's preferred wording" in user and "- Hunter => Hunters" in user
+    assert user.index("Translation memory") < user.index("Regions (reading order):")
+
+    plain = FakeClient([json_reply(["r0001", "r0002", "r0003"])])
+    run = run_profile(plain, profile(), regions, [])
+    assert run.usage["memory"] == 0.0 and "Translation memory" not in plain.calls[0]["messages"][1]["content"]

@@ -24,6 +24,7 @@ from omniscan.translate.judge_chapter import judge_chapter
 
 if TYPE_CHECKING:
     from omniscan.core.schemas import CandidateRun, GlossaryEntry
+    from omniscan.learn.apply import TranslationHints
     from omniscan.translate.judge_config import JudgeConfig
     from omniscan.translate.profiles import TranslationProfile
     from omniscan.translate.run import ChatClient
@@ -165,13 +166,19 @@ class TranslateStage:
         """Do the work, write outputs, return metrics (seconds are added by the runner)."""
         entries = series_entries(ctx.series)
         story_summary = series_story_context(ctx.series, ctx.paths.chapter)
-        regions = fallbacks_used = reused = 0.0
+        hints = None
+        if ctx.cfg.learn.enabled:  # the series' translation memory and preferred wording (learn/)
+            from omniscan.learn.apply import translation_hints
+            from omniscan.learn.memory import current_memory
+
+            hints = translation_hints(current_memory(ctx.series), ctx.cfg.learn)
+        regions = fallbacks_used = reused = remembered = 0.0
         for profile in self._profiles:
             fallback = self._fallbacks.get(profile.name)
             run: CandidateRun | None = None
             if fallback is None or profile.name not in self._rate_limited:
                 try:
-                    run = self._translate(ctx, profile, entries, story_summary)
+                    run = self._translate(ctx, profile, entries, story_summary, hints)
                 except OllamaRateLimitError:
                     if fallback is None:
                         raise
@@ -184,7 +191,7 @@ class TranslateStage:
                     )
                     self._rate_limited.add(profile.name)
             if run is None and fallback is not None:
-                run = self._translate(ctx, fallback, entries, story_summary)
+                run = self._translate(ctx, fallback, entries, story_summary, hints)
                 fallbacks_used += 1.0
                 ctx.paths.artifact(f"translations/{profile.name}.json").unlink(missing_ok=True)  # stale
             elif fallback is not None:
@@ -192,11 +199,13 @@ class TranslateStage:
             if run is not None:
                 regions += float(run.usage["regions"])
                 reused += float(run.usage.get("reused", 0.0))
+                remembered += float(run.usage.get("memory", 0.0))
         return {
             "profiles": float(len(self._profiles)),
             "regions": regions,
             "fallbacks_used": fallbacks_used,
             "reused": reused,  # candidates kept from the previous run (their region did not change)
+            "memory": remembered,  # lines taken from the series' translation memory
         }
 
     def _translate(
@@ -205,11 +214,19 @@ class TranslateStage:
         profile: TranslationProfile,
         entries: Sequence[GlossaryEntry],
         story_summary: str | None,
+        hints: TranslationHints | None = None,
     ) -> CandidateRun:
         """One profile over the chapter (the only local model in VRAM while it runs); its written run."""
         _make_sole_local_model(ctx, profile.endpoint, profile.model)
         _status, run = translate_chapter(
-            self._client, ctx.paths, profile, entries, force=True, story_summary=story_summary, reuse=True
+            self._client,
+            ctx.paths,
+            profile,
+            entries,
+            force=True,
+            story_summary=story_summary,
+            reuse=True,
+            hints=hints,
         )
         if run is None:
             raise RuntimeError(f"translate_chapter skipped {profile.name} despite force=True")

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from omniscan.core.paths import ChapterPaths
 from omniscan.core.schemas import Candidate, CandidateRun, GlossaryEntry, RegionsArtifact
@@ -11,6 +11,9 @@ from omniscan.translate.incremental import translation_key
 from omniscan.translate.profiles import TranslationProfile
 from omniscan.translate.prompts import translatable
 from omniscan.translate.run import ChatClient, run_profile
+
+if TYPE_CHECKING:
+    from omniscan.learn.apply import TranslationHints
 
 
 def translate_chapter(
@@ -22,12 +25,14 @@ def translate_chapter(
     force: bool = False,
     story_summary: str | None = None,
     reuse: bool = False,
+    hints: TranslationHints | None = None,
 ) -> tuple[Literal["done", "skipped"], CandidateRun | None]:
     """Run one translation profile over a chapter; write `translations/<profile>.json` (skip if present).
 
     Every candidate is stamped with its key (translate/incremental.py). With `reuse`, the candidates of the
     existing run whose key still matches are kept and only the other regions are sent — the pipeline's
-    way of re-translating just what a hand edit or a glossary change touched."""
+    way of re-translating just what a hand edit or a glossary change touched. `hints` is the series' learned
+    translation memory and preferred wording (learn/apply.py)."""
     output = paths.artifact(f"translations/{profile.name}.json")
     partial = paths.artifact(f"translations/.{profile.name}.partial.json")
     if output.is_file() and not force:
@@ -55,6 +60,7 @@ def translate_chapter(
         partial_path=partial,
         story_summary=story_summary,
         reused=reused,
+        hints=hints,
     )
     run = run.model_copy(
         update={"candidates": [c.model_copy(update={"key": keys.get(c.region_id)}) for c in run.candidates]}

@@ -199,9 +199,11 @@ class FakeChat:
     def __init__(self) -> None:
         self.calls = 0
         self.closed = False
+        self.messages: list[list[dict[str, Any]]] = []
 
     def chat(self, model: str, messages: list[dict[str, Any]], **_: Any) -> ChatResponse:
         self.calls += 1
+        self.messages.append(messages)
         regions = json.loads(messages[-1]["content"].split("Regions (reading order):\n", 1)[1])
         answer = {"translations": [{"id": r["id"], "text": f"EN({r['text']})"} for r in regions]}
         return ChatResponse(
@@ -488,3 +490,54 @@ def test_output_cuts_get_put_reset_and_crossings(client: TestClient, work: Path)
     assert state["crossings"] == [{"cut": 30, "region_id": "r0001"}, {"cut": 230, "region_id": "r0002"}]
     assert client.put(f"{BASE}/cuts", json={"cuts": [700]}).status_code == 422
     assert client.put(f"{BASE}/cuts", json={"cuts": None}).json()["cuts"] is None
+
+
+MEMORY = f"/api/series/{quote(SERIES)}/memory"
+
+
+def test_memory_lists_what_the_edits_taught_and_switches_rules(client: TestClient, work: Path) -> None:
+    assert client.get(MEMORY).json() == {"enabled": True, "min_count": 2, "rules": [], "translations": []}
+    client.patch(f"{BASE}/regions/r0001", json={"text": "안녕하"})
+    client.put(f"{BASE}/final/r0002", json={"text": "Nice to see you"})
+    memory = client.get(MEMORY).json()
+    rule = memory["rules"][0]
+    assert {key: rule[key] for key in ("kind", "wrong", "right", "count", "enabled", "active")} == {
+        "kind": "ocr_fix",
+        "wrong": "안녕",
+        "right": "안녕하",
+        "count": 1,
+        "enabled": True,
+        "active": False,  # one correction, two needed
+    }
+    assert memory["translations"] == [
+        {"source": "반가워", "english": "Nice to see you", "count": 1, "typed": True, "chapter": CHAPTER}
+    ]
+    (work.parents[2] / "lib" / SERIES / "series.toml").write_text(
+        "[learn]\nmin_count = 1\n", encoding="utf-8"
+    )
+    assert client.get(MEMORY).json()["rules"][0]["active"] is True
+    response = client.put(f"{MEMORY}/rules/{rule['id']}", json={"enabled": False})
+    assert response.status_code == 200 and (response.json()["enabled"], response.json()["active"]) == (
+        False,
+        False,
+    )
+    assert client.post(f"{MEMORY}/rebuild", json={}).json()["rules"][0]["enabled"] is False
+    assert client.put(f"{MEMORY}/rules/nope", json={"enabled": False}).status_code == 404
+    assert client.put(f"{MEMORY}/rules/{rule['id']}", json={"enabled": "maybe"}).status_code == 422
+
+
+def test_translate_shows_the_series_preferred_wording(
+    chat_client: tuple[TestClient, FakeChat], work: Path
+) -> None:
+    client, fake = chat_client
+    (work.parents[2] / "lib" / SERIES / "series.toml").write_text(
+        "[learn]\nmin_count = 1\n", encoding="utf-8"
+    )
+    client.put(f"{BASE}/final/r0001", json={"text": "Hello"})  # the judge wrote "Hi"
+    assert client.post(f"{BASE}/translate", json={"region_ids": ["r0002"]}).status_code == 200
+    assert "- Hi => Hello" in fake.messages[-1][-1]["content"]
+    (work.parents[2] / "lib" / SERIES / "series.toml").write_text(
+        "[learn]\nenabled = false\n", encoding="utf-8"
+    )
+    client.post(f"{BASE}/translate", json={"region_ids": ["r0002"]})
+    assert "preferred wording" not in fake.messages[-1][-1]["content"]

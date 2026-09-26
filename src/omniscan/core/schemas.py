@@ -325,7 +325,9 @@ class RegionEdit(Model):
     overlapping it best — a re-detected chapter whose ids shifted keeps its edits. An `added` region (id
     `m0001`, …) is inserted as given and replaces a pipeline region covering the same box; a `deleted` one
     is dropped. A field left None keeps the pipeline's value. The pipeline's own reading stays in
-    `ocr_auto.json` (and the judge's in `final_auto.json`), so dropping an edit reverts it.
+    `ocr_auto.json` (and the judge's in `final_auto.json`), so dropping an edit reverts it. `auto_text` is
+    the pipeline's reading when the region was first edited: what learning (learn/) compares the
+    correction with, even after a re-run that already applies the lesson.
     """
 
     region_id: str
@@ -337,6 +339,7 @@ class RegionEdit(Model):
     bubble_bbox: BBox | None = None
     text: str | None = None  # the corrected source text
     lang: Lang | None = None  # an added region's language
+    auto_text: str | None = None  # the pipeline's reading when first edited (None: an added region)
 
 
 class TranslationEdit(Model):
@@ -347,6 +350,7 @@ class TranslationEdit(Model):
     text: str
     source: str  # the region's source text when the line was written; a changed source flags the line
     suggested_by: str | None = None  # the profile whose suggestion was kept as is; None = typed by hand
+    auto_text: str | None = None  # the judge's line when the region's line was first written (learn/)
 
 
 class LayoutEdit(Model):
@@ -413,6 +417,46 @@ class CleanupArtifact(Artifact):
     strip_width: int
     strip_height: int
     patches: list[CleanupPatch] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------- learning from hand corrections
+
+LearnKind = Literal["ocr_fix", "preferred_term", "drop_text", "watermark_text", "sfx_text"]
+
+
+class LearnedRule(Model):
+    """One thing a series' hand corrections taught the pipeline (memory.json).
+
+    ocr_fix: the OCR's word `wrong` was corrected to `right`; preferred_term: the machine's English word
+    `wrong` was rewritten as `right`; drop_text / watermark_text / sfx_text: a region reading `wrong` was
+    deleted / marked a watermark / marked a sound effect. A rule acts on later chapters once `count`
+    corrections showed it (learn.min_count; one for the watermark/sfx labels) and while it is `enabled`.
+    """
+
+    id: str  # stable hash of (kind, wrong, right): the `enabled` switch survives a rebuild
+    kind: LearnKind
+    wrong: str
+    right: str = ""
+    count: int
+    enabled: bool = True
+
+
+class MemoryEntry(Model):
+    """One line of a series' translation memory: a source line and the English the editor kept for it."""
+
+    source: str  # whitespace collapsed
+    english: str
+    count: int = 1  # how many times this source line was translated by hand
+    typed: bool = True  # typed by hand at least once (False: only kept machine suggestions)
+    chapter: str  # the chapter it was last written in
+
+
+class SeriesMemory(Artifact):
+    """memory.json in the series work dir: what the series' hand edits taught (learn/), rebuilt from every
+    chapter's edits.json whenever one changes; only the rules' `enabled` switches are set by hand."""
+
+    rules: list[LearnedRule] = Field(default_factory=list)
+    translations: list[MemoryEntry] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------- manifest

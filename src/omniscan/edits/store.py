@@ -205,7 +205,9 @@ def update_region(
         index = _region_edit_of(paths, edits, region.id)
         if index is None:
             edits.regions.append(
-                RegionEdit(region_id=region.id, anchor=region.bbox).model_copy(update=changes)
+                RegionEdit(region_id=region.id, anchor=region.bbox, auto_text=region.text).model_copy(
+                    update=changes
+                )
             )
         else:
             edits.regions[index] = edits.regions[index].model_copy(update=changes)
@@ -266,7 +268,9 @@ def delete_region(paths: ChapterPaths, region_id: str, *, direction: Direction) 
         if index is not None and edits.regions[index].added:
             del edits.regions[index]
         elif index is None:
-            edits.regions.append(RegionEdit(region_id=region.id, anchor=region.bbox, deleted=True))
+            edits.regions.append(
+                RegionEdit(region_id=region.id, anchor=region.bbox, deleted=True, auto_text=region.text)
+            )
         else:
             edits.regions[index] = edits.regions[index].model_copy(update={"deleted": True})
         save_edits(paths, edits)
@@ -314,6 +318,14 @@ def edited_ids(paths: ChapterPaths) -> tuple[list[str], list[str]]:
     )
 
 
+def _judged_line(paths: ChapterPaths, region_id: str) -> str | None:
+    """The judge's own English line of a region (final_auto.json), or None when it has none."""
+    path = paths.artifact(FINAL_AUTO_FILE)
+    if not path.is_file():
+        return None
+    return next((line.text for line in FinalArtifact.load(path).lines if line.region_id == region_id), None)
+
+
 def set_translation(
     paths: ChapterPaths,
     region_id: str,
@@ -328,10 +340,16 @@ def set_translation(
         _ensure_auto(paths)
         region = _find(current_regions(paths), region_id)
         edits = load_edits(paths)
-        edit = TranslationEdit(
-            region_id=region.id, anchor=region.bbox, text=text, source=region.text, suggested_by=suggested_by
-        )
         index = _translation_edit_of(paths, edits, region.id)
+        first = edits.translations[index].auto_text if index is not None else None
+        edit = TranslationEdit(
+            region_id=region.id,
+            anchor=region.bbox,
+            text=text,
+            source=region.text,
+            suggested_by=suggested_by,
+            auto_text=first if first is not None else _judged_line(paths, region.id),
+        )
         if index is None:
             edits.translations.append(edit)
         else:

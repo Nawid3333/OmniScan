@@ -417,6 +417,7 @@ export interface RegionEdit {
   bubble_bbox: BBox | null;
   text: string | null;
   lang: string | null;
+  auto_text: string | null; // the pipeline's reading when first edited (null: an added region)
 }
 
 export interface TranslationEdit {
@@ -424,6 +425,8 @@ export interface TranslationEdit {
   anchor: BBox;
   text: string;
   source: string;
+  suggested_by: string | null;
+  auto_text: string | null; // the judge's line when the line was first written
 }
 
 /** GET .../edits: edits.json plus what the server derives from it for the current regions. */
@@ -637,4 +640,51 @@ export async function getCuts(series: string, chapter: string): Promise<CutsStat
 /** Set the output cuts (strip rows), or reset them to one image per slice with null. */
 export async function putCuts(series: string, chapter: string, cuts: number[] | null): Promise<CutsState> {
   return putJson<CutsState>(`${chapterBase(series, chapter)}/cuts`, { cuts });
+}
+
+export type LearnKind = "ocr_fix" | "preferred_term" | "drop_text" | "watermark_text" | "sfx_text";
+
+/** One lesson of the series' hand corrections; `active` = switched on and with enough evidence. */
+export interface LearnedRule {
+  id: string;
+  kind: LearnKind;
+  wrong: string;
+  right: string;
+  count: number;
+  enabled: boolean;
+  active: boolean;
+}
+
+export interface MemoryEntry {
+  source: string;
+  english: string;
+  count: number;
+  typed: boolean;
+  chapter: string;
+}
+
+/** GET /api/series/{series}/memory: what the series' hand edits taught, and the settings deciding it. */
+export interface SeriesMemory {
+  enabled: boolean;
+  min_count: number;
+  rules: LearnedRule[];
+  translations: MemoryEntry[];
+}
+
+function memoryBase(series: string): string {
+  return `${BASE}/series/${encodeURIComponent(series)}/memory`;
+}
+
+export async function getMemory(series: string): Promise<SeriesMemory> {
+  return getJson<SeriesMemory>(memoryBase(series));
+}
+
+/** Rebuild the memory from every chapter's edits now (rule switches are kept). */
+export async function rebuildMemory(series: string): Promise<SeriesMemory> {
+  return postJson<SeriesMemory>(`${memoryBase(series)}/rebuild`, {});
+}
+
+/** Switch one learned rule on or off; returns the rule as stored. */
+export async function setRuleEnabled(series: string, ruleId: string, enabled: boolean): Promise<LearnedRule> {
+  return putJson<LearnedRule>(`${memoryBase(series)}/rules/${encodeURIComponent(ruleId)}`, { enabled });
 }

@@ -21,7 +21,7 @@ from PIL import Image
 from pydantic import Field, ValidationError
 
 from omniscan.cleanup import store as cleanup_store
-from omniscan.core.config import Config, SeriesConfigError, get_secrets, series_config
+from omniscan.core.config import Config, LearnConfig, SeriesConfigError, get_secrets, series_config
 from omniscan.core.paths import IMAGE_SUFFIXES, ChapterPaths, SeriesPaths, list_images, natural_key
 from omniscan.core.schemas import (
     RGB,
@@ -37,6 +37,7 @@ from omniscan.core.schemas import (
     Model,
     RegionKind,
     RegionsArtifact,
+    SeriesMemory,
     SlicesArtifact,
 )
 from omniscan.edits import store as edit_store
@@ -45,6 +46,8 @@ from omniscan.filter.decide import effective_decision, restore
 from omniscan.glossary.match import find_terms, term_present
 from omniscan.glossary.store import GlossaryStore
 from omniscan.inpaint.patches import load_patches
+from omniscan.learn.apply import translation_hints
+from omniscan.learn.memory import current_memory, is_active, set_rule_enabled
 from omniscan.llm.ollama import OllamaClient, OllamaError, OllamaRateLimitError
 from omniscan.pipeline.stages import STAGE_ORDER, series_story_context
 from omniscan.queue.store import QueueStore, queue_db_path
@@ -76,6 +79,12 @@ class FinalEditBody(Model):
 
     text: str
     suggested_by: str | None = None  # the profile whose suggestion is kept unchanged (None = typed by hand)
+
+
+class RuleBody(Model):
+    """Body of the learned-rule switch PUT request."""
+
+    enabled: bool
 
 
 class TranslateBody(Model):
@@ -504,6 +513,11 @@ def create_app(
                 final_lines(paths),
                 fallbacks=resolve_fallbacks(profiles, known),
                 story_summary=series_story_context(series_paths(series), chapter),
+                hints=(
+                    translation_hints(current_memory(series_paths(series)), scfg.learn)
+                    if scfg.learn.enabled
+                    else None
+                ),
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -809,6 +823,47 @@ def create_app(
             "max_attempts": job.max_attempts,
             "error": job.error,
         }
+
+    def learn_settings(series: str) -> LearnConfig:
+        """The series' learning settings (series.toml applied)."""
+        try:
+            return series_config(cfg, series_paths(series).library_dir).learn
+        except SeriesConfigError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    def memory_view(memory: SeriesMemory, learn: LearnConfig) -> dict[str, object]:
+        """The series' memory with each rule's `active` state and the settings deciding it."""
+        return {
+            "enabled": learn.enabled,
+            "min_count": learn.min_count,
+            "rules": [
+                {**rule.model_dump(mode="json"), "active": is_active(rule, learn)} for rule in memory.rules
+            ],
+            "translations": [entry.model_dump(mode="json") for entry in memory.translations],
+        }
+
+    @app.get("/api/series/{series}/memory")
+    def get_memory(series: str) -> dict[str, object]:
+        """What the series' hand edits taught (memory.json, rebuilt first when an edits.json changed)."""
+        learn = learn_settings(series)
+        return memory_view(current_memory(series_paths(series)), learn)
+
+    @app.post("/api/series/{series}/memory/rebuild")
+    def rebuild_memory(series: str) -> dict[str, object]:
+        """Rebuild memory.json from every chapter's edits.json now (rule switches are kept)."""
+        learn = learn_settings(series)
+        return memory_view(current_memory(series_paths(series), rebuild=True), learn)
+
+    @app.put("/api/series/{series}/memory/rules/{rule_id}")
+    async def switch_rule(series: str, rule_id: str, request: Request) -> dict[str, object]:
+        """Switch one learned rule on or off (404 when the series has no such rule)."""
+        body = await json_body(request, RuleBody)
+        learn = learn_settings(series)
+        try:
+            rule = set_rule_enabled(series_paths(series), rule_id, body.enabled)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {**rule.model_dump(mode="json"), "active": is_active(rule, learn)}
 
     @app.get("/api/series/{series}/glossary")
     def get_glossary(series: str) -> list[dict[str, object]]:

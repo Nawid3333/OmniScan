@@ -130,6 +130,9 @@ Every key in `config/default.toml`:
 | `inpaint.lama_window` | one fixed window side in px (every new window shape costs a 10–25 s warm-up) | yes (`omniscan inpaint --lama`) |
 | `inpaint.lama_dilate_px` | extra growth of the flat-fill mask for LaMa, in px | yes (`omniscan inpaint --lama`) |
 | `inpaint.lama_context_px` | a region needs at least this much context inside the window on every side, else it is skipped | yes (`omniscan inpaint --lama`) |
+| `learn.enabled` | apply what the series' hand corrections taught to its later chapters (see "Learning from your corrections") | yes (`omniscan ocr`, `translate`, Studio *Translate*) |
+| `learn.min_count` | a word fix, a preferred wording or a deletion acts after this many matching corrections | yes |
+| `learn.examples` | how many similar lines of the translation memory each translation request shows the model | yes |
 | `ollama.local_url` | local Ollama base URL | yes (`doctor`) |
 | `ollama.cloud_url` | Ollama cloud base URL | yes (`doctor`) |
 | `ollama.request_timeout_s` | per-request timeout | used by the LLM client module (no pipeline stage yet) |
@@ -1068,6 +1071,21 @@ inside a stored watermark zone is excluded from translation, scoring and evaluat
 (text-pattern) and tier 2 (image-hash) matches are. Existing chapters re-detect automatically, because the detect stage now depends on
 `watermarks.json`.
 
+### `omniscan learn`
+
+What a series' hand corrections taught (see "Learning from your corrections").
+
+```bash
+uv run omniscan learn show "Solo Leveling"            # rules (id, kind, wrong → right, count, state) + memory size
+uv run omniscan learn show "Solo Leveling" --json     # memory.json with each rule's `active` state
+uv run omniscan learn show "Solo Leveling" --rebuild  # rebuild from every edits.json first
+uv run omniscan learn disable "Solo Leveling" 3f2a9c1e0b7d   # switch a wrong rule off (kept across rebuilds)
+uv run omniscan learn enable "Solo Leveling" 3f2a9c1e0b7d
+```
+
+A rule's state is `active`, `off` (switched off) or `needs more` (fewer than `learn.min_count`
+corrections so far). An unknown rule id exits 2.
+
 ### `omniscan pack`
 
 Package finished chapters (`output_root/<series>/<chapter>/*.jpg`) into CBZ and/or PDF files.
@@ -1125,6 +1143,8 @@ returns every profile's suggestion); hand cleanup: `GET …/cleanup`, `POST …/
 region's whole hand lettering: `font`, `size_px`, `color`, `stroke_px`, `stroke_color`, `align`, `angle`,
 `box`, `lines`, `hidden`), `DELETE …/layout/{id}` and `GET …/preview/{page}.png` (the rendered page). Every
 write takes `Content-Type: application/json`. Output cuts: `GET …/cuts` and `PUT …/cuts` (`{"cuts": [rows] | null}`).
+Learning: `GET /api/series/{s}/memory` (rules with their `active` state, the translation memory, `min_count`),
+`POST /api/series/{s}/memory/rebuild` and `PUT /api/series/{s}/memory/rules/{id}` (`{"enabled": false}`).
 
 ```bash
 uv run omniscan serve
@@ -1440,6 +1460,35 @@ that renumbers the regions; an edit whose region no longer exists at all is coun
 `edits_orphaned` metric. A chapter with no OCR yet can be done entirely by hand: draw the boxes, type
 their text and English, then render.
 
+## Learning from your corrections
+
+OmniScan learns from what you fix in the Studio, per series, and applies it to the series' later
+chapters. Nothing is sent anywhere and nothing is trained: every lesson is a plain rule or a remembered
+line in the series' `memory.json` (work dir), rebuilt from the chapters' `edits.json` whenever one of
+them changes. Each correction is compared with what the pipeline produced (the edit records it), so a
+lesson keeps its evidence even after a chapter is re-run with the lesson already applied.
+
+| You keep doing this in the Studio | Later chapters get |
+|---|---|
+| correct the same OCR misreading (`Jlnwoo` → `Jinwoo`) | the word fixed as soon as the OCR reads it (the raw reading stays as the region's second-opinion reading) |
+| delete regions reading the same text (a scan group's credit, a site name) | those regions dropped by the OCR |
+| mark a text as a watermark or a sound effect | regions reading that text marked the same way (one correction is enough) |
+| write or keep an English line | the translation memory: a line that comes up again is translated exactly this way, and similar lines are shown to the model as examples of your style |
+| rewrite a name or term the model keeps getting wrong (`Hunter Association` → `Hunters Guild`) | the model told to write your wording (capitalised words: names, titles) |
+
+A word fix, a preferred wording or a deletion acts only after `learn.min_count` (default 2) matching
+corrections, and never while you kept the "wrong" word just as often elsewhere — so a one-off change is
+not a rule. The **Learned** view of the web UI (series level, next to *Filtered*) lists every rule with
+how often it was seen and whether it acts; *Switch off* any rule that is wrong (it stays off when the
+memory is rebuilt) and search the translation memory. `omniscan learn show SERIES` prints the same.
+
+Lessons apply when a stage runs: the `ocr` stage (metrics `learned_fixes`, `learned_drops`,
+`learned_kinds`), the `translate` stage (metric `memory`: lines taken from the translation memory) and
+the Studio's *Translate* (similar lines and your wording only — it always asks the model for a fresh
+suggestion). Chapters already processed are not re-run by a new lesson; re-run one with
+`omniscan run --force` to apply it. Set `[learn] enabled = false` in a series' `series.toml` to switch
+learning off for that series.
+
 ## Web viewer
 
 Start the API and the UI in two terminals:
@@ -1458,7 +1507,8 @@ The Vite dev server proxies `/api` to `http://localhost:8000`, so the defaults o
 together. Open the local URL Vite prints and pick a series and chapter.
 
 The chapter views (Studio, Slicer, OCR, Translation, Reader, Inpaint, Layout, Edit) need a chapter; the
-**Filtered** view only needs a series and shows its every chapter that has filtered items. The **Studio**
+**Filtered** view only needs a series and shows its every chapter that has filtered items; the **Learned**
+view only needs a series too (see "Learning from your corrections"). The **Studio**
 is the editor (see "Studio: editing by hand"); the other views are for checking one stage's output.
 
 The Slicer view stacks the raw pages and overlays:
@@ -1519,9 +1569,10 @@ filtered. Restore appends a `restored` decision to the chapter's `filter.json` �
 restored item can be re-filtered only by re-running `omniscan filter run`. The row turns green without
 a refetch when the restore succeeds; a failure shows the API's error next to the button.
 
-Only the Studio, the Edit view, the run buttons and the Filtered view's Restore button write anything:
-edits go to `edits.json` (and are applied to `ocr.json`/`final.json`), a restore appends to `filter.json`,
-and a run button queues pipeline stages.
+Only the Studio, the Edit view, the run buttons, the Filtered view's Restore button and the Learned view's
+rule switches write anything: edits go to `edits.json` (and are applied to `ocr.json`/`final.json`), a
+restore appends to `filter.json`, a rule switch to the series' `memory.json`, and a run button queues
+pipeline stages.
 
 ## Resuming and re-running
 

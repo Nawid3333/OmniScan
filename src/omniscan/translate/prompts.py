@@ -139,11 +139,15 @@ def chat_json_messages(
     *,
     story_summary: str | None = None,
     context: Sequence[ContextLine] = (),
+    memory: Sequence[tuple[str, str]] = (),
+    preferences: Sequence[tuple[str, str]] = (),
 ) -> list[dict[str, str]]:
     """The chat_json prompt: system message plus story context, glossary sections and the regions list.
 
     `context` (translating a few regions on demand) adds the neighbouring lines, source and English, before
-    the regions list; without it the prompt is exactly the whole-chapter one."""
+    the regions list; without it the prompt is exactly the whole-chapter one. `memory` (source, English)
+    lines the editor translated before and `preferences` (machine word, the editor's word) come from the
+    series' learned memory (learn/); each adds its section only when given."""
     subset = glossary_subset(regions, entries)
     parts: list[str] = []
     if story_summary:
@@ -153,6 +157,18 @@ def chat_json_messages(
         if section:
             lines = "\n".join(f"- {e.source} -> {e.target} ({e.type})" for e in section)
             parts.append(f"{title}:\n{lines}")
+    if memory:
+        lines = "\n".join(f"- {source} => {english}" for source, english in memory)
+        parts.append(
+            "Translation memory (lines of this series the editor translated before; follow their wording "
+            f"and style):\n{lines}"
+        )
+    if preferences:
+        lines = "\n".join(f"- {wrong} => {right}" for wrong, right in preferences)
+        parts.append(
+            "Editor's preferred wording (write the right-hand form wherever the left-hand one would "
+            f"appear):\n{lines}"
+        )
     if context:
         context_json = json.dumps(
             [{"id": line.id, "text": line.text, "english": line.english} for line in context],

@@ -228,3 +228,21 @@ def test_output_cuts_are_sorted_validated_and_reset(paths: ChapterPaths) -> None
         store.set_cuts(paths, [100, 600])  # the strip is 600 rows: a cut must lie strictly inside
     assert store.load_edits(paths).cuts == [200, 400]
     assert store.set_cuts(paths, None) is None and store.load_edits(paths).cuts is None
+
+
+def test_edits_remember_the_pipeline_text_they_replaced(paths: ChapterPaths) -> None:
+    store.update_region(paths, "r0001", direction="ltr", text="안녕하세요")
+    store.update_region(paths, "r0001", direction="ltr", text="안녕하세요!")
+    store.delete_region(paths, "r0002", direction="ltr")
+    store.set_translation(paths, "r0001", "Hello", direction="ltr")
+    store.set_translation(paths, "r0001", "Hello!", direction="ltr")
+    added = store.add_region(paths, box(10, 400, 110, 450), direction="ltr", text="쾅")
+    store.set_translation(paths, added.id, "BANG", direction="ltr")
+    edits = store.load_edits(paths)
+    assert [(e.region_id, e.auto_text) for e in edits.regions] == [
+        ("r0001", "안녕"),
+        ("r0002", "반가워"),
+        ("m0001", None),
+    ]
+    # the judge's line, not the first hand-written one; a region the judge never saw has none
+    assert [(e.region_id, e.auto_text) for e in edits.translations] == [("r0001", "Hi"), ("m0001", None)]

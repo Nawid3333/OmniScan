@@ -11,7 +11,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from omniscan.core.schemas import Candidate, CandidateRun, GlossaryEntry, Region
 from omniscan.llm.ollama import ChatResponse
@@ -28,6 +28,10 @@ from omniscan.translate.prompts import (
     translategemma_prompt,
 )
 
+if TYPE_CHECKING:
+    from omniscan.learn.apply import TranslationHints
+
+MEMORY_NOTE = "translation memory"  # Candidate.notes of a line taken from the series' translation memory
 _PARTIAL_EVERY_REGIONS = 20  # translategemma saves the partial after this many regions
 _QUOTE_PREFIXES = ('"', "“", "「", "『")  # a wrapping quote is only stripped if the source is unquoted
 
@@ -92,13 +96,16 @@ def run_profile(
     story_summary: str | None = None,
     context: Sequence[ContextLine] = (),
     reused: Mapping[str, Candidate] | None = None,
+    hints: TranslationHints | None = None,
     clock: Callable[[], float] = time.perf_counter,
 ) -> CandidateRun:
     """Translate the chapter's translatable regions with one profile and return its candidate run.
 
     `context` (chat_json only) shows the model neighbouring lines when only a few regions are sent.
     `reused` (region id -> candidate) are kept as they are and never sent; the regions still to translate
-    then see their neighbours — source and English, reused lines included — as context (chat_json)."""
+    then see their neighbours — source and English, reused lines included — as context (chat_json).
+    `hints` (the series' learned memory): a region whose source line the editor already translated takes
+    that English as is; the requests show similar memory lines and the preferred wording (chat_json)."""
     start = clock()
     targets = translatable(regions)
     target_ids = {r.id for r in targets}
@@ -107,9 +114,15 @@ def run_profile(
     for candidate in _restored_candidates(partial_path, profile):
         if candidate.region_id in target_ids:
             by_id.setdefault(candidate.region_id, candidate)
+    remembered = 0
     for region in targets:
         if region.id not in by_id and not _has_letters(source_text(region)):
             by_id[region.id] = Candidate(region_id=region.id, text=source_text(region), notes=None)
+        elif region.id not in by_id and hints is not None and source_text(region) in hints.exact:
+            by_id[region.id] = Candidate(
+                region_id=region.id, text=hints.exact[source_text(region)], notes=MEMORY_NOTE
+            )
+            remembered += 1
     remaining = [r for r in targets if r.id not in by_id]
     usage = _Usage()
 
@@ -138,6 +151,7 @@ def run_profile(
                 max_repair_rounds,
                 story_summary,
                 context_for,
+                hints,
             )
         else:
             _run_translategemma(client, profile, remaining, entries, by_id, save_partial, usage)
@@ -151,7 +165,11 @@ def run_profile(
         profile=profile.name,
         model=profile.model,
         candidates=[by_id[r.id] for r in targets if r.id in by_id],
-        usage={**usage.as_dict(targets, by_id, clock() - start), "reused": float(len(kept))},
+        usage={
+            **usage.as_dict(targets, by_id, clock() - start),
+            "reused": float(len(kept)),
+            "memory": float(remembered),
+        },
     )
 
 
@@ -166,14 +184,26 @@ def _run_chat_json(
     max_repair_rounds: int,
     story_summary: str | None = None,
     context_for: Callable[[Sequence[Region]], Sequence[ContextLine]] = lambda _chunk: (),
+    hints: TranslationHints | None = None,
 ) -> None:
     """Request the regions in chunks; repair missing ids, then save the partial after every chunk."""
     for chunk in (
         remaining[i : i + profile.chunk_regions] for i in range(0, len(remaining), profile.chunk_regions)
     ):
         context = context_for(chunk)
+        memory = hints.examples_for([source_text(r) for r in chunk]) if hints is not None else []
+        preferences = list(hints.preferences) if hints is not None else []
         texts = _request_translations(
-            client, profile, chunk, entries, usage, repair=False, story_summary=story_summary, context=context
+            client,
+            profile,
+            chunk,
+            entries,
+            usage,
+            repair=False,
+            story_summary=story_summary,
+            context=context,
+            memory=memory,
+            preferences=preferences,
         )
         missing = [r for r in chunk if r.id not in texts]
         for _ in range(max_repair_rounds):
@@ -188,6 +218,8 @@ def _run_chat_json(
                 repair=True,
                 story_summary=story_summary,
                 context=context,
+                memory=memory,
+                preferences=preferences,
             )
             texts.update(repair)
             missing = [r for r in missing if r.id not in repair]
@@ -207,11 +239,20 @@ def _request_translations(
     repair: bool,
     story_summary: str | None = None,
     context: Sequence[ContextLine] = (),
+    memory: Sequence[tuple[str, str]] = (),
+    preferences: Sequence[tuple[str, str]] = (),
 ) -> dict[str, str]:
     """One chat_json request for `regions`; returns the usable id -> text pairs of the reply."""
     response = client.chat(
         profile.model,
-        chat_json_messages(regions, entries, story_summary=story_summary, context=context),
+        chat_json_messages(
+            regions,
+            entries,
+            story_summary=story_summary,
+            context=context,
+            memory=memory,
+            preferences=preferences,
+        ),
         cloud=(profile.endpoint == "cloud"),
         format=TRANSLATIONS_SCHEMA,
         options={"temperature": profile.temperature},

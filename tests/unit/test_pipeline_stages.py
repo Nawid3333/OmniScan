@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from omniscan.core.config import Config, GpuConfig, PathsConfig
+from omniscan.core.config import Config, GpuConfig, LearnConfig, PathsConfig
 from omniscan.core.manifest import load_manifest
 from omniscan.core.paths import ChapterPaths
 from omniscan.core.schemas import (
@@ -17,12 +17,15 @@ from omniscan.core.schemas import (
     CandidateRun,
     FinalArtifact,
     GlossaryEntry,
+    MemoryEntry,
     Region,
     RegionsArtifact,
+    SeriesMemory,
 )
 from omniscan.core.stage import ChapterContext, StageOutcome, make_context, run_stage
 from omniscan.glossary.store import GlossaryStore
 from omniscan.gpu.vram import OLLAMA_GROUP
+from omniscan.learn.memory import memory_path
 from omniscan.llm.ollama import ChatResponse, OllamaRateLimitError
 from omniscan.pipeline.stages import PASS_OF, STAGE_ORDER, JudgeStage, TranslateStage, build_stage
 from omniscan.translate.judge_config import JudgeConfig
@@ -451,6 +454,23 @@ def test_translate_stage_sends_the_series_glossary_to_the_model(cfg: Config) -> 
     client = FakeClient([json_reply({"r0001": "Hello Sungjin"})])
     run_adapter(TranslateStage(client, [cloud_profile()]), ctx, force=True)
     assert "Sungjin" in json.dumps(client.messages[0], ensure_ascii=False)
+
+
+def test_translate_stage_answers_remembered_lines_from_the_series_memory(cfg: Config) -> None:
+    ctx = make_context(cfg, SERIES, CHAPTER)
+    write_ocr(ctx.paths, ("r0001", "안녕"), ("r0002", "반가워"))
+    memory = SeriesMemory(translations=[MemoryEntry(source="안녕", english="Hey there", chapter="Chapter 0")])
+    memory.save(memory_path(ctx.series))
+    client = FakeClient([json_reply({"r0002": "Hi"})])
+    outcome = run_adapter(TranslateStage(client, [cloud_profile()]), ctx, force=True)
+    assert outcome.metrics["memory"] == 1.0
+    loaded = CandidateRun.load(ctx.paths.artifact("translations/test-profile.json"))
+    assert [candidate.text for candidate in loaded.candidates] == ["Hey there", "Hi"]
+
+    off = make_context(cfg.model_copy(update={"learn": LearnConfig(enabled=False)}), SERIES, CHAPTER)
+    client = FakeClient([json_reply({"r0001": "Hello", "r0002": "Hi"})])
+    ctx.paths.artifact("translations/test-profile.json").unlink()
+    assert run_adapter(TranslateStage(client, [cloud_profile()]), off, force=True).metrics["memory"] == 0.0
 
 
 def test_judge_stage_judges_only_its_own_runs(cfg: Config) -> None:
