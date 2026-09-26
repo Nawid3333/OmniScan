@@ -1161,6 +1161,7 @@ def test_edit_final_line_overwrites_text_and_marks_it_manual(tmp_path: Path) -> 
         "sources": [],
         "rationale": "edited by hand",
         "flags": [],
+        "key": None,  # a hand-written line is never reused as a translation
     }
     artifact = FinalArtifact.load(work / "final.json")
     assert [line.region_id for line in artifact.lines] == ["r0001", "r0002"]  # order preserved
