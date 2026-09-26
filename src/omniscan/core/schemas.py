@@ -355,6 +355,38 @@ class ChapterEdits(Artifact):
     translations: list[TranslationEdit] = Field(default_factory=list)
 
 
+# ---------------------------------------------------------------- hand cleanup
+
+CleanupMethod = Literal["fill", "inpaint", "clone", "restore"]
+
+
+class CleanupPatch(Model):
+    """One hand-painted cleanup of the strip (cleanup.json), applied by export after every automatic patch.
+
+    The mask — and, except for "restore", the pixels — live in cleanup.npz as `<id>.mask` (bool [h, w]) and
+    `<id>.pixels` (uint8 [h, w, 3]), both exactly the size of `box`. "restore" puts the raw page back under
+    its mask (undoing an automatic clean there); the other methods replace the masked pixels with the stored
+    ones: a flat colour ("fill"), inpainting from the surroundings ("inpaint"), or the raw page `offset` away
+    ("clone").
+    """
+
+    id: str  # "c0001", "c0002", … in painting order
+    box: BBox  # strip space
+    method: CleanupMethod
+    color: RGB | None = None  # the fill colour ("fill")
+    offset: tuple[int, int] | None = None  # clone source minus destination, strip px ("clone")
+    mask_px: int = 0
+
+
+class CleanupArtifact(Artifact):
+    """cleanup.json in the chapter work dir: the hand cleanup in painting order (a later patch wins where
+    patches overlap). Written only by the editing tools; tied to the strip size it was painted on."""
+
+    strip_width: int
+    strip_height: int
+    patches: list[CleanupPatch] = Field(default_factory=list)
+
+
 # ---------------------------------------------------------------- manifest
 
 

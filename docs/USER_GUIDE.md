@@ -1110,7 +1110,9 @@ pipeline stages for the chapter; and the editing endpoints behind the Studio (se
 `GET …/edits`, `POST …/regions`, `PATCH …/regions/{id}`, `DELETE …/regions/{id}`, `POST …/regions/{id}/revert`,
 `PUT …/final/{id}` (optional `suggested_by`) and `POST …/final/{id}/revert`; plus on-demand translation:
 `GET /api/translation-profiles` and `POST …/translate` (`{"region_ids": [...], "profile": null, "apply": false}`,
-returns every profile's suggestion). Every write takes `Content-Type: application/json`.
+returns every profile's suggestion); hand cleanup: `GET …/cleanup`, `POST …/cleanup` (one brush stroke:
+`{"page", "box", "mask" (base64 PNG), "method", "color"?, "offset"?}`), `DELETE …/cleanup/{id}` and
+`GET …/cleanup/{id}.png`. Every write takes `Content-Type: application/json`.
 
 ```bash
 uv run omniscan serve
@@ -1382,6 +1384,18 @@ shows one raw page at a time with every text region as a box:
   `fallback` switches to it automatically), an unreachable Ollama 502.
 - **Revert.** *Revert English* brings back the judge's line; *Revert box and text* brings back the
   region as the OCR read it (a box you drew is removed instead).
+- **Clean by hand.** **C** (or *Clean*) turns the mouse into a brush (**[** / **]** change its size).
+  Paint over leftover lettering, a stray mark or a watermark — or over art the automatic cleaning
+  damaged — then *Apply* (Enter; Esc discards the strokes). What the painted pixels become:
+  *inpaint* rebuilds them from their surroundings (OpenCV), *fill* paints one colour (by default the
+  median colour just around the stroke), *clone* copies the page from the spot you Alt+clicked (the
+  offset stays fixed for the next strokes), *restore* brings back the raw page. Strokes are computed from
+  the page as it currently looks — raw page, automatic cleaning, your earlier patches — so inpainting next
+  to removed lettering never pulls it back. Patches are listed per page (delete, *Undo last cleanup*) and
+  shown with the *cleaned* layer; export applies them after the automatic cleaning (patches.npz, then
+  LaMa), in painting order. They are stored in the chapter's `cleanup.json` + `cleanup.npz`, written only
+  by the Studio; a chapter re-imported with pages of another size ignores them (export metric
+  `cleanup_stale`).
 - **Render.** *Render (inpaint → export)* re-runs only the render stages (inpaint, LaMa, typeset,
   export) for the chapter, so the finished pages in the Reader view show your edits without
   re-translating the chapter.

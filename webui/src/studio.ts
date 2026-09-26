@@ -152,3 +152,39 @@ export function fitZoom(pageWidth: number, available: number): number {
   if (pageWidth <= 0 || available <= 0) return 1;
   return Math.min(1, available / pageWidth);
 }
+
+/** Bounding box [x0, x1) x [y0, y1) of the pixels with any alpha in RGBA `data` (width x height); null
+ *  when nothing is painted. */
+export function maskBounds(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+): { x0: number; y0: number; x1: number; y1: number } | null {
+  let x0 = width;
+  let y0 = height;
+  let x1 = -1;
+  let y1 = -1;
+  for (let y = 0; y < height; y++) {
+    const row = y * width * 4;
+    for (let x = 0; x < width; x++) {
+      if (data[row + x * 4 + 3] > 0) {
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
+    }
+  }
+  return x1 < 0 ? null : { x0, y0, x1: x1 + 1, y1: y1 + 1 };
+}
+
+/** "#rrggbb" -> [r, g, b]. */
+export function hexToRgb(hex: string): [number, number, number] {
+  const value = Number.parseInt(hex.replace("#", ""), 16);
+  return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
+}
+
+/** [r, g, b] -> "#rrggbb". */
+export function rgbToHex(rgb: [number, number, number]): string {
+  return `#${rgb.map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+}

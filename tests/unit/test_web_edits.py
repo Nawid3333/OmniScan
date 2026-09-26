@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import io
 import json
 import subprocess
 import sys
@@ -9,19 +11,23 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from omniscan.core.config import Config, PathsConfig
 from omniscan.core.schemas import (
     BBox,
     FinalArtifact,
     FinalLine,
+    IngestArtifact,
     OcrLine,
     Region,
     RegionsArtifact,
     Slice,
     SlicesArtifact,
+    SourceFile,
 )
 from omniscan.llm.ollama import ChatResponse, OllamaError, OllamaRateLimitError
 from omniscan.web.app import create_app
@@ -314,3 +320,80 @@ def test_translate_maps_ollama_failures(tmp_path: Path, work: Path, monkeypatch:
     ):
         client = TestClient(create_app(cfg, chat_client=lambda _cfg, error=error: Failing(error)))
         assert client.post(f"{BASE}/translate", json={"region_ids": ["r0001"]}).status_code == status
+
+
+def png_mask(width: int, height: int, *, alpha: bool = True) -> str:
+    """A fully painted mask PNG, base64 (as the Studio's canvas sends it: a data: URL)."""
+    image = Image.new("RGBA" if alpha else "L", (width, height), (255, 255, 255, 255) if alpha else 255)
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+@pytest.fixture
+def cleanup_client(client: TestClient, work: Path, tmp_path: Path) -> TestClient:
+    """The editing fixture plus one 200x600 grey page with a black mark at (50..70, 40..60)."""
+    page = np.full((600, 200, 3), 120, dtype=np.uint8)
+    page[40:60, 50:70] = 0
+    Image.fromarray(page).save(tmp_path / "lib" / SERIES / CHAPTER / "001.png")
+    IngestArtifact(
+        series=SERIES,
+        chapter=CHAPTER,
+        strip_width=200,
+        strip_height=600,
+        files=[SourceFile(index=0, name="001.png", sha256="0" * 64, width=200, height=600, y0=0, y1=600)],
+    ).save(work / "ingest.json")
+    return client
+
+
+def test_cleanup_add_preview_list_delete(cleanup_client: TestClient) -> None:
+    client = cleanup_client
+    assert client.get(f"{BASE}/cleanup").json() == {"patches": []}
+    body = {
+        "page": 0,
+        "box": bbox(50, 40, 70, 60),
+        "mask": png_mask(20, 20),
+        "method": "fill",
+        "color": [9, 9, 9],
+    }
+    response = client.post(f"{BASE}/cleanup", json=body)
+    assert response.status_code == 201
+    assert response.json() == {
+        "id": "c0001",
+        "box": bbox(50, 40, 70, 60),
+        "method": "fill",
+        "color": [9, 9, 9],
+        "offset": None,
+        "mask_px": 400,
+    }
+    body = {
+        "page": 0,
+        "box": bbox(50, 40, 70, 60),
+        "mask": png_mask(20, 20, alpha=False),
+        "method": "restore",
+    }
+    assert client.post(f"{BASE}/cleanup", json=body).json()["id"] == "c0002"
+    listed = client.get(f"{BASE}/cleanup").json()
+    assert [p["id"] for p in listed["patches"]] == ["c0001", "c0002"] and listed["strip_width"] == 200
+    preview = client.get(f"{BASE}/cleanup/c0002.png")
+    assert preview.status_code == 200 and preview.headers["content-type"] == "image/png"
+    assert Image.open(io.BytesIO(preview.content)).getpixel((0, 0)) == (0, 0, 0, 255)  # the raw mark
+    assert client.delete(f"{BASE}/cleanup/c0001").json() == {"deleted": "c0001"}
+    assert [p["id"] for p in client.get(f"{BASE}/cleanup").json()["patches"]] == ["c0002"]
+
+
+def test_cleanup_errors(cleanup_client: TestClient) -> None:
+    client = cleanup_client
+    base = {"page": 0, "box": bbox(0, 0, 10, 10), "method": "fill"}
+    assert (
+        client.post(f"{BASE}/cleanup", json={**base, "mask": png_mask(5, 5)}).status_code == 422
+    )  # wrong size
+    assert client.post(f"{BASE}/cleanup", json={**base, "mask": "not-base64!"}).status_code == 422
+    response = client.post(f"{BASE}/cleanup", json={**base, "page": 3, "mask": png_mask(10, 10)})
+    assert response.status_code == 422 and "no page with index 3" in response.json()["detail"]
+    clone = {**base, "method": "clone", "offset": [-50, 0], "mask": png_mask(10, 10)}
+    assert client.post(f"{BASE}/cleanup", json=clone).status_code == 422  # source outside the strip
+    assert client.delete(f"{BASE}/cleanup/c0009").status_code == 404
+    assert client.get(f"{BASE}/cleanup/c0009.png").status_code == 404
+    response = client.post(f"{BASE}/cleanup", content="{}", headers={"Content-Type": "text/plain"})
+    assert response.status_code == 415

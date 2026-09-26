@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import io
 import mimetypes
 import threading
@@ -18,10 +20,13 @@ from fastapi.responses import FileResponse, Response
 from PIL import Image
 from pydantic import Field, ValidationError
 
+from omniscan.cleanup import store as cleanup_store
 from omniscan.core.config import Config, SeriesConfigError, get_secrets, series_config
 from omniscan.core.paths import IMAGE_SUFFIXES, ChapterPaths, SeriesPaths, list_images, natural_key
 from omniscan.core.schemas import (
+    RGB,
     BBox,
+    CleanupMethod,
     FilterArtifact,
     FilterDecision,
     FinalArtifact,
@@ -75,6 +80,32 @@ class TranslateBody(Model):
     region_ids: list[str] = Field(min_length=1, max_length=60)
     profile: str | None = None  # one profile by name (enabled or not); None = every enabled profile
     apply: bool = False  # keep each region's first suggestion as its English line
+
+
+class CleanupBody(Model):
+    """Body of the hand cleanup POST request: one brush stroke painted on one raw page (its own pixels)."""
+
+    page: int = Field(ge=0)  # SourceFile.index of the page the stroke was painted on
+    box: BBox  # the stroke's bounding box in that page's pixels
+    mask: str = Field(max_length=8_000_000)  # PNG (base64, a data: URL prefix allowed) the size of `box`
+    method: CleanupMethod
+    color: RGB | None = None  # "fill": the colour; None = the colour around the stroke
+    offset: tuple[int, int] | None = None  # "clone": source minus destination, page pixels
+
+
+def decode_mask(data: str, box: BBox) -> np.ndarray:
+    """A base64 PNG (optionally a data: URL) as a bool mask: opaque pixels when it has alpha, else bright
+    ones. ValueError when it is not a PNG of `box`'s size."""
+    payload = data.split(",", 1)[1] if data.startswith("data:") else data
+    try:
+        with Image.open(io.BytesIO(base64.b64decode(payload, validate=True))) as image:
+            if image.size != (box.width, box.height):
+                raise ValueError(f"mask is {image.size[0]}x{image.size[1]}, box is {box.width}x{box.height}")
+            if image.mode in ("RGBA", "LA", "PA") or "transparency" in image.info:
+                return np.asarray(image.convert("RGBA"))[..., 3] > 127
+            return np.asarray(image.convert("L")) > 127
+    except (binascii.Error, OSError) as exc:
+        raise ValueError(f"mask is not a base64 PNG: {exc}") from exc
 
 
 def ollama_client(cfg: Config) -> ChatClient:
@@ -383,10 +414,11 @@ def create_app(
         return scfg.detect.reading_direction, scfg.ocr.lang
 
     def run_edit[T](operation: Callable[[], T]) -> T:
-        """Run one edit operation, mapping its errors to 404 (missing artifact or region) and 422 (bad box)."""
+        """Run one edit operation, mapping its errors to 404 (missing artifact, region or page file) and 422
+        (bad box or stroke)."""
         try:
             return operation()
-        except edit_store.EditNotFoundError as exc:
+        except (edit_store.EditNotFoundError, FileNotFoundError) as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -558,6 +590,49 @@ def create_app(
         direction, _lang = edit_settings(series)
         region = run_edit(lambda: edit_store.revert_region(paths, region_id, direction=direction))
         return {"region": None if region is None else region.model_dump(mode="json")}
+
+    @app.get("/api/series/{series}/chapters/{chapter}/cleanup")
+    def get_cleanup(series: str, chapter: str) -> dict[str, object]:
+        """The chapter's hand cleanup (cleanup.json; no patches when nothing was cleaned by hand)."""
+        artifact = cleanup_store.load_cleanup(chapter_paths(series, chapter))
+        if artifact is None:
+            return {"patches": []}
+        return artifact.model_dump(mode="json")
+
+    @app.post("/api/series/{series}/chapters/{chapter}/cleanup", status_code=201)
+    async def add_cleanup(series: str, chapter: str, request: Request) -> dict[str, object]:
+        """Clean one brush stroke (fill, inpaint, clone or restore); export applies it after every automatic
+        patch. Returns the new patch."""
+        body = await json_body(request, CleanupBody)
+        paths = chapter_paths(series, chapter)
+        patch = run_edit(
+            lambda: cleanup_store.add_patch(
+                paths,
+                page=body.page,
+                box=body.box,
+                mask=decode_mask(body.mask, body.box),
+                method=body.method,
+                color=body.color,
+                offset=body.offset,
+            )
+        )
+        return patch.model_dump(mode="json")
+
+    @app.delete("/api/series/{series}/chapters/{chapter}/cleanup/{patch_id}")
+    def delete_cleanup(series: str, chapter: str, patch_id: str) -> dict[str, object]:
+        """Remove one hand cleanup patch."""
+        paths = chapter_paths(series, chapter)
+        run_edit(lambda: cleanup_store.delete_patch(paths, patch_id))
+        return {"deleted": patch_id}
+
+    @app.get("/api/series/{series}/chapters/{chapter}/cleanup/{patch_id}.png")
+    def get_cleanup_patch(series: str, chapter: str, patch_id: str) -> Response:
+        """One hand cleanup patch as an RGBA PNG (alpha = its mask; "restore" shows the raw page)."""
+        paths = chapter_paths(series, chapter)
+        rgba = run_edit(lambda: cleanup_store.patch_rgba(paths, patch_id))
+        buf = io.BytesIO()
+        Image.fromarray(rgba).save(buf, format="PNG")
+        return Response(content=buf.getvalue(), media_type="image/png")
 
     @app.post("/api/series/{series}/chapters/{chapter}/run", status_code=202)
     async def run_chapter(series: str, chapter: str, request: Request) -> dict[str, object]:
