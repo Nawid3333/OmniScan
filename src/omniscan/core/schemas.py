@@ -193,6 +193,7 @@ class Candidate(Model):
     region_id: str
     text: str
     notes: str | None = None
+    key: str | None = None  # hash of what produced it (translate/incremental.py): a re-run reuses a match
 
 
 class CandidateRun(Artifact):
@@ -211,6 +212,7 @@ class FinalLine(Model):
     sources: list[str] = Field(default_factory=list)  # run_ids used
     rationale: str = ""
     flags: list[str] = Field(default_factory=list)  # e.g. "uncertain", "glossary_violation"
+    key: str | None = None  # hash of what the judge saw (translate/incremental.py): a re-run reuses a match
 
 
 class FinalArtifact(Artifact):

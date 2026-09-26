@@ -22,7 +22,7 @@ packaged into CBZ/PDF.
 | chapter matching | working — `omniscan match chapters DIR_A DIR_B` (perceptual-hash alignment between two independently-sourced chapter sets) |
 | detect | working — `omniscan detect` (regions.json; no text yet) |
 | ocr | working — `omniscan ocr` (ocr.json; sound effects found by lexicon and a whole-page CRAFT sweep) |
-| translate | working — `omniscan translate` (candidate runs only; needs ocr.json from `omniscan ocr`) |
+| translate | working — `omniscan translate` (candidate runs only; needs ocr.json from `omniscan ocr`); pipeline re-runs translate and judge only the regions that changed |
 | judge | working — `omniscan judge` (final.json) |
 | eval | working — `omniscan eval` (scores ocr.json/final.json against ground-truth SVG text layers) |
 | inpaint | working — `omniscan inpaint` (flat fills, glyph-precise masks; `--lama` rebuilds the art under lettering) |

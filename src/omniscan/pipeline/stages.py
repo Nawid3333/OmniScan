@@ -111,6 +111,9 @@ def _make_sole_local_model(ctx: ChapterContext, endpoint: str, model: str) -> No
 class TranslateStage:
     """Run every enabled translation profile over a chapter's ocr.json (satisfies core.stage.Stage).
 
+    Incremental: a region whose text, kind, language and matching glossary entries are unchanged keeps its
+    candidate from the previous run (translate/incremental.py); only changed regions reach the model.
+
     A profile with a fallback that hits the Ollama rate limit (cloud tokens exhausted) is replaced by its
     fallback for this chapter and for every later chapter of the same pass, so the pass does not pay the
     rate-limit retries again per chapter. The chapter's record still lists the primary's output, which
@@ -162,7 +165,7 @@ class TranslateStage:
         """Do the work, write outputs, return metrics (seconds are added by the runner)."""
         entries = series_entries(ctx.series)
         story_summary = series_story_context(ctx.series, ctx.paths.chapter)
-        regions = fallbacks_used = 0.0
+        regions = fallbacks_used = reused = 0.0
         for profile in self._profiles:
             fallback = self._fallbacks.get(profile.name)
             run: CandidateRun | None = None
@@ -188,7 +191,13 @@ class TranslateStage:
                 ctx.paths.artifact(f"translations/{fallback.name}.json").unlink(missing_ok=True)  # stale
             if run is not None:
                 regions += float(run.usage["regions"])
-        return {"profiles": float(len(self._profiles)), "regions": regions, "fallbacks_used": fallbacks_used}
+                reused += float(run.usage.get("reused", 0.0))
+        return {
+            "profiles": float(len(self._profiles)),
+            "regions": regions,
+            "fallbacks_used": fallbacks_used,
+            "reused": reused,  # candidates kept from the previous run (their region did not change)
+        }
 
     def _translate(
         self,
@@ -200,7 +209,7 @@ class TranslateStage:
         """One profile over the chapter (the only local model in VRAM while it runs); its written run."""
         _make_sole_local_model(ctx, profile.endpoint, profile.model)
         _status, run = translate_chapter(
-            self._client, ctx.paths, profile, entries, force=True, story_summary=story_summary
+            self._client, ctx.paths, profile, entries, force=True, story_summary=story_summary, reuse=True
         )
         if run is None:
             raise RuntimeError(f"translate_chapter skipped {profile.name} despite force=True")
@@ -270,6 +279,7 @@ class JudgeStage:
             force=True,
             story_summary=series_story_context(ctx.series, ctx.paths.chapter),
             rate_limit_fallback=True,
+            reuse=True,
         )
         if stats is None:
             return {}
@@ -281,6 +291,7 @@ class JudgeStage:
             "violations_left": float(stats.violations_left),
             "requests": float(stats.requests),
             "rate_limited": float(stats.rate_limited),
+            "reused": float(stats.reused),
         }
 
 

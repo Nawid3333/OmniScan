@@ -9,7 +9,7 @@ answers cloud models produce; ids the model never returns get no candidate. A re
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
@@ -21,6 +21,7 @@ from omniscan.translate.prompts import (
     TRANSLATIONS_SCHEMA,
     ContextLine,
     chat_json_messages,
+    context_lines,
     source_text,
     substitute_binding,
     translatable,
@@ -90,17 +91,22 @@ def run_profile(
     max_repair_rounds: int = 2,
     story_summary: str | None = None,
     context: Sequence[ContextLine] = (),
+    reused: Mapping[str, Candidate] | None = None,
     clock: Callable[[], float] = time.perf_counter,
 ) -> CandidateRun:
     """Translate the chapter's translatable regions with one profile and return its candidate run.
 
-    `context` (chat_json only) shows the model neighbouring lines when only a few regions are sent."""
+    `context` (chat_json only) shows the model neighbouring lines when only a few regions are sent.
+    `reused` (region id -> candidate) are kept as they are and never sent; the regions still to translate
+    then see their neighbours — source and English, reused lines included — as context (chat_json)."""
     start = clock()
     targets = translatable(regions)
-    by_id: dict[str, Candidate] = {}
+    target_ids = {r.id for r in targets}
+    kept = {rid: c for rid, c in (reused or {}).items() if rid in target_ids}
+    by_id: dict[str, Candidate] = dict(kept)
     for candidate in _restored_candidates(partial_path, profile):
-        if candidate.region_id in {r.id for r in targets}:
-            by_id[candidate.region_id] = candidate
+        if candidate.region_id in target_ids:
+            by_id.setdefault(candidate.region_id, candidate)
     for region in targets:
         if region.id not in by_id and not _has_letters(source_text(region)):
             by_id[region.id] = Candidate(region_id=region.id, text=source_text(region), notes=None)
@@ -111,6 +117,13 @@ def run_profile(
         if partial_path is not None:
             # Intermediate saves don't call `clock()` — only start/end of the whole run consume ticks.
             _save_partial(partial_path, profile, targets, by_id, usage, 0.0)
+
+    def context_for(chunk: Sequence[Region]) -> Sequence[ContextLine]:
+        """The context of one request: the given lines, or with reused lines the chunk's neighbours."""
+        if context or not kept:
+            return context
+        english = {rid: candidate.text for rid, candidate in by_id.items()}
+        return context_lines(targets, {r.id for r in chunk}, english)
 
     try:
         if profile.style == "chat_json":
@@ -124,7 +137,7 @@ def run_profile(
                 usage,
                 max_repair_rounds,
                 story_summary,
-                context,
+                context_for,
             )
         else:
             _run_translategemma(client, profile, remaining, entries, by_id, save_partial, usage)
@@ -138,7 +151,7 @@ def run_profile(
         profile=profile.name,
         model=profile.model,
         candidates=[by_id[r.id] for r in targets if r.id in by_id],
-        usage=usage.as_dict(targets, by_id, clock() - start),
+        usage={**usage.as_dict(targets, by_id, clock() - start), "reused": float(len(kept))},
     )
 
 
@@ -152,12 +165,13 @@ def _run_chat_json(
     usage: _Usage,
     max_repair_rounds: int,
     story_summary: str | None = None,
-    context: Sequence[ContextLine] = (),
+    context_for: Callable[[Sequence[Region]], Sequence[ContextLine]] = lambda _chunk: (),
 ) -> None:
     """Request the regions in chunks; repair missing ids, then save the partial after every chunk."""
     for chunk in (
         remaining[i : i + profile.chunk_regions] for i in range(0, len(remaining), profile.chunk_regions)
     ):
+        context = context_for(chunk)
         texts = _request_translations(
             client, profile, chunk, entries, usage, repair=False, story_summary=story_summary, context=context
         )

@@ -775,6 +775,15 @@ invocation resumes; a finished run deletes it. Exit 2 for unknown profiles or ch
 `ocr.json`-less series; a chapter without `ocr.json` fails that chapter but the rest still run (exit
 1). An Ollama rate limit stops everything immediately with exit 3 and keeps the partial results.
 
+**Only what changed is translated again** when the pipeline (`omniscan run`, the web run buttons) re-runs
+the translate and judge stages: every candidate and every judged line carries a key — a hash of the
+region's source text, kind and language, the glossary entries that match it, and the model settings —
+and a region whose key is unchanged keeps its candidate and its judged line word for word. So fixing one
+bubble's OCR text re-translates and re-judges that bubble alone (the model sees its neighbours, source and
+English, as context), and locking a glossary term re-translates only the regions that contain it. The
+stages report the kept ones as `reused`. `omniscan translate --force` is the way to get a completely
+fresh translation of a chapter; a judge line flagged `judge_failed` (rate limit) is always judged again.
+
 ```bash
 uv run omniscan translate DemoSeries
 uv run omniscan translate DemoSeries --profile gemma4-12b-local --chapter "Chapter 1" --force
