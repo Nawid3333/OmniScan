@@ -143,7 +143,7 @@ MUTANTS = [
         "profiles metric",
     ),
     (S, 'if not path.name.startswith(".")', 'if path.name.startswith(".")', "partials included"),
-    (S, 'return ["final.json"]', 'return ["final.jsn"]', "judge outputs"),
+    (S, 'return ["final.json", FINAL_AUTO_FILE]', 'return ["final.jsn", FINAL_AUTO_FILE]', "judge outputs"),
     (S, '"judged": float(stats.judged),', '"judged": float(stats.regions),', "judged metric"),
     (S, '"requests": float(stats.requests),', '"requests": float(stats.judged),', "requests metric"),
     (
