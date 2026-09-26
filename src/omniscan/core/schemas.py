@@ -347,12 +347,35 @@ class TranslationEdit(Model):
     suggested_by: str | None = None  # the profile whose suggestion was kept as is; None = typed by hand
 
 
+class LayoutEdit(Model):
+    """One hand-set lettering of a region (edits.json), re-applied every time the `typeset` stage runs.
+
+    A field left None keeps the typesetter's choice. A new font, size, box or line breaks sets the English
+    line again: explicit `lines` are kept as written, otherwise the text is fitted anew (at `size_px` when
+    given) into `box`, or into the region's own lettering shape.
+    """
+
+    region_id: str
+    anchor: BBox  # the region's text box when the lettering was set (matched like RegionEdit.anchor)
+    font: str | None = None  # a file in the fonts folder, or an absolute path
+    size_px: int | None = Field(default=None, ge=4, le=400)
+    color: RGB | None = None
+    stroke_px: int | None = Field(default=None, ge=0, le=40)
+    stroke_color: RGB | None = None
+    align: Literal["center", "left", "right"] | None = None
+    angle: float | None = Field(default=None, ge=-180.0, le=180.0)
+    box: BBox | None = None  # where the lettering goes (strip space)
+    lines: list[str] | None = None  # explicit line breaks
+    hidden: bool = False  # no English lettering for this region at all
+
+
 class ChapterEdits(Artifact):
     """edits.json in the chapter work dir: every hand edit of the chapter. Written only by the editing tools
     (web studio, CLI); the stages read it and re-apply it to what they produce, so edits survive re-runs."""
 
     regions: list[RegionEdit] = Field(default_factory=list)
     translations: list[TranslationEdit] = Field(default_factory=list)
+    layout: list[LayoutEdit] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------- hand cleanup

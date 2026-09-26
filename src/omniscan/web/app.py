@@ -51,6 +51,9 @@ from omniscan.queue.worker import run_queue
 from omniscan.translate.profiles import default_profile_paths, load_profiles, resolve_fallbacks
 from omniscan.translate.run import ChatClient
 from omniscan.translate.suggest import suggest
+from omniscan.typeset.chapter import chapter_layout
+from omniscan.typeset.fonts import font_file, fonts_dir
+from omniscan.typeset.page_preview import render_page
 
 
 class RestoreBody(Model):
@@ -80,6 +83,21 @@ class TranslateBody(Model):
     region_ids: list[str] = Field(min_length=1, max_length=60)
     profile: str | None = None  # one profile by name (enabled or not); None = every enabled profile
     apply: bool = False  # keep each region's first suggestion as its English line
+
+
+class LayoutBody(Model):
+    """Body of the hand lettering PUT request: every field left out keeps the typesetter's choice."""
+
+    font: str | None = None
+    size_px: int | None = Field(default=None, ge=4, le=400)
+    color: RGB | None = None
+    stroke_px: int | None = Field(default=None, ge=0, le=40)
+    stroke_color: RGB | None = None
+    align: Literal["center", "left", "right"] | None = None
+    angle: float | None = Field(default=None, ge=-180.0, le=180.0)
+    box: BBox | None = None
+    lines: list[str] | None = None
+    hidden: bool = False
 
 
 class CleanupBody(Model):
@@ -633,6 +651,72 @@ def create_app(
         buf = io.BytesIO()
         Image.fromarray(rgba).save(buf, format="PNG")
         return Response(content=buf.getvalue(), media_type="image/png")
+
+    @app.get("/api/fonts")
+    def list_fonts() -> list[str]:
+        """The lettering fonts in the fonts folder (file names, as a layout item names them)."""
+        folder = fonts_dir()
+        if not folder.is_dir():
+            return []
+        return sorted(
+            (p.name for p in folder.iterdir() if p.suffix.lower() in (".ttf", ".otf")), key=natural_key
+        )
+
+    def live_layout(series: str, chapter: str) -> list[dict[str, object]]:
+        """The chapter's layout items as the typesetter + hand lettering set them now (404 when an input is
+        missing)."""
+        paths = chapter_paths(series, chapter)
+        try:
+            layout = chapter_layout(paths, series_config(cfg, series_paths(series).library_dir))
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return [item.model_dump(mode="json") for item in layout.items]
+
+    @app.get("/api/series/{series}/chapters/{chapter}/layout/live")
+    def get_live_layout(series: str, chapter: str) -> dict[str, object]:
+        """The lettering as the next typeset will set it (English lines and hand lettering included), and
+        which regions carry a hand-set lettering."""
+        items = live_layout(series, chapter)
+        return {"items": items, "hand_set": edit_store.hand_lettered_ids(chapter_paths(series, chapter))}
+
+    @app.put("/api/series/{series}/chapters/{chapter}/layout/{region_id}")
+    async def put_layout(series: str, chapter: str, region_id: str, request: Request) -> dict[str, object]:
+        """Set a region's hand lettering (font, size, colours, outline, alignment, angle, box, line breaks,
+        hidden); returns the edit and the region's lettering as it now comes out (null when hidden)."""
+        body = await json_body(request, LayoutBody)
+        paths = chapter_paths(series, chapter)
+        if body.font is not None:
+            try:
+                font_file(body.font)
+            except FileNotFoundError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+        edit = run_edit(
+            lambda: edit_store.set_layout(paths, region_id, body.model_dump(exclude_defaults=True))
+        )
+        item = next((i for i in live_layout(series, chapter) if i["region_id"] == region_id), None)
+        return {"edit": edit.model_dump(mode="json"), "item": item}
+
+    @app.delete("/api/series/{series}/chapters/{chapter}/layout/{region_id}")
+    def delete_layout(series: str, chapter: str, region_id: str) -> dict[str, object]:
+        """Drop a region's hand lettering."""
+        paths = chapter_paths(series, chapter)
+        run_edit(lambda: edit_store.revert_layout(paths, region_id))
+        return {"reverted": region_id}
+
+    @app.get("/api/series/{series}/chapters/{chapter}/preview/{page}.png")
+    def get_preview(series: str, chapter: str, page: int) -> Response:
+        """One page as the release will look (cleaned, hand cleanup, lettering with hand edits), rendered
+        now on the CPU; a chapter not yet typeset (no final.json/inpaint.json) shows its cleaning only."""
+        paths = chapter_paths(series, chapter)
+        try:
+            items = chapter_layout(paths, series_config(cfg, series_paths(series).library_dir)).items
+        except FileNotFoundError:
+            items = []
+        ingest = run_edit(lambda: cleanup_store.load_ingest(paths))
+        pixels = run_edit(lambda: render_page(paths, ingest, page, items))
+        buf = io.BytesIO()
+        Image.fromarray(pixels).save(buf, format="JPEG", quality=92)
+        return Response(content=buf.getvalue(), media_type="image/jpeg")
 
     @app.post("/api/series/{series}/chapters/{chapter}/run", status_code=202)
     async def run_chapter(series: str, chapter: str, request: Request) -> dict[str, object]:

@@ -202,3 +202,20 @@ def test_chapter_without_ocr_starts_from_hand_drawn_regions(paths: ChapterPaths)
     assert [r.id for r in ocr(paths)] == [added.id]
     assert RegionsArtifact.load(paths.artifact("ocr_auto.json")).regions == []
     assert not paths.artifact("final.json").exists()  # no judge ran and no line was written
+
+
+def test_hand_lettering_set_replace_revert_and_follow_a_moved_region(paths: ChapterPaths) -> None:
+    edit = store.set_layout(paths, "r0001", {"color": (255, 0, 0), "size_px": 20})
+    assert (edit.region_id, edit.anchor, edit.color, edit.size_px) == ("r0001", R1.bbox, (255, 0, 0), 20)
+    store.set_layout(paths, "r0001", {"hidden": True})  # a second set replaces the first entirely
+    layout = store.load_edits(paths).layout
+    assert len(layout) == 1 and layout[0].hidden and layout[0].color is None
+    assert store.hand_lettered_ids(paths) == ["r0001"]
+    store.update_region(paths, "r0001", direction="ltr", bbox=box(20, 400, 120, 460))
+    assert store.hand_lettered_ids(paths) == ["r0001"]  # the lettering followed the moved box
+    store.revert_layout(paths, "r0001")
+    assert store.load_edits(paths).layout == [] and store.hand_lettered_ids(paths) == []
+    with pytest.raises(store.EditNotFoundError, match="no hand lettering"):
+        store.revert_layout(paths, "r0001")
+    with pytest.raises(ValueError):
+        store.set_layout(paths, "r0002", {"size_px": 1})  # below LayoutEdit's minimum

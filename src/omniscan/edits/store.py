@@ -20,6 +20,7 @@ from omniscan.core.schemas import (
     FinalArtifact,
     FinalLine,
     Lang,
+    LayoutEdit,
     Region,
     RegionEdit,
     RegionKind,
@@ -31,6 +32,7 @@ from omniscan.edits.apply import (
     ADDED_PREFIX,
     apply_region_edits,
     apply_translation_edits,
+    match_layout_edits,
     match_region_edits,
     match_translation_edits,
 )
@@ -157,10 +159,20 @@ def _translation_edit_of(paths: ChapterPaths, edits: ChapterEdits, region_id: st
     return next((i for i, claimed in claims.items() if claimed == region_id), None)
 
 
-def _reanchor(edits: ChapterEdits, line_index: int | None, box: BBox) -> None:
-    """Move a hand-written line's anchor to its region's new box, so the line follows a moved region."""
+def _layout_edit_of(paths: ChapterPaths, edits: ChapterEdits, region_id: str) -> int | None:
+    """Index in `edits.layout` of the hand-set lettering of the region shown as `region_id`, or None."""
+    claims = match_layout_edits(current_regions(paths), edits)
+    return next((i for i, claimed in claims.items() if claimed == region_id), None)
+
+
+def _reanchor(edits: ChapterEdits, indices: tuple[int | None, int | None], box: BBox) -> None:
+    """Move the anchors of a region's hand-written line and hand-set lettering (`indices` into
+    `edits.translations` and `edits.layout`) to its new box, so both follow a moved region."""
+    line_index, layout_index = indices
     if line_index is not None:
         edits.translations[line_index] = edits.translations[line_index].model_copy(update={"anchor": box})
+    if layout_index is not None:
+        edits.layout[layout_index] = edits.layout[layout_index].model_copy(update={"anchor": box})
 
 
 def update_region(
@@ -189,7 +201,7 @@ def update_region(
         if text is not None:
             changes["text"] = text
         edits = load_edits(paths)
-        line_index = _translation_edit_of(paths, edits, region.id)
+        followers = (_translation_edit_of(paths, edits, region.id), _layout_edit_of(paths, edits, region.id))
         index = _region_edit_of(paths, edits, region.id)
         if index is None:
             edits.regions.append(
@@ -198,7 +210,7 @@ def update_region(
         else:
             edits.regions[index] = edits.regions[index].model_copy(update=changes)
         if new_box is not None:
-            _reanchor(edits, line_index, new_box)
+            _reanchor(edits, followers, new_box)
         save_edits(paths, edits)
         return _find(rebuild(paths, edits, direction=direction), region.id)
 
@@ -270,11 +282,11 @@ def revert_region(paths: ChapterPaths, region_id: str, *, direction: Direction) 
         index = _region_edit_of(paths, edits, region_id)
         if index is None:
             raise EditNotFoundError(f"region {region_id!r} has no edit to revert")
-        line_index = _translation_edit_of(paths, edits, region_id)
+        followers = (_translation_edit_of(paths, edits, region_id), _layout_edit_of(paths, edits, region_id))
         del edits.regions[index]
         restored = next((region for region in auto_regions(paths) if region.id == region_id), None)
         if restored is not None:
-            _reanchor(edits, line_index, restored.bbox)
+            _reanchor(edits, followers, restored.bbox)
         save_edits(paths, edits)
         regions = rebuild(paths, edits, direction=direction)
         return next((region for region in regions if region.id == region_id), None)
@@ -346,3 +358,39 @@ def revert_translation(paths: ChapterPaths, region_id: str, *, direction: Direct
             return None
         lines = FinalArtifact.load(final_path).lines
         return next((line for line in lines if line.region_id == region_id), None)
+
+
+def set_layout(paths: ChapterPaths, region_id: str, fields: dict[str, object]) -> LayoutEdit:
+    """Set a region's hand lettering (`fields`: LayoutEdit's style fields; missing = the typesetter's
+    choice), replacing any earlier one; the `typeset` stage and the studio preview apply it."""
+    with _LOCK:
+        region = _find(current_regions(paths), region_id)
+        edits = load_edits(paths)
+        edit = LayoutEdit.model_validate(
+            {**fields, "region_id": region.id, "anchor": region.bbox.model_dump()}
+        )
+        index = _layout_edit_of(paths, edits, region.id)
+        if index is None:
+            edits.layout.append(edit)
+        else:
+            edits.layout[index] = edit
+        save_edits(paths, edits)
+        return edit
+
+
+def revert_layout(paths: ChapterPaths, region_id: str) -> None:
+    """Drop a region's hand lettering (the typesetter's own comes back at the next typeset)."""
+    with _LOCK:
+        edits = load_edits(paths)
+        index = _layout_edit_of(paths, edits, region_id)
+        if index is None:
+            raise EditNotFoundError(f"region {region_id!r} has no hand lettering to revert")
+        del edits.layout[index]
+        save_edits(paths, edits)
+
+
+def hand_lettered_ids(paths: ChapterPaths) -> list[str]:
+    """Ids of the current regions with a hand-set lettering."""
+    current = current_regions(paths)
+    claimed = set(match_layout_edits(current, load_edits(paths)).values())
+    return [region.id for region in current if region.id in claimed]

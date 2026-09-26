@@ -13,6 +13,7 @@ from omniscan.core.schemas import (
     BBox,
     ChapterEdits,
     FinalLine,
+    LayoutEdit,
     OcrLine,
     Region,
     RegionEdit,
@@ -28,7 +29,7 @@ SOURCE_CHANGED = "source_changed"  # FinalLine flag: the source text changed aft
 ADDED_PREFIX = "m"  # ids of hand-added regions (m0001, …) never collide with the detector's r0001, …
 
 
-def edit_boxes(edit: RegionEdit | TranslationEdit) -> list[BBox]:
+def edit_boxes(edit: RegionEdit | TranslationEdit | LayoutEdit) -> list[BBox]:
     """The boxes an edit is matched on: its anchor, plus the box it moved the region to."""
     if isinstance(edit, RegionEdit) and edit.bbox is not None:
         return [edit.anchor, edit.bbox]
@@ -182,17 +183,29 @@ def apply_region_edits(
     return reorder(result, touched, direction), orphans
 
 
-def match_translation_edits(regions: Sequence[Region], edits: ChapterEdits) -> dict[int, str]:
-    """Index in `edits.translations` -> id of the region that line belongs to (each region claimed once);
-    lines whose region no longer exists are absent."""
+def _match_all(
+    edits: Sequence[TranslationEdit] | Sequence[LayoutEdit], regions: Sequence[Region]
+) -> dict[int, str]:
+    """Index in `edits` -> id of the region each belongs to (each region claimed once, in edit order)."""
     taken: set[str] = set()
     claims: dict[int, str] = {}
-    for i, edit in enumerate(edits.translations):
+    for i, edit in enumerate(edits):
         region = match_region(edit.region_id, edit_boxes(edit), regions, taken)
         if region is not None:
             taken.add(region.id)
             claims[i] = region.id
     return claims
+
+
+def match_translation_edits(regions: Sequence[Region], edits: ChapterEdits) -> dict[int, str]:
+    """Index in `edits.translations` -> id of the region that line belongs to (each region claimed once);
+    lines whose region no longer exists are absent."""
+    return _match_all(edits.translations, regions)
+
+
+def match_layout_edits(regions: Sequence[Region], edits: ChapterEdits) -> dict[int, str]:
+    """Index in `edits.layout` -> id of the region that lettering belongs to (each region claimed once)."""
+    return _match_all(edits.layout, regions)
 
 
 def manual_line(edit: TranslationEdit, region: Region) -> FinalLine:

@@ -192,6 +192,7 @@ export interface LayoutItem {
   stroke_px: number;
   stroke_color: [number, number, number];
   overflow: boolean;
+  angle?: number;
 }
 
 export interface LayoutArtifact {
@@ -426,9 +427,28 @@ export interface TranslationEdit {
 }
 
 /** GET .../edits: edits.json plus what the server derives from it for the current regions. */
+export interface LayoutEdit {
+  region_id: string;
+  anchor: BBox;
+  font: string | null;
+  size_px: number | null;
+  color: [number, number, number] | null;
+  stroke_px: number | null;
+  stroke_color: [number, number, number] | null;
+  align: "center" | "left" | "right" | null;
+  angle: number | null;
+  box: BBox | null;
+  lines: string[] | null;
+  hidden: boolean;
+}
+
+/** A region's hand lettering as sent to the server (every field left out keeps the typesetter's choice). */
+export type LayoutFields = Partial<Omit<LayoutEdit, "region_id" | "anchor">>;
+
 export interface ChapterEdits {
   regions: RegionEdit[];
   translations: TranslationEdit[];
+  layout?: LayoutEdit[];
   deleted_regions: Region[];
   edited_region_ids: string[];
   manual_translation_ids: string[];
@@ -567,4 +587,38 @@ export async function deleteCleanup(series: string, chapter: string, patchId: st
 
 export function cleanupPatchUrl(series: string, chapter: string, patchId: string, version: number): string {
   return `${chapterBase(series, chapter)}/cleanup/${encodeURIComponent(patchId)}.png?v=${version}`;
+}
+
+export async function listFonts(): Promise<string[]> {
+  return getJson<string[]>(`${BASE}/fonts`);
+}
+
+/** The lettering as the next typeset will set it, and which regions carry hand lettering. */
+export async function getLiveLayout(
+  series: string,
+  chapter: string,
+): Promise<{ items: LayoutItem[]; hand_set: string[] }> {
+  return getJson<{ items: LayoutItem[]; hand_set: string[] }>(`${chapterBase(series, chapter)}/layout/live`);
+}
+
+/** Set a region's hand lettering (replaces any earlier one). */
+export async function putLayout(
+  series: string,
+  chapter: string,
+  regionId: string,
+  fields: LayoutFields,
+): Promise<{ edit: LayoutEdit; item: LayoutItem | null }> {
+  return putJson<{ edit: LayoutEdit; item: LayoutItem | null }>(
+    `${chapterBase(series, chapter)}/layout/${encodeURIComponent(regionId)}`,
+    fields,
+  );
+}
+
+export async function deleteLayout(series: string, chapter: string, regionId: string): Promise<void> {
+  await deleteJson<unknown>(`${chapterBase(series, chapter)}/layout/${encodeURIComponent(regionId)}`);
+}
+
+/** One page rendered as the release will look (cleaned and lettered); `version` busts the browser cache. */
+export function previewUrl(series: string, chapter: string, page: number, version: number): string {
+  return `${chapterBase(series, chapter)}/preview/${page}.png?v=${version}`;
 }

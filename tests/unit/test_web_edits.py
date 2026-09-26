@@ -22,6 +22,7 @@ from omniscan.core.schemas import (
     FinalArtifact,
     FinalLine,
     IngestArtifact,
+    InpaintArtifact,
     OcrLine,
     Region,
     RegionsArtifact,
@@ -397,3 +398,77 @@ def test_cleanup_errors(cleanup_client: TestClient) -> None:
     assert client.get(f"{BASE}/cleanup/c0009.png").status_code == 404
     response = client.post(f"{BASE}/cleanup", content="{}", headers={"Content-Type": "text/plain"})
     assert response.status_code == 415
+
+
+@pytest.fixture
+def lettering_client(cleanup_client: TestClient, work: Path) -> TestClient:
+    """The cleanup fixture plus an (empty) inpaint.json, so the chapter can be lettered."""
+    InpaintArtifact(items=[]).save(work / "inpaint.json")
+    return cleanup_client
+
+
+def test_fonts_are_listed(client: TestClient) -> None:
+    fonts = client.get("/api/fonts").json()
+    assert "Mali-SemiBold.ttf" in fonts and "Kalam-Bold.ttf" in fonts
+    assert all(name.endswith((".ttf", ".otf")) for name in fonts)
+
+
+def test_hand_lettering_live_layout_and_revert(lettering_client: TestClient) -> None:
+    client = lettering_client
+    live = client.get(f"{BASE}/layout/live").json()
+    assert [item["region_id"] for item in live["items"]] == ["r0001"] and live["hand_set"] == []
+    assert live["items"][0]["lines"] == ["Hi"]
+    response = client.put(
+        f"{BASE}/layout/r0001", json={"color": [255, 0, 0], "size_px": 20, "font": "Kalam-Bold.ttf"}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["edit"]["color"] == [255, 0, 0] and body["item"]["size_px"] == 20
+    assert body["item"]["font"] == "Kalam-Bold.ttf" and body["item"]["color"] == [255, 0, 0]
+    assert client.get(f"{BASE}/layout/live").json()["hand_set"] == ["r0001"]
+    hidden = client.put(f"{BASE}/layout/r0001", json={"hidden": True}).json()
+    assert hidden["item"] is None and client.get(f"{BASE}/layout/live").json()["items"] == []
+    assert client.delete(f"{BASE}/layout/r0001").json() == {"reverted": "r0001"}
+    assert client.delete(f"{BASE}/layout/r0001").status_code == 404
+    assert client.get(f"{BASE}/layout/live").json()["items"][0]["color"] != [255, 0, 0]
+
+
+def test_hand_lettering_errors(lettering_client: TestClient, work: Path) -> None:
+    client = lettering_client
+    assert client.put(f"{BASE}/layout/r0001", json={"font": "Nope.ttf"}).status_code == 422
+    assert client.put(f"{BASE}/layout/r0001", json={"size_px": 2}).status_code == 422
+    assert client.put(f"{BASE}/layout/r0009", json={"size_px": 20}).status_code == 404
+    (work / "inpaint.json").unlink()
+    response = client.get(f"{BASE}/layout/live")
+    assert response.status_code == 404 and "inpaint.json missing" in response.json()["detail"]
+
+
+def test_preview_renders_the_cleaned_and_lettered_page(lettering_client: TestClient) -> None:
+    client = lettering_client
+    client.put(f"{BASE}/layout/r0001", json={"color": [255, 0, 0], "size_px": 30})
+    client.post(
+        f"{BASE}/cleanup",
+        json={
+            "page": 0,
+            "box": bbox(150, 300, 170, 320),  # clear of the lettering, which is drawn on top
+            "mask": png_mask(20, 20),
+            "method": "fill",
+            "color": [0, 0, 255],
+        },
+    )
+    response = client.get(f"{BASE}/preview/0.png")
+    assert response.status_code == 200 and response.headers["content-type"] == "image/jpeg"
+    pixels = np.asarray(Image.open(io.BytesIO(response.content)).convert("RGB")).astype(int)
+    assert pixels.shape == (600, 200, 3)
+    reds = (pixels[..., 0] > 180) & (pixels[..., 1] < 90) & (pixels[..., 2] < 90)
+    assert reds[:120].sum() > 30  # the red lettering near r0001's box (10..110, 10..60)
+    assert (np.abs(pixels[305:315, 155:165] - np.array([0, 0, 255])) <= 40).all()  # the hand fill
+    assert client.get(f"{BASE}/preview/5.png").status_code == 422
+
+
+def test_preview_without_final_json_shows_the_cleaning_only(lettering_client: TestClient, work: Path) -> None:
+    (work / "final.json").unlink()
+    response = lettering_client.get(f"{BASE}/preview/0.png")
+    assert response.status_code == 200
+    pixels = np.asarray(Image.open(io.BytesIO(response.content)).convert("RGB")).astype(int)
+    assert (np.abs(pixels[45:55, 55:65]) <= 30).all()  # the raw black mark, nothing drawn on top

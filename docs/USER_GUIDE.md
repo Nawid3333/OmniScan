@@ -1112,7 +1112,10 @@ pipeline stages for the chapter; and the editing endpoints behind the Studio (se
 `GET /api/translation-profiles` and `POST …/translate` (`{"region_ids": [...], "profile": null, "apply": false}`,
 returns every profile's suggestion); hand cleanup: `GET …/cleanup`, `POST …/cleanup` (one brush stroke:
 `{"page", "box", "mask" (base64 PNG), "method", "color"?, "offset"?}`), `DELETE …/cleanup/{id}` and
-`GET …/cleanup/{id}.png`. Every write takes `Content-Type: application/json`.
+`GET …/cleanup/{id}.png`; lettering: `GET /api/fonts`, `GET …/layout/live`, `PUT …/layout/{id}` (the
+region's whole hand lettering: `font`, `size_px`, `color`, `stroke_px`, `stroke_color`, `align`, `angle`,
+`box`, `lines`, `hidden`), `DELETE …/layout/{id}` and `GET …/preview/{page}.png` (the rendered page). Every
+write takes `Content-Type: application/json`.
 
 ```bash
 uv run omniscan serve
@@ -1396,6 +1399,18 @@ shows one raw page at a time with every text region as a box:
   LaMa), in painting order. They are stored in the chapter's `cleanup.json` + `cleanup.npz`, written only
   by the Studio; a chapter re-imported with pages of another size ignores them (export metric
   `cleanup_stale`).
+- **Lettering.** With *lettering* on, every English line's lettering box is drawn as a teal dashed
+  rectangle (red when the typesetter could not fit it). The selected region's box can be dragged and
+  resized; the *Lettering* panel sets its font (any file in the fonts folder), size, colour, outline width
+  and colour, alignment and angle, explicit line breaks (one per row; empty = automatic) or *no
+  lettering*; *Apply lettering* keeps them, *Revert lettering* gives the region back to the typesetter.
+  A new font, size or box sets the line again (the text is re-fitted into the box at the given size, or
+  the largest that fits); colour, outline, alignment and angle only restyle it. Hand lettering is stored
+  in `edits.json` (`layout`) and applied by every `typeset` run (the typesetter's own items stay in
+  `layout_auto.json`); an edit whose region is gone counts as the stage's `edits_orphaned`.
+- **Preview.** *preview* shows the page as the release will look — raw page, automatic cleaning, your
+  hand cleanup and the lettering with your edits — rendered on the spot (CPU, no pipeline run). It is a
+  preview: the export decodes and composites the strip on the GPU, so single pixels may differ.
 - **Render.** *Render (inpaint → export)* re-runs only the render stages (inpaint, LaMa, typeset,
   export) for the chapter, so the finished pages in the Reader view show your edits without
   re-translating the chapter.
