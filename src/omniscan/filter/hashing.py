@@ -1,9 +1,17 @@
-"""Perceptual hashing for the promo filter (dHash over Pillow / torch, no extra dependency)."""
+"""Perceptual hashing for the promo filter (dHash over Pillow / torch, no extra dependency).
+
+torch is imported inside the tensor functions only, so the Pillow half (`dhash`, `similarity`) — and the
+web server, which imports it through filter/decide.py — stays torch-free.
+"""
 
 from __future__ import annotations
 
-import torch
+from typing import TYPE_CHECKING
+
 from PIL import Image
+
+if TYPE_CHECKING:
+    import torch
 
 _LUMA = (0.299, 0.587, 0.114)  # ITU-R 601 luma weights (PIL's 'L' conversion)
 _MAX_ANTIALIAS_INPUT = 512  # larger inputs are coarse-averaged first: ROCm's antialiased
@@ -33,6 +41,8 @@ def dhash_tensor(image: torch.Tensor, hash_size: int = 8) -> int:
     `dhash`. One host transfer of hash_size*(hash_size+1) values; everything else stays on the device."""
     if image.ndim != 3 or image.shape[0] != 3:
         raise ValueError(f"expected a uint8 [3, h, w] image tensor, got shape {tuple(image.shape)}")
+    import torch  # deferred: the Pillow half of this module stays torch-free
+
     weights = torch.tensor(_LUMA, device=image.device).view(3, 1, 1)
     gray = image.to(torch.float32).mul(weights).sum(0)  # [h, w]
     resized = _antialiased_resize(gray[None, None], hash_size)
@@ -50,6 +60,8 @@ def _antialiased_resize(gray: torch.Tensor, hash_size: int) -> torch.Tensor:
 
     One `interpolate` call for moderate sizes; a coarse average-pool stage first for larger ones
     (ROCm's antialiased interpolate overflows its box-filter buffer on big downscale factors)."""
+    import torch  # deferred: the Pillow half of this module stays torch-free
+
     height, width = int(gray.shape[-2]), int(gray.shape[-1])
     if max(height, width) <= _MAX_ANTIALIAS_INPUT:
         return torch.nn.functional.interpolate(

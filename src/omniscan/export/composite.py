@@ -7,7 +7,7 @@ from collections.abc import Mapping, Sequence
 import numpy as np
 import torch
 
-from omniscan.core.schemas import BBox, InpaintItem
+from omniscan.core.schemas import BBox, CleanupPatch, InpaintItem
 from omniscan.typeset.render import GlyphPatch
 
 
@@ -58,6 +58,35 @@ def apply_patches(
         if entry is None:
             continue
         apply_patch(strip, item.box, entry[0], entry[1])
+        applied += 1
+    return applied
+
+
+def snapshot(strip: torch.Tensor, box: BBox) -> np.ndarray:
+    """A copy of the strip's pixels inside `box` as uint8 [h, w, 3] (`box` must lie inside the strip). Always
+    a copy: on a CPU strip `.cpu().numpy()` alone would share memory and follow later edits of the strip."""
+    return strip[:, box.y0 : box.y1, box.x0 : box.x1].permute(1, 2, 0).cpu().numpy().copy()
+
+
+def apply_cleanup(
+    strip: torch.Tensor,
+    patches: Sequence[CleanupPatch],
+    arrays: Mapping[str, tuple[np.ndarray | None, np.ndarray]],
+    originals: Mapping[str, np.ndarray],
+) -> int:
+    """Apply the hand cleanup in painting order: stored pixels, or for "restore" the raw pixels `originals`
+    holds (snapshots taken before any automatic patch); returns how many were applied."""
+    applied = 0
+    for patch in patches:
+        entry = arrays.get(patch.id)
+        if entry is None:
+            continue
+        pixels, mask = entry
+        if pixels is None:
+            pixels = originals.get(patch.id)
+            if pixels is None:
+                continue
+        apply_patch(strip, patch.box, pixels, mask)
         applied += 1
     return applied
 

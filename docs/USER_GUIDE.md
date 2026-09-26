@@ -1102,11 +1102,20 @@ Serves existing artifacts read-only: `/api/series`, `/api/series/{s}/chapters`,
 `/api/series/{s}/chapters/{c}/output` (finished output image names) and
 `/api/series/{s}/chapters/{c}/output/{name}` (finished output image bytes).
 
-The one write endpoint is `/api/series/{s}/chapters/{c}/filter/restore` (POST): it appends a
-`restored` decision to the chapter's `filter.json`, exactly what `omniscan filter restore` does —
-metadata only, it never touches files under `_filtered/`. There is also
-`/api/series/{s}/filtered`, the read-only listing behind the Filtered view. Everything else is
-GET-only and never writes.
+Write endpoints: `/api/series/{s}/chapters/{c}/filter/restore` (POST) appends a `restored` decision to the
+chapter's `filter.json`, exactly what `omniscan filter restore` does — metadata only, it never touches files
+under `_filtered/` (`/api/series/{s}/filtered` is the listing behind the Filtered view);
+`/api/series/{s}/chapters/{c}/run` (POST `{"through": "<stage>"}`, optionally `"start": "<stage>"`) queues
+pipeline stages for the chapter; and the editing endpoints behind the Studio (see "Studio: editing by hand"):
+`GET …/edits`, `POST …/regions`, `PATCH …/regions/{id}`, `DELETE …/regions/{id}`, `POST …/regions/{id}/revert`,
+`PUT …/final/{id}` (optional `suggested_by`) and `POST …/final/{id}/revert`; plus on-demand translation:
+`GET /api/translation-profiles` and `POST …/translate` (`{"region_ids": [...], "profile": null, "apply": false}`,
+returns every profile's suggestion); hand cleanup: `GET …/cleanup`, `POST …/cleanup` (one brush stroke:
+`{"page", "box", "mask" (base64 PNG), "method", "color"?, "offset"?}`), `DELETE …/cleanup/{id}` and
+`GET …/cleanup/{id}.png`; lettering: `GET /api/fonts`, `GET …/layout/live`, `PUT …/layout/{id}` (the
+region's whole hand lettering: `font`, `size_px`, `color`, `stroke_px`, `stroke_color`, `align`, `angle`,
+`box`, `lines`, `hidden`), `DELETE …/layout/{id}` and `GET …/preview/{page}.png` (the rendered page). Every
+write takes `Content-Type: application/json`.
 
 ```bash
 uv run omniscan serve
@@ -1349,6 +1358,72 @@ before committing. Non-JPEG pages are flagged for conversion (quality 95, on the
 preview. `Move instead of copy` deletes the source pages as they're imported (disabled for
 archives, since there both extraction and the archive itself would need separate handling).
 
+## Studio: editing by hand
+
+Every step of the pipeline can be checked and corrected by hand, and a chapter can also be done
+entirely by hand. The **Studio** (the first view of the web UI, see "Web viewer" for starting it)
+shows one raw page at a time with every text region as a box:
+
+- **Boxes.** Click a box to select it; drag it to move it, drag one of its eight handles to resize it,
+  or type exact coordinates in the side panel (strip pixels). Arrow keys nudge the selected box by 1 px
+  (Shift: 10 px). **B** (or *Draw box*) draws a new box of the kind picked next to the button — for text
+  the detector missed; **Del** removes the selected box (a false detection: its text stays on the page,
+  untranslated and uncleaned). Removed boxes are listed under *Deleted on this page* with a *restore*
+  link. The *kind* menu turns a box into bubble text, free text, a sound effect or a watermark (a
+  watermark is erased by inpaint and never translated).
+- **Source text.** The side panel shows the OCR reading; correct it and *Save source* (Ctrl+Enter). A
+  second-opinion reading, when the OCR had one, can be taken over with *use*.
+- **English.** Write or correct the region's English line and *Save English* (Ctrl+Enter). A region
+  with no English line yet is labelled *untranslated*; a hand-written line whose source text was fixed
+  afterwards is labelled *source changed* (and flagged `source_changed` in `final.json`).
+- **Translate.** *Translate* asks the translation model for the selected region — the enabled profiles,
+  or the one picked in the toolbar menu (a disabled profile such as the local `translategemma` can be
+  picked too). The model sees the neighbouring lines of the chapter (their source text and current
+  English), the series glossary and the story so far, so a single bubble reads like the dialogue around
+  it. Nothing is saved until you *keep* a suggestion (or *use* it, edit it and *Save English*).
+  *Translate page* translates every untranslated region of the page and keeps each first suggestion.
+  A kept suggestion is recorded with the profile that wrote it (`suggested_by` in `edits.json`); a line
+  you changed is recorded as typed by hand. The Ollama rate limit answers 429 (a profile with a
+  `fallback` switches to it automatically), an unreachable Ollama 502.
+- **Revert.** *Revert English* brings back the judge's line; *Revert box and text* brings back the
+  region as the OCR read it (a box you drew is removed instead).
+- **Clean by hand.** **C** (or *Clean*) turns the mouse into a brush (**[** / **]** change its size).
+  Paint over leftover lettering, a stray mark or a watermark — or over art the automatic cleaning
+  damaged — then *Apply* (Enter; Esc discards the strokes). What the painted pixels become:
+  *inpaint* rebuilds them from their surroundings (OpenCV), *fill* paints one colour (by default the
+  median colour just around the stroke), *clone* copies the page from the spot you Alt+clicked (the
+  offset stays fixed for the next strokes), *restore* brings back the raw page. Strokes are computed from
+  the page as it currently looks — raw page, automatic cleaning, your earlier patches — so inpainting next
+  to removed lettering never pulls it back. Patches are listed per page (delete, *Undo last cleanup*) and
+  shown with the *cleaned* layer; export applies them after the automatic cleaning (patches.npz, then
+  LaMa), in painting order. They are stored in the chapter's `cleanup.json` + `cleanup.npz`, written only
+  by the Studio; a chapter re-imported with pages of another size ignores them (export metric
+  `cleanup_stale`).
+- **Lettering.** With *lettering* on, every English line's lettering box is drawn as a teal dashed
+  rectangle (red when the typesetter could not fit it). The selected region's box can be dragged and
+  resized; the *Lettering* panel sets its font (any file in the fonts folder), size, colour, outline width
+  and colour, alignment and angle, explicit line breaks (one per row; empty = automatic) or *no
+  lettering*; *Apply lettering* keeps them, *Revert lettering* gives the region back to the typesetter.
+  A new font, size or box sets the line again (the text is re-fitted into the box at the given size, or
+  the largest that fits); colour, outline, alignment and angle only restyle it. Hand lettering is stored
+  in `edits.json` (`layout`) and applied by every `typeset` run (the typesetter's own items stay in
+  `layout_auto.json`); an edit whose region is gone counts as the stage's `edits_orphaned`.
+- **Preview.** *preview* shows the page as the release will look — raw page, automatic cleaning, your
+  hand cleanup and the lettering with your edits — rendered on the spot (CPU, no pipeline run). It is a
+  preview: the export decodes and composites the strip on the GPU, so single pixels may differ.
+- **Render.** *Render (inpaint → export)* re-runs only the render stages (inpaint, LaMa, typeset,
+  export) for the chapter, so the finished pages in the Reader view show your edits without
+  re-translating the chapter.
+
+**Edits are never lost to the pipeline.** Every edit is recorded in the chapter's `edits.json`
+(work dir) and applied at once to `ocr.json` / `final.json`. The `ocr` stage keeps its own reading in
+`ocr_auto.json` and the `judge` stage its own lines in `final_auto.json`; whenever either stage runs
+again (`omniscan run --force`, a changed model or glossary, a re-detected chapter) it re-applies
+`edits.json` to what it produced. An edit follows its region by box position, so it survives a re-run
+that renumbers the regions; an edit whose region no longer exists at all is counted in the stage's
+`edits_orphaned` metric. A chapter with no OCR yet can be done entirely by hand: draw the boxes, type
+their text and English, then render.
+
 ## Web viewer
 
 Start the API and the UI in two terminals:
@@ -1366,8 +1441,9 @@ npm run dev
 The Vite dev server proxies `/api` to `http://localhost:8000`, so the defaults of both commands work
 together. Open the local URL Vite prints and pick a series and chapter.
 
-Six chapter views (Slicer, OCR, Translation, Reader, Inpaint, Layout) need a chapter; the **Filtered**
-view only needs a series and shows its every chapter that has filtered items.
+The chapter views (Studio, Slicer, OCR, Translation, Reader, Inpaint, Layout, Edit) need a chapter; the
+**Filtered** view only needs a series and shows its every chapter that has filtered items. The **Studio**
+is the editor (see "Studio: editing by hand"); the other views are for checking one stage's output.
 
 The Slicer view stacks the raw pages and overlays:
 
@@ -1427,8 +1503,9 @@ filtered. Restore appends a `restored` decision to the chapter's `filter.json` �
 restored item can be re-filtered only by re-running `omniscan filter run`. The row turns green without
 a refetch when the restore succeeds; a failure shows the API's error next to the button.
 
-The whole tool is read-only except the Filtered view's Restore button: the API only answers GET
-requests plus that one POST, which appends to `filter.json` and never writes anything else.
+Only the Studio, the Edit view, the run buttons and the Filtered view's Restore button write anything:
+edits go to `edits.json` (and are applied to `ocr.json`/`final.json`), a restore appends to `filter.json`,
+and a run button queues pipeline stages.
 
 ## Resuming and re-running
 

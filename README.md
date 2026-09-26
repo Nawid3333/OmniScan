@@ -33,6 +33,7 @@ packaged into CBZ/PDF.
 | job queue | working — `omniscan queue add` / `list` / `run` / `pause` / `resume` / `cancel` / `retry` / `clear` |
 | models | working — `omniscan models list` / `download` / `remove` / `verify` |
 | hardware | working — `omniscan hardware [--json]` |
+| studio (manual editing) | working — the web UI's Studio view: draw/move/resize/delete text boxes, fix OCR text, write English lines, translate one region or a page on demand, clean by hand with a brush (inpaint, fill, clone, restore), hand-set the lettering (font, size, colours, outline, angle, box, line breaks) with a live preview of the finished page; edits survive every re-run (`edits.json`, `cleanup.json`) |
 | web viewer | working — `omniscan serve` + `npm run dev` (Slicer, OCR, Translation, Reader and Filtered views — read-only except the Filtered view's Restore button; the OCR/Translation views need an `ocr.json`) |
 | desktop app | working — `omniscan gui` (PySide6: Library, Reader, Run, Models, Settings, Import) |
 | update | working — `omniscan update check` / `download` |
