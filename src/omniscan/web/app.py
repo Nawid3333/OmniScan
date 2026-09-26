@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import io
 import mimetypes
 import threading
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
@@ -18,28 +20,41 @@ from fastapi.responses import FileResponse, Response
 from PIL import Image
 from pydantic import Field, ValidationError
 
-from omniscan.core.config import Config
+from omniscan.cleanup import store as cleanup_store
+from omniscan.core.config import Config, SeriesConfigError, get_secrets, series_config
 from omniscan.core.paths import IMAGE_SUFFIXES, ChapterPaths, SeriesPaths, list_images, natural_key
 from omniscan.core.schemas import (
+    RGB,
+    BBox,
+    CleanupMethod,
     FilterArtifact,
     FilterDecision,
     FinalArtifact,
-    FinalLine,
     GlossaryEntry,
     IngestArtifact,
     InpaintArtifact,
+    Lang,
     Model,
+    RegionKind,
     RegionsArtifact,
     SlicesArtifact,
 )
+from omniscan.edits import store as edit_store
+from omniscan.export.segments import cut_crossings
 from omniscan.filter.decide import effective_decision, restore
 from omniscan.glossary.match import find_terms, term_present
 from omniscan.glossary.store import GlossaryStore
 from omniscan.inpaint.patches import load_patches
-from omniscan.pipeline.stages import STAGE_ORDER
-from omniscan.queue.executor import stage_executor
+from omniscan.llm.ollama import OllamaClient, OllamaError, OllamaRateLimitError
+from omniscan.pipeline.stages import STAGE_ORDER, series_story_context
 from omniscan.queue.store import QueueStore, queue_db_path
 from omniscan.queue.worker import run_queue
+from omniscan.translate.profiles import default_profile_paths, load_profiles, resolve_fallbacks
+from omniscan.translate.run import ChatClient
+from omniscan.translate.suggest import suggest
+from omniscan.typeset.chapter import chapter_layout
+from omniscan.typeset.fonts import font_file, fonts_dir
+from omniscan.typeset.page_preview import render_page
 
 
 class RestoreBody(Model):
@@ -53,12 +68,96 @@ class RunBody(Model):
     """Body of the on-demand run POST request."""
 
     through: str  # a STAGE_ORDER name; every stage up to and including it is queued
+    start: str | None = None  # a STAGE_ORDER name to start from instead of the first stage (e.g. "inpaint")
 
 
 class FinalEditBody(Model):
     """Body of the manual final-line edit PUT request."""
 
     text: str
+    suggested_by: str | None = None  # the profile whose suggestion is kept unchanged (None = typed by hand)
+
+
+class TranslateBody(Model):
+    """Body of the on-demand translation POST request."""
+
+    region_ids: list[str] = Field(min_length=1, max_length=60)
+    profile: str | None = None  # one profile by name (enabled or not); None = every enabled profile
+    apply: bool = False  # keep each region's first suggestion as its English line
+
+
+class LayoutBody(Model):
+    """Body of the hand lettering PUT request: every field left out keeps the typesetter's choice."""
+
+    font: str | None = None
+    size_px: int | None = Field(default=None, ge=4, le=400)
+    color: RGB | None = None
+    stroke_px: int | None = Field(default=None, ge=0, le=40)
+    stroke_color: RGB | None = None
+    align: Literal["center", "left", "right"] | None = None
+    angle: float | None = Field(default=None, ge=-180.0, le=180.0)
+    box: BBox | None = None
+    lines: list[str] | None = None
+    hidden: bool = False
+
+
+class CutsBody(Model):
+    """Body of the output cuts PUT request: strip rows where the exported images split (null = per slice)."""
+
+    cuts: list[int] | None = Field(max_length=2000)
+
+
+class CleanupBody(Model):
+    """Body of the hand cleanup POST request: one brush stroke painted on one raw page (its own pixels)."""
+
+    page: int = Field(ge=0)  # SourceFile.index of the page the stroke was painted on
+    box: BBox  # the stroke's bounding box in that page's pixels
+    mask: str = Field(max_length=8_000_000)  # PNG (base64, a data: URL prefix allowed) the size of `box`
+    method: CleanupMethod
+    color: RGB | None = None  # "fill": the colour; None = the colour around the stroke
+    offset: tuple[int, int] | None = None  # "clone": source minus destination, page pixels
+
+
+def decode_mask(data: str, box: BBox) -> np.ndarray:
+    """A base64 PNG (optionally a data: URL) as a bool mask: opaque pixels when it has alpha, else bright
+    ones. ValueError when it is not a PNG of `box`'s size."""
+    payload = data.split(",", 1)[1] if data.startswith("data:") else data
+    try:
+        with Image.open(io.BytesIO(base64.b64decode(payload, validate=True))) as image:
+            if image.size != (box.width, box.height):
+                raise ValueError(f"mask is {image.size[0]}x{image.size[1]}, box is {box.width}x{box.height}")
+            if image.mode in ("RGBA", "LA", "PA") or "transparency" in image.info:
+                return np.asarray(image.convert("RGBA"))[..., 3] > 127
+            return np.asarray(image.convert("L")) > 127
+    except (binascii.Error, OSError) as exc:
+        raise ValueError(f"mask is not a base64 PNG: {exc}") from exc
+
+
+def ollama_client(cfg: Config) -> ChatClient:
+    """The chat client for on-demand translation (the configured Ollama daemon)."""
+    return OllamaClient(cfg.ollama, get_secrets())
+
+
+class EmptyBody(Model):
+    """Body of a POST request that carries no data (sent as `{}`, so it must come as application/json)."""
+
+
+class RegionPatchBody(Model):
+    """Body of the region edit PATCH request: every field given replaces the region's value."""
+
+    kind: RegionKind | None = None
+    bbox: BBox | None = None
+    bubble_bbox: BBox | None = None
+    text: str | None = None
+
+
+class NewRegionBody(Model):
+    """Body of the hand-drawn region POST request."""
+
+    bbox: BBox
+    kind: RegionKind = "bubble_text"
+    text: str = ""
+    bubble_bbox: BBox | None = None
 
 
 def _under(root: Path, candidate: Path) -> bool:
@@ -77,6 +176,10 @@ def _drain_loop(cfg: Config, stop: threading.Event) -> None:
     Opens its own `QueueStore` rather than reusing one built elsewhere: sqlite3 connections are only
     usable from the thread that created them, and this loop is its own dedicated thread.
     """
+    from omniscan.queue.executor import (
+        stage_executor,
+    )  # deferred: it imports torch; a read-only app never does
+
     store = QueueStore(queue_db_path(cfg))
     executor = stage_executor(cfg)
     while not stop.is_set():
@@ -86,14 +189,19 @@ def _drain_loop(cfg: Config, stop: threading.Event) -> None:
 
 
 def create_app(
-    cfg: Config, *, cors_origins: Sequence[str] = ("http://localhost:5173",), run_worker: bool = False
+    cfg: Config,
+    *,
+    cors_origins: Sequence[str] = ("http://localhost:5173",),
+    run_worker: bool = False,
+    chat_client: Callable[[Config], ChatClient] = ollama_client,
 ) -> FastAPI:
     """Build the debug API app: series/chapter browsing + ingest/slices artifacts + raw pages.
 
     `run_worker=True` (the real `omniscan serve` command's default, not this function's) also starts
     a background thread that drains `queue.db`, so `POST .../run` requests actually execute instead of
     only ever sitting queued; tests and other embedders that just want to read existing artifacts
-    should leave it `False` (the default here) to avoid touching the GPU/queue at all.
+    should leave it `False` (the default here) to avoid touching the GPU/queue at all. `chat_client`
+    builds the LLM client of the on-demand translation route (tests pass a fake).
     """
 
     @asynccontextmanager
@@ -112,7 +220,7 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(cors_origins),
-        allow_methods=["GET", "POST", "PUT"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
         allow_headers=["*"],
     )
 
@@ -311,51 +419,345 @@ def create_app(
         """The chapter's final.json, byte-for-byte as written by the judge stage."""
         return artifact_bytes(chapter_paths(series, chapter), "final.json")
 
+    async def json_body[B: Model](request: Request, body_type: type[B]) -> B:
+        """The request's JSON body as `body_type`: 415 unless it is sent as application/json (a cross-site
+        page can send text/plain without a CORS preflight), 422 when it does not validate."""
+        content_type = request.headers.get("content-type", "")
+        if not content_type.lower().startswith("application/json"):
+            raise HTTPException(status_code=415, detail="Content-Type must be application/json")
+        try:
+            return body_type.model_validate_json(await request.body())
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=jsonable_encoder(exc.errors())) from exc
+
+    def edit_settings(series: str) -> tuple[edit_store.Direction, Lang]:
+        """The series' reading direction and OCR language (series.toml applied) for a hand edit."""
+        try:
+            scfg = series_config(cfg, series_paths(series).library_dir)
+        except SeriesConfigError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return scfg.detect.reading_direction, scfg.ocr.lang
+
+    def run_edit[T](operation: Callable[[], T]) -> T:
+        """Run one edit operation, mapping its errors to 404 (missing artifact, region or page file) and 422
+        (bad box or stroke)."""
+        try:
+            return operation()
+        except (edit_store.EditNotFoundError, FileNotFoundError) as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     @app.put("/api/series/{series}/chapters/{chapter}/final/{region_id}")
     async def edit_final_line(
         series: str, chapter: str, region_id: str, request: Request
     ) -> dict[str, object]:
-        """Overwrite one region's final line with hand-edited text; its decision becomes "manual".
+        """Write one region's English line by hand; its decision becomes "manual".
 
-        A later `omniscan judge` run for this chapter skips an existing final.json entirely unless
-        run with `--force` (judge_chapter's own resumability), so this edit is safe from being
-        silently clobbered by the ordinary pipeline."""
-        content_type = request.headers.get("content-type", "")
-        if not content_type.lower().startswith("application/json"):
-            raise HTTPException(status_code=415, detail="Content-Type must be application/json")
+        Recorded in edits.json and applied to final.json at once (creating final.json when no judge has run
+        yet), and re-applied by every later judge run, so the pipeline never overwrites it."""
+        body = await json_body(request, FinalEditBody)
         paths = chapter_paths(series, chapter)
-        final_path = paths.artifact("final.json")
-        if not final_path.is_file():
-            raise HTTPException(status_code=404, detail="final.json not found")
-        try:
-            body = FinalEditBody.model_validate_json(await request.body())
-        except ValidationError as exc:
-            raise HTTPException(status_code=422, detail=jsonable_encoder(exc.errors())) from exc
-        try:
-            artifact = FinalArtifact.load(final_path)
-        except Exception as exc:
-            raise HTTPException(
-                status_code=404, detail=f"final.json is not a valid final artifact: {exc}"
-            ) from exc
-        lines = list(artifact.lines)
-        index = next((i for i, line in enumerate(lines) if line.region_id == region_id), None)
-        if index is None:
-            raise HTTPException(status_code=404, detail=f"region {region_id!r} not found in final.json")
-        lines[index] = FinalLine(
-            region_id=region_id,
-            text=body.text,
-            decision="manual",
-            sources=[],
-            rationale="edited in the debug UI",
-            flags=[],
+        direction, _lang = edit_settings(series)
+        line = run_edit(
+            lambda: edit_store.set_translation(
+                paths, region_id, body.text, direction=direction, suggested_by=body.suggested_by
+            )
         )
-        updated = artifact.model_copy(update={"lines": lines})
-        updated.save(final_path)
-        return lines[index].model_dump(mode="json")
+        return line.model_dump(mode="json")
+
+    @app.get("/api/translation-profiles")
+    def list_profiles() -> list[dict[str, object]]:
+        """Every known translation profile (name, model, enabled) for the Studio's profile picker."""
+        return [
+            {"name": p.name, "model": p.model, "enabled": p.enabled, "style": p.style}
+            for p in load_profiles(default_profile_paths()).values()
+        ]
+
+    @app.post("/api/series/{series}/chapters/{chapter}/translate")
+    async def translate_regions(series: str, chapter: str, request: Request) -> dict[str, object]:
+        """Translate a few regions now (neighbouring lines as context, glossary and story applied) and return
+        every profile's suggestion; with `apply` each region's first suggestion becomes its English line.
+        Nothing else is written. 429 when the Ollama rate limit is hit, 502 when Ollama fails."""
+        body = await json_body(request, TranslateBody)
+        paths = chapter_paths(series, chapter)
+        direction, _lang = edit_settings(series)
+        scfg = series_config(cfg, series_paths(series).library_dir)
+        known = load_profiles(default_profile_paths())
+        if body.profile is not None:
+            if body.profile not in known:
+                raise HTTPException(status_code=422, detail=f"unknown profile {body.profile!r}")
+            profiles = [known[body.profile]]
+        else:
+            profiles = [p for p in known.values() if p.enabled]
+            if not profiles:
+                raise HTTPException(status_code=422, detail="no translation profile is enabled")
+        regions = edit_store.current_regions(paths)
+        client = chat_client(scfg)
+        try:
+            suggestions = suggest(
+                client,
+                profiles,
+                regions,
+                body.region_ids,
+                glossary_entries(series_paths(series)),
+                final_lines(paths),
+                fallbacks=resolve_fallbacks(profiles, known),
+                story_summary=series_story_context(series_paths(series), chapter),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except OllamaRateLimitError as exc:
+            raise HTTPException(status_code=429, detail=f"Ollama rate limit: {exc}") from exc
+        except OllamaError as exc:
+            raise HTTPException(status_code=502, detail=f"Ollama failed: {exc}") from exc
+        finally:
+            close = getattr(client, "close", None)
+            if close is not None:
+                close()
+        applied: list[dict[str, object]] = []
+        if body.apply:
+            first: dict[str, tuple[str, str]] = {}
+            for item in suggestions:
+                first.setdefault(item.region_id, (item.text, item.profile))
+            for region_id, (text, profile) in first.items():
+                try:
+                    line = edit_store.set_translation(
+                        paths, region_id, text, direction=direction, suggested_by=profile
+                    )
+                except edit_store.EditNotFoundError as exc:
+                    raise HTTPException(status_code=404, detail=str(exc)) from exc
+                applied.append(line.model_dump(mode="json"))
+        return {
+            "suggestions": [
+                {"region_id": x.region_id, "profile": x.profile, "model": x.model, "text": x.text}
+                for x in suggestions
+            ],
+            "applied": applied,
+        }
+
+    @app.post("/api/series/{series}/chapters/{chapter}/final/{region_id}/revert")
+    async def revert_final_line(
+        series: str, chapter: str, region_id: str, request: Request
+    ) -> dict[str, object]:
+        """Drop a region's hand-written line; returns the judge's line again (null when it has none)."""
+        await json_body(request, EmptyBody)
+        paths = chapter_paths(series, chapter)
+        direction, _lang = edit_settings(series)
+        line = run_edit(lambda: edit_store.revert_translation(paths, region_id, direction=direction))
+        return {"line": None if line is None else line.model_dump(mode="json")}
+
+    @app.get("/api/series/{series}/chapters/{chapter}/edits")
+    def get_edits(series: str, chapter: str) -> dict[str, object]:
+        """The chapter's hand edits (edits.json; empty lists when none), the regions they deleted, and which
+        current regions carry a region edit or a hand-written line."""
+        paths = chapter_paths(series, chapter)
+        edits = edit_store.load_edits(paths)
+        edited, translated = edit_store.edited_ids(paths)
+        return {
+            **edits.model_dump(mode="json"),
+            "deleted_regions": [r.model_dump(mode="json") for r in edit_store.deleted_regions(paths)],
+            "edited_region_ids": edited,
+            "manual_translation_ids": translated,
+        }
+
+    @app.post("/api/series/{series}/chapters/{chapter}/regions", status_code=201)
+    async def add_region(series: str, chapter: str, request: Request) -> dict[str, object]:
+        """Add a hand-drawn region (clamped into the strip); returns it with its new m-prefixed id."""
+        body = await json_body(request, NewRegionBody)
+        paths = chapter_paths(series, chapter)
+        direction, lang = edit_settings(series)
+        region = run_edit(
+            lambda: edit_store.add_region(
+                paths,
+                body.bbox,
+                direction=direction,
+                kind=body.kind,
+                text=body.text,
+                bubble_bbox=body.bubble_bbox,
+                lang=lang,
+            )
+        )
+        return region.model_dump(mode="json")
+
+    @app.patch("/api/series/{series}/chapters/{chapter}/regions/{region_id}")
+    async def patch_region(series: str, chapter: str, region_id: str, request: Request) -> dict[str, object]:
+        """Change a region's kind, text box, bubble box and/or source text; returns the region as rebuilt."""
+        body = await json_body(request, RegionPatchBody)
+        paths = chapter_paths(series, chapter)
+        direction, _lang = edit_settings(series)
+        region = run_edit(
+            lambda: edit_store.update_region(
+                paths,
+                region_id,
+                direction=direction,
+                kind=body.kind,
+                bbox=body.bbox,
+                bubble_bbox=body.bubble_bbox,
+                text=body.text,
+            )
+        )
+        return region.model_dump(mode="json")
+
+    @app.delete("/api/series/{series}/chapters/{chapter}/regions/{region_id}")
+    def delete_region(series: str, chapter: str, region_id: str) -> dict[str, object]:
+        """Remove a region (a false detection stays on the page untranslated; revert brings it back)."""
+        paths = chapter_paths(series, chapter)
+        direction, _lang = edit_settings(series)
+        run_edit(lambda: edit_store.delete_region(paths, region_id, direction=direction))
+        return {"deleted": region_id}
+
+    @app.post("/api/series/{series}/chapters/{chapter}/regions/{region_id}/revert")
+    async def revert_region(series: str, chapter: str, region_id: str, request: Request) -> dict[str, object]:
+        """Drop every hand edit of a region; returns it as the pipeline read it (null for a hand-added one)."""
+        await json_body(request, EmptyBody)
+        paths = chapter_paths(series, chapter)
+        direction, _lang = edit_settings(series)
+        region = run_edit(lambda: edit_store.revert_region(paths, region_id, direction=direction))
+        return {"region": None if region is None else region.model_dump(mode="json")}
+
+    @app.get("/api/series/{series}/chapters/{chapter}/cleanup")
+    def get_cleanup(series: str, chapter: str) -> dict[str, object]:
+        """The chapter's hand cleanup (cleanup.json; no patches when nothing was cleaned by hand)."""
+        artifact = cleanup_store.load_cleanup(chapter_paths(series, chapter))
+        if artifact is None:
+            return {"patches": []}
+        return artifact.model_dump(mode="json")
+
+    @app.post("/api/series/{series}/chapters/{chapter}/cleanup", status_code=201)
+    async def add_cleanup(series: str, chapter: str, request: Request) -> dict[str, object]:
+        """Clean one brush stroke (fill, inpaint, clone or restore); export applies it after every automatic
+        patch. Returns the new patch."""
+        body = await json_body(request, CleanupBody)
+        paths = chapter_paths(series, chapter)
+        patch = run_edit(
+            lambda: cleanup_store.add_patch(
+                paths,
+                page=body.page,
+                box=body.box,
+                mask=decode_mask(body.mask, body.box),
+                method=body.method,
+                color=body.color,
+                offset=body.offset,
+            )
+        )
+        return patch.model_dump(mode="json")
+
+    @app.delete("/api/series/{series}/chapters/{chapter}/cleanup/{patch_id}")
+    def delete_cleanup(series: str, chapter: str, patch_id: str) -> dict[str, object]:
+        """Remove one hand cleanup patch."""
+        paths = chapter_paths(series, chapter)
+        run_edit(lambda: cleanup_store.delete_patch(paths, patch_id))
+        return {"deleted": patch_id}
+
+    @app.get("/api/series/{series}/chapters/{chapter}/cleanup/{patch_id}.png")
+    def get_cleanup_patch(series: str, chapter: str, patch_id: str) -> Response:
+        """One hand cleanup patch as an RGBA PNG (alpha = its mask; "restore" shows the raw page)."""
+        paths = chapter_paths(series, chapter)
+        rgba = run_edit(lambda: cleanup_store.patch_rgba(paths, patch_id))
+        buf = io.BytesIO()
+        Image.fromarray(rgba).save(buf, format="PNG")
+        return Response(content=buf.getvalue(), media_type="image/png")
+
+    def cuts_state(series: str, chapter: str) -> dict[str, object]:
+        """The chapter's output cuts: hand-set (or null), the slicer's own, and the cuts crossing a region."""
+        paths = chapter_paths(series, chapter)
+        slices = run_edit(lambda: edit_store.load_slices(paths))
+        hand = edit_store.load_edits(paths).cuts
+        auto = [s.y0 for s in slices.slices[1:]]
+        effective = auto if hand is None else hand
+        crossings = cut_crossings(effective, edit_store.current_regions(paths))
+        return {
+            "cuts": hand,
+            "auto": auto,
+            "strip_height": slices.strip_height,
+            "crossings": [{"cut": cut, "region_id": region_id} for cut, region_id in crossings],
+        }
+
+    @app.get("/api/series/{series}/chapters/{chapter}/cuts")
+    def get_cuts(series: str, chapter: str) -> dict[str, object]:
+        """Where the exported images split: the hand-set output cuts (null = one image per slice), the
+        slicer's own cuts, and every cut that runs through a region's text or bubble."""
+        return cuts_state(series, chapter)
+
+    @app.put("/api/series/{series}/chapters/{chapter}/cuts")
+    async def put_cuts(series: str, chapter: str, request: Request) -> dict[str, object]:
+        """Set the output cuts by hand (strip rows), or reset them with null; export applies them."""
+        body = await json_body(request, CutsBody)
+        paths = chapter_paths(series, chapter)
+        run_edit(lambda: edit_store.set_cuts(paths, body.cuts))
+        return cuts_state(series, chapter)
+
+    @app.get("/api/fonts")
+    def list_fonts() -> list[str]:
+        """The lettering fonts in the fonts folder (file names, as a layout item names them)."""
+        folder = fonts_dir()
+        if not folder.is_dir():
+            return []
+        return sorted(
+            (p.name for p in folder.iterdir() if p.suffix.lower() in (".ttf", ".otf")), key=natural_key
+        )
+
+    def live_layout(series: str, chapter: str) -> list[dict[str, object]]:
+        """The chapter's layout items as the typesetter + hand lettering set them now (404 when an input is
+        missing)."""
+        paths = chapter_paths(series, chapter)
+        try:
+            layout = chapter_layout(paths, series_config(cfg, series_paths(series).library_dir))
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return [item.model_dump(mode="json") for item in layout.items]
+
+    @app.get("/api/series/{series}/chapters/{chapter}/layout/live")
+    def get_live_layout(series: str, chapter: str) -> dict[str, object]:
+        """The lettering as the next typeset will set it (English lines and hand lettering included), and
+        which regions carry a hand-set lettering."""
+        items = live_layout(series, chapter)
+        return {"items": items, "hand_set": edit_store.hand_lettered_ids(chapter_paths(series, chapter))}
+
+    @app.put("/api/series/{series}/chapters/{chapter}/layout/{region_id}")
+    async def put_layout(series: str, chapter: str, region_id: str, request: Request) -> dict[str, object]:
+        """Set a region's hand lettering (font, size, colours, outline, alignment, angle, box, line breaks,
+        hidden); returns the edit and the region's lettering as it now comes out (null when hidden)."""
+        body = await json_body(request, LayoutBody)
+        paths = chapter_paths(series, chapter)
+        if body.font is not None:
+            try:
+                font_file(body.font)
+            except FileNotFoundError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+        edit = run_edit(
+            lambda: edit_store.set_layout(paths, region_id, body.model_dump(exclude_defaults=True))
+        )
+        item = next((i for i in live_layout(series, chapter) if i["region_id"] == region_id), None)
+        return {"edit": edit.model_dump(mode="json"), "item": item}
+
+    @app.delete("/api/series/{series}/chapters/{chapter}/layout/{region_id}")
+    def delete_layout(series: str, chapter: str, region_id: str) -> dict[str, object]:
+        """Drop a region's hand lettering."""
+        paths = chapter_paths(series, chapter)
+        run_edit(lambda: edit_store.revert_layout(paths, region_id))
+        return {"reverted": region_id}
+
+    @app.get("/api/series/{series}/chapters/{chapter}/preview/{page}.png")
+    def get_preview(series: str, chapter: str, page: int) -> Response:
+        """One page as the release will look (cleaned, hand cleanup, lettering with hand edits), rendered
+        now on the CPU; a chapter not yet typeset (no final.json/inpaint.json) shows its cleaning only."""
+        paths = chapter_paths(series, chapter)
+        try:
+            items = chapter_layout(paths, series_config(cfg, series_paths(series).library_dir)).items
+        except FileNotFoundError:
+            items = []
+        ingest = run_edit(lambda: cleanup_store.load_ingest(paths))
+        pixels = run_edit(lambda: render_page(paths, ingest, page, items))
+        buf = io.BytesIO()
+        Image.fromarray(pixels).save(buf, format="JPEG", quality=92)
+        return Response(content=buf.getvalue(), media_type="image/jpeg")
 
     @app.post("/api/series/{series}/chapters/{chapter}/run", status_code=202)
     async def run_chapter(series: str, chapter: str, request: Request) -> dict[str, object]:
-        """Queue every stage through `through` (inclusive) for one chapter.
+        """Queue every stage through `through` (inclusive) for one chapter — from `start` when given (the
+        editor re-renders a chapter with start "inpaint" without re-translating it).
 
         Actually executes only when the app was built with `run_worker=True` (`omniscan serve`'s
         default) — its background thread drains `queue.db`; poll `GET /api/jobs/{job_id}` with the
@@ -375,7 +777,17 @@ def create_app(
                 status_code=422,
                 detail=f"unknown stage {body.through!r} (known: {', '.join(STAGE_ORDER)})",
             )
-        stages = STAGE_ORDER[: STAGE_ORDER.index(body.through) + 1]
+        first = 0
+        if body.start is not None:
+            if body.start not in STAGE_ORDER:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"unknown stage {body.start!r} (known: {', '.join(STAGE_ORDER)})",
+                )
+            first = STAGE_ORDER.index(body.start)
+        stages = STAGE_ORDER[first : STAGE_ORDER.index(body.through) + 1]
+        if not stages:
+            raise HTTPException(status_code=422, detail=f"{body.start!r} comes after {body.through!r}")
         store = QueueStore(queue_db_path(cfg))
         job = store.add(series, list(stages), chapters=[chapter])
         return {"job_id": job.id, "stages": list(stages)}

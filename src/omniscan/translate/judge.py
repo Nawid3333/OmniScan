@@ -51,6 +51,7 @@ class JudgeStats:
     completion_tokens: int
     seconds: float
     rate_limited: bool = False  # the model hit the rate limit and the rest fell back (rate_limit_fallback)
+    reused: int = 0  # lines kept from the previous judge run (judge_chapter with reuse)
 
 
 @dataclass(frozen=True, slots=True)

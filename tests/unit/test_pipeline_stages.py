@@ -426,6 +426,7 @@ def test_judge_stage_run_writes_final_metrics_and_is_resumable(cfg: Config) -> N
         "violations_left": 0.0,
         "requests": 1.0,
         "rate_limited": 0.0,
+        "reused": 0.0,
     }
     assert "seconds" in outcome.metrics
     manifest = load_manifest(ctx.paths.manifest, SERIES, CHAPTER)
@@ -531,16 +532,16 @@ def make_prior_chapters(cfg: Config) -> None:
     (cfg.paths.library_root / SERIES / CHAPTER).mkdir(parents=True, exist_ok=True)
 
 
-def test_series_story_context_joins_the_last_summaries_oldest_first(cfg: Config) -> None:
+def testseries_story_context_joins_the_last_summaries_oldest_first(cfg: Config) -> None:
     from omniscan.core.paths import SeriesPaths
-    from omniscan.pipeline.stages import _series_story_context
+    from omniscan.pipeline.stages import series_story_context
     from omniscan.story.store import SummaryStore
 
     sp = SeriesPaths.from_config(cfg, "S")
     for name in ("Chapter 1", "Chapter 2", "Chapter 3", "Chapter 4", "Chapter 5"):
         (sp.library_dir / name).mkdir(parents=True, exist_ok=True)
     sp.work_dir.mkdir(parents=True, exist_ok=True)  # a db only ever exists beside a work dir
-    assert _series_story_context(sp, "Chapter 5") is None  # no db yet
+    assert series_story_context(sp, "Chapter 5") is None  # no db yet
     with SummaryStore(sp.db) as store:
         for name, text in (
             ("Chapter 1", "One."),
@@ -551,16 +552,14 @@ def test_series_story_context_joins_the_last_summaries_oldest_first(cfg: Config)
             store.set(name, text, "m")
     # more than max_chapters exist: only the most recent three, still oldest-first
     assert (
-        _series_story_context(sp, "Chapter 5") == "- Chapter 2: Two.\n- Chapter 3: Three.\n- Chapter 4: Four."
+        series_story_context(sp, "Chapter 5") == "- Chapter 2: Two.\n- Chapter 3: Three.\n- Chapter 4: Four."
     )
     # a prior chapter with no summary is skipped without breaking the order of the others
     with SummaryStore(sp.db) as store:
         assert store.delete("Chapter 3")
-    assert (
-        _series_story_context(sp, "Chapter 5") == "- Chapter 1: One.\n- Chapter 2: Two.\n- Chapter 4: Four."
-    )
-    assert _series_story_context(sp, "Chapter 99") is None  # chapter not in series.chapters()
-    assert _series_story_context(sp, "Chapter 1") is None  # no prior chapters
+    assert series_story_context(sp, "Chapter 5") == "- Chapter 1: One.\n- Chapter 2: Two.\n- Chapter 4: Four."
+    assert series_story_context(sp, "Chapter 99") is None  # chapter not in series.chapters()
+    assert series_story_context(sp, "Chapter 1") is None  # no prior chapters
 
 
 def test_translate_stage_passes_stored_story_summaries_through(cfg: Config) -> None:
