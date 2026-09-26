@@ -26,14 +26,26 @@ to the common strip width. Integers, half-open ranges `[x0, x1)`, `[y0, y1)`. A 
 | `slices.json` | `SlicesArtifact` (bands, slices, blank/forced/filtered flags) | slicer (+ promo filter flags) |
 | `filter.json` | `FilterArtifact` | promo filter |
 | `regions.json` | `RegionsArtifact` (text empty) | detect |
-| `ocr.json` | `RegionsArtifact` (text filled) | ocr |
+| `ocr.json` | `RegionsArtifact` (text filled, hand edits applied) | ocr (+ editing tools) |
+| `ocr_auto.json` | `RegionsArtifact` (the OCR's own reading, before hand edits) | ocr |
 | `translations/<run_id>.json` | `CandidateRun` | each translation run |
-| `final.json` | `FinalArtifact` | judge |
+| `final.json` | `FinalArtifact` (hand-written lines applied) | judge (+ editing tools) |
+| `final_auto.json` | `FinalArtifact` (the judge's own lines, before hand edits) | judge |
+| `edits.json` | `ChapterEdits` (hand edits: regions and English lines) | editing tools only (`edits/store.py`) |
+| `cleanup.json` + `cleanup.npz` | `CleanupArtifact` + npz (hand-painted cleanup patches: masks, pixels) | editing tools only (`cleanup/store.py`); applied last by export |
 | `inpaint.json` + `patches.npz` | `InpaintArtifact` + npz (cleaned crops and masks per region) | inpaint |
 | `layout.json` | `LayoutArtifact` | typeset |
 | `export.json` | `ExportArtifact` (files written to `output_root/<Series>/<Chapter>/`) | export |
 | `manifest.json` | `Manifest` of `StageRecord`s | stage runner |
 Save/load only through `Artifact.save()` (atomic tmp+rename) and `Model.load(path)`.
+
+**Hand edits** (`edits/`): `edits.json` is user-owned — only the editing tools write it (web Studio, via
+`edits/store.py`). The `ocr` and `judge` stages write their own output to `ocr_auto.json`/`final_auto.json`
+and `ocr.json`/`final.json` as that output with `edits.json` applied (`edits/apply.py`, pure functions); an
+editing tool rebuilds the same two files from the `_auto` ones with the same functions. An edit is matched to
+its region by id and box overlap (IoU >= 0.5 with the box it was made on), so it survives a re-run that
+renumbers regions. `edits.json` is deliberately *not* an input of `ocr` (a text fix must not re-run the OCR
+models); the tools apply it themselves.
 
 ## Stages (`core/stage.py`)
 A stage is a class with `name`, `version`, `gpu_group` class vars and four methods:

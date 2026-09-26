@@ -8,12 +8,13 @@
   import OcrView from "./OcrView.svelte";
   import ReaderView from "./ReaderView.svelte";
   import SlicerView from "./SlicerView.svelte";
+  import StudioView from "./StudioView.svelte";
   import TranslationView from "./TranslationView.svelte";
   import { listChapters, listSeries } from "./api";
 
   let view = $state<
-    "slicer" | "ocr" | "translation" | "reader" | "inpaint" | "layout" | "edit" | "filtered"
-  >("slicer");
+    "studio" | "slicer" | "ocr" | "translation" | "reader" | "inpaint" | "layout" | "edit" | "filtered"
+  >("studio");
   let series = $state("");
   let chapter = $state("");
   let seriesList = $state<string[]>([]);
@@ -42,7 +43,7 @@
 </script>
 
 <main>
-  <h1>OmniScan debug</h1>
+  <h1>OmniScan</h1>
   <p>
     <select bind:value={series} onchange={onSeriesChange}>
       <option value="">— series —</option>
@@ -63,6 +64,7 @@
   {#if series}
     <p>
       {#if chapter}
+        <button onclick={() => (view = "studio")} disabled={view === "studio"}>Studio</button>
         <button onclick={() => (view = "slicer")} disabled={view === "slicer"}>Slicer</button>
         <button onclick={() => (view = "ocr")} disabled={view === "ocr"}>OCR</button>
         <button onclick={() => (view = "translation")} disabled={view === "translation"}>Translation</button>
@@ -76,7 +78,9 @@
     {#if view === "filtered"}
       <FilteredView {series} />
     {:else if chapter}
-      {#if view === "slicer"}
+      {#if view === "studio"}
+        <StudioView {series} {chapter} />
+      {:else if view === "slicer"}
         <SlicerView {series} {chapter} />
       {:else if view === "ocr"}
         <OcrView {series} {chapter} />

@@ -312,6 +312,81 @@ class ExportArtifact(Artifact):
     files: list[ExportFile]
 
 
+# ---------------------------------------------------------------- manual edits
+
+
+class RegionEdit(Model):
+    """One hand edit of a region (edits.json), re-applied every time the `ocr` stage rewrites ocr.json.
+
+    `anchor` is the region's box as the pipeline produced it when it was first edited. After a re-run the
+    edit applies to the region with the same id that still overlaps `anchor` (or `bbox`), else to the region
+    overlapping it best — a re-detected chapter whose ids shifted keeps its edits. An `added` region (id
+    `m0001`, …) is inserted as given and replaces a pipeline region covering the same box; a `deleted` one
+    is dropped. A field left None keeps the pipeline's value. The pipeline's own reading stays in
+    `ocr_auto.json` (and the judge's in `final_auto.json`), so dropping an edit reverts it.
+    """
+
+    region_id: str
+    anchor: BBox
+    added: bool = False
+    deleted: bool = False
+    kind: RegionKind | None = None
+    bbox: BBox | None = None  # the text area; replaces the OCR lines with one line of this box
+    bubble_bbox: BBox | None = None
+    text: str | None = None  # the corrected source text
+    lang: Lang | None = None  # an added region's language
+
+
+class TranslationEdit(Model):
+    """One hand-written English line (edits.json), re-applied every time the `judge` stage rewrites final.json."""
+
+    region_id: str
+    anchor: BBox  # the region's box when the line was written (matched like RegionEdit.anchor)
+    text: str
+    source: str  # the region's source text when the line was written; a changed source flags the line
+    suggested_by: str | None = None  # the profile whose suggestion was kept as is; None = typed by hand
+
+
+class ChapterEdits(Artifact):
+    """edits.json in the chapter work dir: every hand edit of the chapter. Written only by the editing tools
+    (web studio, CLI); the stages read it and re-apply it to what they produce, so edits survive re-runs."""
+
+    regions: list[RegionEdit] = Field(default_factory=list)
+    translations: list[TranslationEdit] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------- hand cleanup
+
+CleanupMethod = Literal["fill", "inpaint", "clone", "restore"]
+
+
+class CleanupPatch(Model):
+    """One hand-painted cleanup of the strip (cleanup.json), applied by export after every automatic patch.
+
+    The mask — and, except for "restore", the pixels — live in cleanup.npz as `<id>.mask` (bool [h, w]) and
+    `<id>.pixels` (uint8 [h, w, 3]), both exactly the size of `box`. "restore" puts the raw page back under
+    its mask (undoing an automatic clean there); the other methods replace the masked pixels with the stored
+    ones: a flat colour ("fill"), inpainting from the surroundings ("inpaint"), or the raw page `offset` away
+    ("clone").
+    """
+
+    id: str  # "c0001", "c0002", … in painting order
+    box: BBox  # strip space
+    method: CleanupMethod
+    color: RGB | None = None  # the fill colour ("fill")
+    offset: tuple[int, int] | None = None  # clone source minus destination, strip px ("clone")
+    mask_px: int = 0
+
+
+class CleanupArtifact(Artifact):
+    """cleanup.json in the chapter work dir: the hand cleanup in painting order (a later patch wins where
+    patches overlap). Written only by the editing tools; tied to the strip size it was painted on."""
+
+    strip_width: int
+    strip_height: int
+    patches: list[CleanupPatch] = Field(default_factory=list)
+
+
 # ---------------------------------------------------------------- manifest
 
 
