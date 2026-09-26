@@ -86,3 +86,18 @@ export function stripBoxToStackBox(files: SourceFile[], box: BBox): StackBox {
     height: Math.max(0, stripYToStackY(files, box.y1) - y),
   };
 }
+/**
+ * Inverse of `stripYToStackY`: a y-offset in the stacked raw-image view -> the strip row (unrounded).
+ * Offsets above the stack clamp to the first file's y0, below it to the last file's y1.
+ */
+export function stackYToStripY(files: SourceFile[], yStack: number): number {
+  let top = 0;
+  for (const file of files) {
+    if (yStack < top + file.height || file === files[files.length - 1]) {
+      const fraction = file.height === 0 ? 0 : Math.min(Math.max((yStack - top) / file.height, 0), 1);
+      return file.y0 + fraction * (file.y1 - file.y0);
+    }
+    top += file.height;
+  }
+  return 0;
+}

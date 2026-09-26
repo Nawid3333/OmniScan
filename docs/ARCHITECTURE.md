@@ -26,14 +26,40 @@ to the common strip width. Integers, half-open ranges `[x0, x1)`, `[y0, y1)`. A 
 | `slices.json` | `SlicesArtifact` (bands, slices, blank/forced/filtered flags) | slicer (+ promo filter flags) |
 | `filter.json` | `FilterArtifact` | promo filter |
 | `regions.json` | `RegionsArtifact` (text empty) | detect |
-| `ocr.json` | `RegionsArtifact` (text filled) | ocr |
+| `ocr.json` | `RegionsArtifact` (text filled, hand edits applied) | ocr (+ editing tools) |
+| `ocr_auto.json` | `RegionsArtifact` (the OCR's own reading, before hand edits) | ocr |
 | `translations/<run_id>.json` | `CandidateRun` | each translation run |
-| `final.json` | `FinalArtifact` | judge |
+| `final.json` | `FinalArtifact` (hand-written lines applied) | judge (+ editing tools) |
+| `final_auto.json` | `FinalArtifact` (the judge's own lines, before hand edits) | judge |
+| `edits.json` | `ChapterEdits` (hand edits: regions, English lines, lettering) | editing tools only (`edits/store.py`) |
+| `layout_auto.json` | `LayoutArtifact` (the typesetter's own items, before hand lettering) | typeset |
+| `cleanup.json` + `cleanup.npz` | `CleanupArtifact` + npz (hand-painted cleanup patches: masks, pixels) | editing tools only (`cleanup/store.py`); applied last by export |
 | `inpaint.json` + `patches.npz` | `InpaintArtifact` + npz (cleaned crops and masks per region) | inpaint |
-| `layout.json` | `LayoutArtifact` | typeset |
+| `layout.json` | `LayoutArtifact` (hand lettering applied) | typeset |
 | `export.json` | `ExportArtifact` (files written to `output_root/<Series>/<Chapter>/`) | export |
 | `manifest.json` | `Manifest` of `StageRecord`s | stage runner |
+| `<series>/memory.json` | `SeriesMemory` (learned rules + translation memory of the whole series) | `learn/memory.py`, rebuilt from every `edits.json` when one changes; only rule switches are set by hand |
 Save/load only through `Artifact.save()` (atomic tmp+rename) and `Model.load(path)`.
+
+**Hand edits** (`edits/`): `edits.json` is user-owned — only the editing tools write it (web Studio, via
+`edits/store.py`). The `ocr` and `judge` stages write their own output to `ocr_auto.json`/`final_auto.json`
+and `ocr.json`/`final.json` as that output with `edits.json` applied (`edits/apply.py`, pure functions); an
+editing tool rebuilds the same two files from the `_auto` ones with the same functions. An edit is matched to
+its region by id and box overlap (IoU >= 0.5 with the box it was made on), so it survives a re-run that
+renumbers regions. `edits.json` is deliberately *not* an input of `ocr` (a text fix must not re-run the OCR
+models); the tools apply it themselves. It *is* an input of `typeset`, which is cheap: its hand lettering
+(`layout`) is applied there (`typeset/overrides.py`), and `typeset/chapter.py::chapter_layout` is the one
+function both the stage and the studio's live preview (`typeset/page_preview.py`) letter a chapter with.
+
+**Learning** (`learn/`): `learn/harvest.py` compares every edit with the pipeline text it records
+(`RegionEdit.auto_text`, `TranslationEdit.auto_text`, set when the edit is first made) — OCR fixes,
+deletions, watermark/sfx labels, English lines, rewritten words. `learn/memory.py` turns a series'
+corrections into `memory.json`: word rules need `learn.min_count` matching corrections and none that kept
+the old word; the translation memory keeps the latest English per source line. `learn/apply.py` applies it:
+the `ocr` stage runs `apply_to_regions` on its reading (so `ocr_auto.json` holds the lessons), the
+`translate` stage and the studio's on-demand translation pass `TranslationHints` to `run_profile` (an exact
+memory line is used as the candidate; similar lines and preferred words go into the chat_json prompt).
+`memory.json` is not a stage input: a new lesson applies to chapters processed from then on.
 
 ## Stages (`core/stage.py`)
 A stage is a class with `name`, `version`, `gpu_group` class vars and four methods:

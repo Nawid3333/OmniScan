@@ -1159,8 +1159,9 @@ def test_edit_final_line_overwrites_text_and_marks_it_manual(tmp_path: Path) -> 
         "text": "Cheolsu has arrived",
         "decision": "manual",
         "sources": [],
-        "rationale": "edited in the debug UI",
+        "rationale": "edited by hand",
         "flags": [],
+        "key": None,  # a hand-written line is never reused as a translation
     }
     artifact = FinalArtifact.load(work / "final.json")
     assert [line.region_id for line in artifact.lines] == ["r0001", "r0002"]  # order preserved
@@ -1168,19 +1169,22 @@ def test_edit_final_line_overwrites_text_and_marks_it_manual(tmp_path: Path) -> 
     assert artifact.lines[0].decision == "manual"
     assert artifact.lines[1].text == "Whoosh"  # the other line is untouched
     assert artifact.judge_model == "judge:8b"  # unrelated artifact fields untouched
+    # the judge's own line is kept, so the edit can be reverted
+    assert FinalArtifact.load(work / "final_auto.json").lines[0].text == "Cheolsu came"
 
 
-def test_edit_final_line_missing_final_or_region_returns_404(tmp_path: Path) -> None:
+def test_edit_final_line_creates_final_when_missing_and_404s_unknown_region(tmp_path: Path) -> None:
     work = write_translation_chapter(tmp_path)
     client = make_client(tmp_path)
-    response = client.put(edit_url("r0001"), json={"text": "x"})
-    assert response.status_code == 404
-    assert response.json() == {"detail": "final.json not found"}
+    response = client.put(edit_url("r0001"), json={"text": "Cheolsu came"})
+    assert response.status_code == 200
+    artifact = FinalArtifact.load(work / "final.json")
+    assert artifact.judge_model == "manual"
+    assert [(line.region_id, line.text) for line in artifact.lines] == [("r0001", "Cheolsu came")]
 
-    write_final(work, [FinalLine(region_id="r0001", text="Cheolsu came", decision="pick")])
-    response = client.put(edit_url("r0002"), json={"text": "x"})
+    response = client.put(edit_url("r0009"), json={"text": "x"})
     assert response.status_code == 404
-    assert response.json() == {"detail": "region 'r0002' not found in final.json"}
+    assert response.json() == {"detail": "region 'r0009' not found in ocr.json"}
 
 
 def test_edit_final_line_rejects_non_json_content_type_and_bad_body(tmp_path: Path) -> None:
@@ -1256,7 +1260,8 @@ def test_run_worker_drains_the_queue_in_the_background(
     the app's own drain-loop wiring (lifespan -> thread -> run_queue -> QueueStore), not about
     running real pipeline stages, which need real fixtures/GPU markers and belong elsewhere."""
     write_chapter(tmp_path)
-    monkeypatch.setattr("omniscan.web.app.stage_executor", lambda cfg: lambda job: None)
+    # the drain loop imports stage_executor from its module when it starts, so patch it there
+    monkeypatch.setattr("omniscan.queue.executor.stage_executor", lambda cfg: lambda job: None)
     with TestClient(create_app(make_cfg(tmp_path), run_worker=True)) as client:
         response = client.post(run_url(), json={"through": "ingest"})
         job_id = response.json()["job_id"]

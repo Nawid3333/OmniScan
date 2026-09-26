@@ -7,6 +7,9 @@ a crop-reading engine (manga_ocr or paddleocr_vl) every region is read as one wh
 no line detection runs. Stored fixed-position watermarks pass through unread; with `sfx.sweep` CRAFT
 then looks over every active tile for sound effects the detector missed (ocr/sweep.py), read by the
 same engine.
+The series' learned lessons (learn/: word fixes the editor kept making, texts they keep deleting or
+labelling) are applied to the reading. The reading is kept as ocr_auto.json; ocr.json is that reading with
+the chapter's hand edits (edits.json) applied, so a re-run never loses them.
 """
 
 from __future__ import annotations
@@ -21,8 +24,12 @@ from omniscan.core.paths import list_images
 from omniscan.core.schemas import IngestArtifact, RegionsArtifact, SlicesArtifact
 from omniscan.core.stage import ChapterContext
 from omniscan.detect.tiles import keep_tiles, plan_tiles
+from omniscan.edits.apply import apply_region_edits
+from omniscan.edits.store import OCR_AUTO_FILE, load_edits
 from omniscan.gpu.groups import VISION_GROUP
 from omniscan.ingest.strip import load_strip
+from omniscan.learn.apply import apply_to_regions
+from omniscan.learn.memory import current_memory
 from omniscan.ocr.engines import engine_rec_model
 from omniscan.ocr.pipeline import read_region_crops, read_regions
 from omniscan.ocr.sfx import (
@@ -60,7 +67,7 @@ class OcrStage:
 
     def outputs(self, ctx: ChapterContext) -> list[str]:
         """Artifact names (relative to the chapter work dir) this stage writes."""
-        return ["ocr.json"]
+        return ["ocr.json", OCR_AUTO_FILE]
 
     def config_subset(self, cfg: Config) -> Mapping[str, Any]:
         """Only the config values that affect this stage's output (hashed for invalidation)."""
@@ -152,8 +159,17 @@ class OcrStage:
                     min_px=cfg.sfx.sweep_min_px,
                 )
                 metrics.update(swept)
+        if cfg.learn.enabled:  # what the series' hand corrections taught: word fixes, drops, labels (learn/)
+            kept, learned = apply_to_regions(kept, current_memory(ctx.series), cfg.learn)
+            metrics.update(learned)
         metrics["watermarked"] = float(sum(1 for r in kept if r.kind == "watermark"))
         kept = [measure_lettering_style(strip, r) if r.kind in ("sfx", "free_text") else r for r in kept]
         metrics["sfx"] = float(sum(1 for r in kept if r.kind == "sfx"))
+        RegionsArtifact(regions=kept).save(ctx.paths.artifact(OCR_AUTO_FILE))
+        edits = load_edits(ctx.paths)
+        if edits.regions:
+            slices = SlicesArtifact.load(ctx.paths.artifact("slices.json")).slices
+            kept, orphans = apply_region_edits(kept, edits, slices, direction=cfg.detect.reading_direction)
+            metrics["edits_orphaned"] = float(orphans)
         RegionsArtifact(regions=kept).save(ctx.paths.artifact("ocr.json"))
         return metrics

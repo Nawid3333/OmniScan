@@ -104,3 +104,9 @@ mode = "replace"
 [export]
 jpeg_quality = 95
 subsampling = "444"
+
+[learn]
+# what a series' hand corrections teach the pipeline for its later chapters (see "Learning" in the guide)
+enabled = true
+min_count = 2
+examples = 5

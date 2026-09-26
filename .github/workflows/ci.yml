@@ -13,7 +13,7 @@ on:
   # windows-latest moves to it.
   workflow_call:
     inputs:
-      # No Linux job here; accepted so that every repository's CI takes the same inputs.
+      # runs the webui job (the Svelte editor needs no GPU or Windows)
       linux-runner:
         type: string
         default: ubuntu-latest
@@ -46,3 +46,31 @@ jobs:
 
       - name: Type check
         run: uv run pyright
+
+  # The web UI (the Studio editor and the debug views): unit tests, type check and production build.
+  webui:
+    runs-on: ${{ inputs.linux-runner || 'ubuntu-latest' }}
+    timeout-minutes: 15 # a normal run takes ~1 min
+    defaults:
+      run:
+        working-directory: webui
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Type check
+        run: npm run check
+
+      - name: Build
+        run: npm run build

@@ -192,6 +192,7 @@ export interface LayoutItem {
   stroke_px: number;
   stroke_color: [number, number, number];
   overflow: boolean;
+  angle?: number;
 }
 
 export interface LayoutArtifact {
@@ -217,11 +218,23 @@ async function putJson<T>(path: string, body: unknown): Promise<T> {
   return sendJson<T>(path, "PUT", body);
 }
 
-async function sendJson<T>(path: string, method: "POST" | "PUT", body: unknown): Promise<T> {
+async function patchJson<T>(path: string, body: unknown): Promise<T> {
+  return sendJson<T>(path, "PATCH", body);
+}
+
+async function deleteJson<T>(path: string): Promise<T> {
+  return sendJson<T>(path, "DELETE", undefined);
+}
+
+async function sendJson<T>(
+  path: string,
+  method: "POST" | "PUT" | "PATCH" | "DELETE",
+  body: unknown,
+): Promise<T> {
   const res = await fetch(path, {
     method,
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!res.ok) {
     let detail = "";
@@ -344,12 +357,18 @@ export interface RunResult {
 }
 
 /** Queue every pipeline stage through `through` (inclusive, e.g. "ocr", "typeset", "export") for
- *  one chapter. Only actually executes while the server was started with a worker (the real
- *  `omniscan serve`); poll `getJob` with the returned id for progress. */
-export async function postRun(series: string, chapter: string, through: string): Promise<RunResult> {
+ *  one chapter — from `start` when given (e.g. "inpaint" re-renders without re-translating). Only
+ *  actually executes while the server was started with a worker (the real `omniscan serve`); poll
+ *  `getJob` with the returned id for progress. */
+export async function postRun(
+  series: string,
+  chapter: string,
+  through: string,
+  start?: string,
+): Promise<RunResult> {
   return postJson<RunResult>(
     `${BASE}/series/${encodeURIComponent(series)}/chapters/${encodeURIComponent(chapter)}/run`,
-    { through },
+    start === undefined ? { through } : { through, start },
   );
 }
 
@@ -370,10 +389,302 @@ export async function getJob(jobId: number): Promise<Job> {
   return getJson<Job>(`${BASE}/jobs/${jobId}`);
 }
 
-/** Overwrite one region's final line; the server sets its decision to "manual". */
-export async function putFinalLine(series: string, chapter: string, regionId: string, text: string): Promise<FinalLine> {
+/** Overwrite one region's final line; the server sets its decision to "manual". `suggestedBy` names the
+ *  translation profile whose suggestion is kept unchanged (omit it for a line typed by hand). */
+export async function putFinalLine(
+  series: string,
+  chapter: string,
+  regionId: string,
+  text: string,
+  suggestedBy?: string,
+): Promise<FinalLine> {
   return putJson<FinalLine>(
     `${BASE}/series/${encodeURIComponent(series)}/chapters/${encodeURIComponent(chapter)}/final/${encodeURIComponent(regionId)}`,
-    { text },
+    suggestedBy === undefined ? { text } : { text, suggested_by: suggestedBy },
   );
+}
+function chapterBase(series: string, chapter: string): string {
+  return `${BASE}/series/${encodeURIComponent(series)}/chapters/${encodeURIComponent(chapter)}`;
+}
+
+export interface RegionEdit {
+  region_id: string;
+  anchor: BBox;
+  added: boolean;
+  deleted: boolean;
+  kind: RegionKind | null;
+  bbox: BBox | null;
+  bubble_bbox: BBox | null;
+  text: string | null;
+  lang: string | null;
+  auto_text: string | null; // the pipeline's reading when first edited (null: an added region)
+}
+
+export interface TranslationEdit {
+  region_id: string;
+  anchor: BBox;
+  text: string;
+  source: string;
+  suggested_by: string | null;
+  auto_text: string | null; // the judge's line when the line was first written
+}
+
+/** GET .../edits: edits.json plus what the server derives from it for the current regions. */
+export interface LayoutEdit {
+  region_id: string;
+  anchor: BBox;
+  font: string | null;
+  size_px: number | null;
+  color: [number, number, number] | null;
+  stroke_px: number | null;
+  stroke_color: [number, number, number] | null;
+  align: "center" | "left" | "right" | null;
+  angle: number | null;
+  box: BBox | null;
+  lines: string[] | null;
+  hidden: boolean;
+}
+
+/** A region's hand lettering as sent to the server (every field left out keeps the typesetter's choice). */
+export type LayoutFields = Partial<Omit<LayoutEdit, "region_id" | "anchor">>;
+
+export interface ChapterEdits {
+  regions: RegionEdit[];
+  translations: TranslationEdit[];
+  layout?: LayoutEdit[];
+  deleted_regions: Region[];
+  edited_region_ids: string[];
+  manual_translation_ids: string[];
+}
+
+export interface RegionPatch {
+  kind?: RegionKind;
+  bbox?: BBox;
+  bubble_bbox?: BBox;
+  text?: string;
+}
+
+export async function getEdits(series: string, chapter: string): Promise<ChapterEdits> {
+  return getJson<ChapterEdits>(`${chapterBase(series, chapter)}/edits`);
+}
+
+/** Change a region's kind, text box, bubble box and/or source text (recorded in edits.json). */
+export async function patchRegion(
+  series: string,
+  chapter: string,
+  regionId: string,
+  patch: RegionPatch,
+): Promise<Region> {
+  return patchJson<Region>(`${chapterBase(series, chapter)}/regions/${encodeURIComponent(regionId)}`, patch);
+}
+
+/** Add a hand-drawn region (strip-space box); the server gives it an m-prefixed id. */
+export async function addRegion(
+  series: string,
+  chapter: string,
+  region: { bbox: BBox; kind?: RegionKind; text?: string; bubble_bbox?: BBox },
+): Promise<Region> {
+  return postJson<Region>(`${chapterBase(series, chapter)}/regions`, region);
+}
+
+export async function deleteRegion(series: string, chapter: string, regionId: string): Promise<void> {
+  await deleteJson<unknown>(`${chapterBase(series, chapter)}/regions/${encodeURIComponent(regionId)}`);
+}
+
+/** Drop every hand edit of a region; null when it was hand-added (and is now gone). */
+export async function revertRegion(series: string, chapter: string, regionId: string): Promise<Region | null> {
+  const result = await postJson<{ region: Region | null }>(
+    `${chapterBase(series, chapter)}/regions/${encodeURIComponent(regionId)}/revert`,
+    {},
+  );
+  return result.region;
+}
+
+/** Drop a region's hand-written line; the judge's line again, or null when it has none. */
+export async function revertFinalLine(
+  series: string,
+  chapter: string,
+  regionId: string,
+): Promise<FinalLine | null> {
+  const result = await postJson<{ line: FinalLine | null }>(
+    `${chapterBase(series, chapter)}/final/${encodeURIComponent(regionId)}/revert`,
+    {},
+  );
+  return result.line;
+}
+
+export interface TranslationProfile {
+  name: string;
+  model: string;
+  enabled: boolean;
+  style: string;
+}
+
+export interface Suggestion {
+  region_id: string;
+  profile: string;
+  model: string;
+  text: string;
+}
+
+export async function listProfiles(): Promise<TranslationProfile[]> {
+  return getJson<TranslationProfile[]>(`${BASE}/translation-profiles`);
+}
+
+/** Translate regions now (every enabled profile, or `profile`); with `apply` each region's first
+ *  suggestion becomes its English line. */
+export async function translateRegions(
+  series: string,
+  chapter: string,
+  regionIds: string[],
+  options: { profile?: string; apply?: boolean } = {},
+): Promise<{ suggestions: Suggestion[]; applied: FinalLine[] }> {
+  return postJson<{ suggestions: Suggestion[]; applied: FinalLine[] }>(`${chapterBase(series, chapter)}/translate`, {
+    region_ids: regionIds,
+    ...(options.profile ? { profile: options.profile } : {}),
+    ...(options.apply ? { apply: true } : {}),
+  });
+}
+
+export type CleanupMethod = "fill" | "inpaint" | "clone" | "restore";
+
+export interface CleanupPatch {
+  id: string;
+  box: BBox;
+  method: CleanupMethod;
+  color: [number, number, number] | null;
+  offset: [number, number] | null;
+  mask_px: number;
+}
+
+export interface CleanupArtifact {
+  strip_width?: number;
+  strip_height?: number;
+  patches: CleanupPatch[];
+}
+
+export async function getCleanup(series: string, chapter: string): Promise<CleanupArtifact> {
+  return getJson<CleanupArtifact>(`${chapterBase(series, chapter)}/cleanup`);
+}
+
+/** Clean one brush stroke painted on page `page` (box and offset in that page's pixels; mask = PNG data URL
+ *  the size of the box). */
+export async function addCleanup(
+  series: string,
+  chapter: string,
+  stroke: {
+    page: number;
+    box: BBox;
+    mask: string;
+    method: CleanupMethod;
+    color?: [number, number, number] | null;
+    offset?: [number, number] | null;
+  },
+): Promise<CleanupPatch> {
+  return postJson<CleanupPatch>(`${chapterBase(series, chapter)}/cleanup`, stroke);
+}
+
+export async function deleteCleanup(series: string, chapter: string, patchId: string): Promise<void> {
+  await deleteJson<unknown>(`${chapterBase(series, chapter)}/cleanup/${encodeURIComponent(patchId)}`);
+}
+
+export function cleanupPatchUrl(series: string, chapter: string, patchId: string, version: number): string {
+  return `${chapterBase(series, chapter)}/cleanup/${encodeURIComponent(patchId)}.png?v=${version}`;
+}
+
+export async function listFonts(): Promise<string[]> {
+  return getJson<string[]>(`${BASE}/fonts`);
+}
+
+/** The lettering as the next typeset will set it, and which regions carry hand lettering. */
+export async function getLiveLayout(
+  series: string,
+  chapter: string,
+): Promise<{ items: LayoutItem[]; hand_set: string[] }> {
+  return getJson<{ items: LayoutItem[]; hand_set: string[] }>(`${chapterBase(series, chapter)}/layout/live`);
+}
+
+/** Set a region's hand lettering (replaces any earlier one). */
+export async function putLayout(
+  series: string,
+  chapter: string,
+  regionId: string,
+  fields: LayoutFields,
+): Promise<{ edit: LayoutEdit; item: LayoutItem | null }> {
+  return putJson<{ edit: LayoutEdit; item: LayoutItem | null }>(
+    `${chapterBase(series, chapter)}/layout/${encodeURIComponent(regionId)}`,
+    fields,
+  );
+}
+
+export async function deleteLayout(series: string, chapter: string, regionId: string): Promise<void> {
+  await deleteJson<unknown>(`${chapterBase(series, chapter)}/layout/${encodeURIComponent(regionId)}`);
+}
+
+/** One page rendered as the release will look (cleaned and lettered); `version` busts the browser cache. */
+export function previewUrl(series: string, chapter: string, page: number, version: number): string {
+  return `${chapterBase(series, chapter)}/preview/${page}.png?v=${version}`;
+}
+
+export interface CutsState {
+  cuts: number[] | null; // hand-set output cuts; null = one image per slice
+  auto: number[]; // the slicer's own cut rows
+  strip_height: number;
+  crossings: { cut: number; region_id: string }[];
+}
+
+export async function getCuts(series: string, chapter: string): Promise<CutsState> {
+  return getJson<CutsState>(`${chapterBase(series, chapter)}/cuts`);
+}
+
+/** Set the output cuts (strip rows), or reset them to one image per slice with null. */
+export async function putCuts(series: string, chapter: string, cuts: number[] | null): Promise<CutsState> {
+  return putJson<CutsState>(`${chapterBase(series, chapter)}/cuts`, { cuts });
+}
+
+export type LearnKind = "ocr_fix" | "preferred_term" | "drop_text" | "watermark_text" | "sfx_text";
+
+/** One lesson of the series' hand corrections; `active` = switched on and with enough evidence. */
+export interface LearnedRule {
+  id: string;
+  kind: LearnKind;
+  wrong: string;
+  right: string;
+  count: number;
+  enabled: boolean;
+  active: boolean;
+}
+
+export interface MemoryEntry {
+  source: string;
+  english: string;
+  count: number;
+  typed: boolean;
+  chapter: string;
+}
+
+/** GET /api/series/{series}/memory: what the series' hand edits taught, and the settings deciding it. */
+export interface SeriesMemory {
+  enabled: boolean;
+  min_count: number;
+  rules: LearnedRule[];
+  translations: MemoryEntry[];
+}
+
+function memoryBase(series: string): string {
+  return `${BASE}/series/${encodeURIComponent(series)}/memory`;
+}
+
+export async function getMemory(series: string): Promise<SeriesMemory> {
+  return getJson<SeriesMemory>(memoryBase(series));
+}
+
+/** Rebuild the memory from every chapter's edits now (rule switches are kept). */
+export async function rebuildMemory(series: string): Promise<SeriesMemory> {
+  return postJson<SeriesMemory>(`${memoryBase(series)}/rebuild`, {});
+}
+
+/** Switch one learned rule on or off; returns the rule as stored. */
+export async function setRuleEnabled(series: string, ruleId: string, enabled: boolean): Promise<LearnedRule> {
+  return putJson<LearnedRule>(`${memoryBase(series)}/rules/${encodeURIComponent(ruleId)}`, { enabled });
 }

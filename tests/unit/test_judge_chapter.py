@@ -13,10 +13,12 @@ from omniscan.core.schemas import (
     BBox,
     Candidate,
     CandidateRun,
+    ChapterEdits,
     FinalArtifact,
     Region,
     RegionKind,
     RegionsArtifact,
+    TranslationEdit,
 )
 from omniscan.llm.ollama import ChatResponse
 from omniscan.translate.judge_chapter import judge_chapter
@@ -110,6 +112,26 @@ def test_done_writes_final_json_with_stats(paths: ChapterPaths) -> None:
         ("r0001", "Hello", ["run1"]),
         ("r0003", "Hi there", ["run1"]),
     ]
+
+
+def test_hand_written_lines_survive_a_rerun(paths: ChapterPaths) -> None:
+    """edits.json's lines replace the judge's in final.json; the judge's own stay in final_auto.json."""
+    write_ocr(paths)
+    write_run(paths, "run1", {"r0001": "Hello", "r0003": "Hi there"})
+    box = BBox(x0=0, y0=0, x1=10, y1=10)
+    ChapterEdits(
+        translations=[TranslationEdit(region_id="r0003", anchor=box, text="Nice to see you", source="반가워")]
+    ).save(paths.artifact("edits.json"))
+    status, artifact, _stats = judge_chapter(FakeClient([]), paths, CFG, [], force=True)
+    assert status == "done" and artifact is not None
+    final = FinalArtifact.load(paths.artifact("final.json"))
+    assert [(line.region_id, line.text, line.decision) for line in final.lines] == [
+        ("r0001", "Hello", "pick"),
+        ("r0003", "Nice to see you", "manual"),
+    ]
+    assert artifact.lines == final.lines
+    auto = FinalArtifact.load(paths.artifact("final_auto.json"))
+    assert [line.text for line in auto.lines] == ["Hello", "Hi there"]
 
 
 def test_existing_output_is_skipped_without_calls(paths: ChapterPaths) -> None:
@@ -260,6 +282,7 @@ def test_judge_chapter_records_usage(paths: ChapterPaths) -> None:
         "regions",
         "seconds",
         "rate_limited",
+        "reused",  # lines kept from the previous run (judge_chapter reuse=True); summed by `omniscan usage`
     ]
     assert loaded.usage["prompt_tokens"] == 1.0  # FakeClient counts 1 prompt/completion token per call
     assert loaded.usage["completion_tokens"] == 1.0

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Protocol, runtime_checkable
 from omniscan.core.config import Config
 from omniscan.core.paths import SeriesPaths
 from omniscan.core.stage import ChapterContext, Stage
+from omniscan.edits.store import FINAL_AUTO_FILE
 from omniscan.glossary.store import GlossaryStore
 from omniscan.llm.ollama import OllamaRateLimitError
 from omniscan.story.store import SummaryStore
@@ -23,6 +24,7 @@ from omniscan.translate.judge_chapter import judge_chapter
 
 if TYPE_CHECKING:
     from omniscan.core.schemas import CandidateRun, GlossaryEntry
+    from omniscan.learn.apply import TranslationHints
     from omniscan.translate.judge_config import JudgeConfig
     from omniscan.translate.profiles import TranslationProfile
     from omniscan.translate.run import ChatClient
@@ -55,7 +57,7 @@ PASS_OF: dict[str, str] = {
 }
 
 
-def _series_entries(series: SeriesPaths) -> list[GlossaryEntry]:
+def series_entries(series: SeriesPaths) -> list[GlossaryEntry]:
     """All glossary entries of the series, or none when its db does not exist (never created here)."""
     if not series.db.is_file():
         return []
@@ -63,7 +65,7 @@ def _series_entries(series: SeriesPaths) -> list[GlossaryEntry]:
         return store.list()
 
 
-def _series_story_context(series: SeriesPaths, chapter: str, *, max_chapters: int = 3) -> str | None:
+def series_story_context(series: SeriesPaths, chapter: str, *, max_chapters: int = 3) -> str | None:
     """Up to the last `max_chapters` prior chapters' stored summaries, oldest first; None when none exist."""
     if not series.db.is_file():
         return None
@@ -109,6 +111,9 @@ def _make_sole_local_model(ctx: ChapterContext, endpoint: str, model: str) -> No
 
 class TranslateStage:
     """Run every enabled translation profile over a chapter's ocr.json (satisfies core.stage.Stage).
+
+    Incremental: a region whose text, kind, language and matching glossary entries are unchanged keeps its
+    candidate from the previous run (translate/incremental.py); only changed regions reach the model.
 
     A profile with a fallback that hits the Ollama rate limit (cloud tokens exhausted) is replaced by its
     fallback for this chapter and for every later chapter of the same pass, so the pass does not pay the
@@ -159,15 +164,21 @@ class TranslateStage:
 
     def run(self, ctx: ChapterContext, models: Mapping[str, Any]) -> Mapping[str, float]:
         """Do the work, write outputs, return metrics (seconds are added by the runner)."""
-        entries = _series_entries(ctx.series)
-        story_summary = _series_story_context(ctx.series, ctx.paths.chapter)
-        regions = fallbacks_used = 0.0
+        entries = series_entries(ctx.series)
+        story_summary = series_story_context(ctx.series, ctx.paths.chapter)
+        hints = None
+        if ctx.cfg.learn.enabled:  # the series' translation memory and preferred wording (learn/)
+            from omniscan.learn.apply import translation_hints
+            from omniscan.learn.memory import current_memory
+
+            hints = translation_hints(current_memory(ctx.series), ctx.cfg.learn)
+        regions = fallbacks_used = reused = remembered = 0.0
         for profile in self._profiles:
             fallback = self._fallbacks.get(profile.name)
             run: CandidateRun | None = None
             if fallback is None or profile.name not in self._rate_limited:
                 try:
-                    run = self._translate(ctx, profile, entries, story_summary)
+                    run = self._translate(ctx, profile, entries, story_summary, hints)
                 except OllamaRateLimitError:
                     if fallback is None:
                         raise
@@ -180,14 +191,22 @@ class TranslateStage:
                     )
                     self._rate_limited.add(profile.name)
             if run is None and fallback is not None:
-                run = self._translate(ctx, fallback, entries, story_summary)
+                run = self._translate(ctx, fallback, entries, story_summary, hints)
                 fallbacks_used += 1.0
                 ctx.paths.artifact(f"translations/{profile.name}.json").unlink(missing_ok=True)  # stale
             elif fallback is not None:
                 ctx.paths.artifact(f"translations/{fallback.name}.json").unlink(missing_ok=True)  # stale
             if run is not None:
                 regions += float(run.usage["regions"])
-        return {"profiles": float(len(self._profiles)), "regions": regions, "fallbacks_used": fallbacks_used}
+                reused += float(run.usage.get("reused", 0.0))
+                remembered += float(run.usage.get("memory", 0.0))
+        return {
+            "profiles": float(len(self._profiles)),
+            "regions": regions,
+            "fallbacks_used": fallbacks_used,
+            "reused": reused,  # candidates kept from the previous run (their region did not change)
+            "memory": remembered,  # lines taken from the series' translation memory
+        }
 
     def _translate(
         self,
@@ -195,11 +214,19 @@ class TranslateStage:
         profile: TranslationProfile,
         entries: Sequence[GlossaryEntry],
         story_summary: str | None,
+        hints: TranslationHints | None = None,
     ) -> CandidateRun:
         """One profile over the chapter (the only local model in VRAM while it runs); its written run."""
         _make_sole_local_model(ctx, profile.endpoint, profile.model)
         _status, run = translate_chapter(
-            self._client, ctx.paths, profile, entries, force=True, story_summary=story_summary
+            self._client,
+            ctx.paths,
+            profile,
+            entries,
+            force=True,
+            story_summary=story_summary,
+            reuse=True,
+            hints=hints,
         )
         if run is None:
             raise RuntimeError(f"translate_chapter skipped {profile.name} despite force=True")
@@ -247,7 +274,7 @@ class JudgeStage:
 
     def outputs(self, ctx: ChapterContext) -> list[str]:
         """Artifact names (relative to the chapter work dir) this stage writes."""
-        return ["final.json"]
+        return ["final.json", FINAL_AUTO_FILE]
 
     def config_subset(self, cfg: Config) -> Mapping[str, Any]:
         """Only the config values that affect this stage's output (hashed for invalidation)."""
@@ -264,11 +291,12 @@ class JudgeStage:
             self._client,
             ctx.paths,
             self._judge_cfg,
-            _series_entries(ctx.series),
+            series_entries(ctx.series),
             run_ids=run_ids,
             force=True,
-            story_summary=_series_story_context(ctx.series, ctx.paths.chapter),
+            story_summary=series_story_context(ctx.series, ctx.paths.chapter),
             rate_limit_fallback=True,
+            reuse=True,
         )
         if stats is None:
             return {}
@@ -280,6 +308,7 @@ class JudgeStage:
             "violations_left": float(stats.violations_left),
             "requests": float(stats.requests),
             "rate_limited": float(stats.rate_limited),
+            "reused": float(stats.reused),
         }
 
 

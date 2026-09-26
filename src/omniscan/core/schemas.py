@@ -193,6 +193,7 @@ class Candidate(Model):
     region_id: str
     text: str
     notes: str | None = None
+    key: str | None = None  # hash of what produced it (translate/incremental.py): a re-run reuses a match
 
 
 class CandidateRun(Artifact):
@@ -211,6 +212,7 @@ class FinalLine(Model):
     sources: list[str] = Field(default_factory=list)  # run_ids used
     rationale: str = ""
     flags: list[str] = Field(default_factory=list)  # e.g. "uncertain", "glossary_violation"
+    key: str | None = None  # hash of what the judge saw (translate/incremental.py): a re-run reuses a match
 
 
 class FinalArtifact(Artifact):
@@ -310,6 +312,151 @@ class ExportArtifact(Artifact):
     quality: int
     subsampling: Literal["444", "422", "420"]
     files: list[ExportFile]
+
+
+# ---------------------------------------------------------------- manual edits
+
+
+class RegionEdit(Model):
+    """One hand edit of a region (edits.json), re-applied every time the `ocr` stage rewrites ocr.json.
+
+    `anchor` is the region's box as the pipeline produced it when it was first edited. After a re-run the
+    edit applies to the region with the same id that still overlaps `anchor` (or `bbox`), else to the region
+    overlapping it best — a re-detected chapter whose ids shifted keeps its edits. An `added` region (id
+    `m0001`, …) is inserted as given and replaces a pipeline region covering the same box; a `deleted` one
+    is dropped. A field left None keeps the pipeline's value. The pipeline's own reading stays in
+    `ocr_auto.json` (and the judge's in `final_auto.json`), so dropping an edit reverts it. `auto_text` is
+    the pipeline's reading when the region was first edited: what learning (learn/) compares the
+    correction with, even after a re-run that already applies the lesson.
+    """
+
+    region_id: str
+    anchor: BBox
+    added: bool = False
+    deleted: bool = False
+    kind: RegionKind | None = None
+    bbox: BBox | None = None  # the text area; replaces the OCR lines with one line of this box
+    bubble_bbox: BBox | None = None
+    text: str | None = None  # the corrected source text
+    lang: Lang | None = None  # an added region's language
+    auto_text: str | None = None  # the pipeline's reading when first edited (None: an added region)
+
+
+class TranslationEdit(Model):
+    """One hand-written English line (edits.json), re-applied every time the `judge` stage rewrites final.json."""
+
+    region_id: str
+    anchor: BBox  # the region's box when the line was written (matched like RegionEdit.anchor)
+    text: str
+    source: str  # the region's source text when the line was written; a changed source flags the line
+    suggested_by: str | None = None  # the profile whose suggestion was kept as is; None = typed by hand
+    auto_text: str | None = None  # the judge's line when the region's line was first written (learn/)
+
+
+class LayoutEdit(Model):
+    """One hand-set lettering of a region (edits.json), re-applied every time the `typeset` stage runs.
+
+    A field left None keeps the typesetter's choice. A new font, size, box or line breaks sets the English
+    line again: explicit `lines` are kept as written, otherwise the text is fitted anew (at `size_px` when
+    given) into `box`, or into the region's own lettering shape.
+    """
+
+    region_id: str
+    anchor: BBox  # the region's text box when the lettering was set (matched like RegionEdit.anchor)
+    font: str | None = None  # a file in the fonts folder, or an absolute path
+    size_px: int | None = Field(default=None, ge=4, le=400)
+    color: RGB | None = None
+    stroke_px: int | None = Field(default=None, ge=0, le=40)
+    stroke_color: RGB | None = None
+    align: Literal["center", "left", "right"] | None = None
+    angle: float | None = Field(default=None, ge=-180.0, le=180.0)
+    box: BBox | None = None  # where the lettering goes (strip space)
+    lines: list[str] | None = None  # explicit line breaks
+    hidden: bool = False  # no English lettering for this region at all
+
+
+class ChapterEdits(Artifact):
+    """edits.json in the chapter work dir: every hand edit of the chapter. Written only by the editing tools
+    (web studio, CLI); the stages read it and re-apply it to what they produce, so edits survive re-runs."""
+
+    regions: list[RegionEdit] = Field(default_factory=list)
+    translations: list[TranslationEdit] = Field(default_factory=list)
+    layout: list[LayoutEdit] = Field(default_factory=list)
+    # Output cuts: the strip rows where the exported images split, set by hand (sorted, inside the strip);
+    # None = one image per slice. Filtered slices stay out of the output either way.
+    cuts: list[int] | None = None
+
+
+# ---------------------------------------------------------------- hand cleanup
+
+CleanupMethod = Literal["fill", "inpaint", "clone", "restore"]
+
+
+class CleanupPatch(Model):
+    """One hand-painted cleanup of the strip (cleanup.json), applied by export after every automatic patch.
+
+    The mask — and, except for "restore", the pixels — live in cleanup.npz as `<id>.mask` (bool [h, w]) and
+    `<id>.pixels` (uint8 [h, w, 3]), both exactly the size of `box`. "restore" puts the raw page back under
+    its mask (undoing an automatic clean there); the other methods replace the masked pixels with the stored
+    ones: a flat colour ("fill"), inpainting from the surroundings ("inpaint"), or the raw page `offset` away
+    ("clone").
+    """
+
+    id: str  # "c0001", "c0002", … in painting order
+    box: BBox  # strip space
+    method: CleanupMethod
+    color: RGB | None = None  # the fill colour ("fill")
+    offset: tuple[int, int] | None = None  # clone source minus destination, strip px ("clone")
+    mask_px: int = 0
+
+
+class CleanupArtifact(Artifact):
+    """cleanup.json in the chapter work dir: the hand cleanup in painting order (a later patch wins where
+    patches overlap). Written only by the editing tools; tied to the strip size it was painted on."""
+
+    strip_width: int
+    strip_height: int
+    patches: list[CleanupPatch] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------- learning from hand corrections
+
+LearnKind = Literal["ocr_fix", "preferred_term", "drop_text", "watermark_text", "sfx_text"]
+
+
+class LearnedRule(Model):
+    """One thing a series' hand corrections taught the pipeline (memory.json).
+
+    ocr_fix: the OCR's word `wrong` was corrected to `right`; preferred_term: the machine's English word
+    `wrong` was rewritten as `right`; drop_text / watermark_text / sfx_text: a region reading `wrong` was
+    deleted / marked a watermark / marked a sound effect. A rule acts on later chapters once `count`
+    corrections showed it (learn.min_count; one for the watermark/sfx labels) and while it is `enabled`.
+    """
+
+    id: str  # stable hash of (kind, wrong, right): the `enabled` switch survives a rebuild
+    kind: LearnKind
+    wrong: str
+    right: str = ""
+    count: int
+    enabled: bool = True
+
+
+class MemoryEntry(Model):
+    """One line of a series' translation memory: a source line and the English the editor kept for it."""
+
+    source: str  # whitespace collapsed
+    english: str
+    count: int = 1  # how many times this source line was translated by hand
+    typed: bool = True  # typed by hand at least once (False: only kept machine suggestions)
+    chapter: str  # the chapter it was last written in
+
+
+class SeriesMemory(Artifact):
+    """memory.json in the series work dir: what the series' hand edits taught (learn/), rebuilt from every
+    chapter's edits.json whenever one changes; only the rules' `enabled` switches are set by hand."""
+
+    rules: list[LearnedRule] = Field(default_factory=list)
+    translations: list[MemoryEntry] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------- manifest
