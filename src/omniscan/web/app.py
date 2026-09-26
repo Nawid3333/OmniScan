@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, Response
 from PIL import Image
 from pydantic import Field, ValidationError
 
-from omniscan.core.config import Config, SeriesConfigError, series_config
+from omniscan.core.config import Config, SeriesConfigError, get_secrets, series_config
 from omniscan.core.paths import IMAGE_SUFFIXES, ChapterPaths, SeriesPaths, list_images, natural_key
 from omniscan.core.schemas import (
     BBox,
@@ -39,9 +39,13 @@ from omniscan.filter.decide import effective_decision, restore
 from omniscan.glossary.match import find_terms, term_present
 from omniscan.glossary.store import GlossaryStore
 from omniscan.inpaint.patches import load_patches
-from omniscan.pipeline.stages import STAGE_ORDER
+from omniscan.llm.ollama import OllamaClient, OllamaError, OllamaRateLimitError
+from omniscan.pipeline.stages import STAGE_ORDER, series_story_context
 from omniscan.queue.store import QueueStore, queue_db_path
 from omniscan.queue.worker import run_queue
+from omniscan.translate.profiles import default_profile_paths, load_profiles, resolve_fallbacks
+from omniscan.translate.run import ChatClient
+from omniscan.translate.suggest import suggest
 
 
 class RestoreBody(Model):
@@ -62,6 +66,20 @@ class FinalEditBody(Model):
     """Body of the manual final-line edit PUT request."""
 
     text: str
+    suggested_by: str | None = None  # the profile whose suggestion is kept unchanged (None = typed by hand)
+
+
+class TranslateBody(Model):
+    """Body of the on-demand translation POST request."""
+
+    region_ids: list[str] = Field(min_length=1, max_length=60)
+    profile: str | None = None  # one profile by name (enabled or not); None = every enabled profile
+    apply: bool = False  # keep each region's first suggestion as its English line
+
+
+def ollama_client(cfg: Config) -> ChatClient:
+    """The chat client for on-demand translation (the configured Ollama daemon)."""
+    return OllamaClient(cfg.ollama, get_secrets())
 
 
 class EmptyBody(Model):
@@ -115,14 +133,19 @@ def _drain_loop(cfg: Config, stop: threading.Event) -> None:
 
 
 def create_app(
-    cfg: Config, *, cors_origins: Sequence[str] = ("http://localhost:5173",), run_worker: bool = False
+    cfg: Config,
+    *,
+    cors_origins: Sequence[str] = ("http://localhost:5173",),
+    run_worker: bool = False,
+    chat_client: Callable[[Config], ChatClient] = ollama_client,
 ) -> FastAPI:
     """Build the debug API app: series/chapter browsing + ingest/slices artifacts + raw pages.
 
     `run_worker=True` (the real `omniscan serve` command's default, not this function's) also starts
     a background thread that drains `queue.db`, so `POST .../run` requests actually execute instead of
     only ever sitting queued; tests and other embedders that just want to read existing artifacts
-    should leave it `False` (the default here) to avoid touching the GPU/queue at all.
+    should leave it `False` (the default here) to avoid touching the GPU/queue at all. `chat_client`
+    builds the LLM client of the on-demand translation route (tests pass a fake).
     """
 
     @asynccontextmanager
@@ -379,8 +402,82 @@ def create_app(
         body = await json_body(request, FinalEditBody)
         paths = chapter_paths(series, chapter)
         direction, _lang = edit_settings(series)
-        line = run_edit(lambda: edit_store.set_translation(paths, region_id, body.text, direction=direction))
+        line = run_edit(
+            lambda: edit_store.set_translation(
+                paths, region_id, body.text, direction=direction, suggested_by=body.suggested_by
+            )
+        )
         return line.model_dump(mode="json")
+
+    @app.get("/api/translation-profiles")
+    def list_profiles() -> list[dict[str, object]]:
+        """Every known translation profile (name, model, enabled) for the Studio's profile picker."""
+        return [
+            {"name": p.name, "model": p.model, "enabled": p.enabled, "style": p.style}
+            for p in load_profiles(default_profile_paths()).values()
+        ]
+
+    @app.post("/api/series/{series}/chapters/{chapter}/translate")
+    async def translate_regions(series: str, chapter: str, request: Request) -> dict[str, object]:
+        """Translate a few regions now (neighbouring lines as context, glossary and story applied) and return
+        every profile's suggestion; with `apply` each region's first suggestion becomes its English line.
+        Nothing else is written. 429 when the Ollama rate limit is hit, 502 when Ollama fails."""
+        body = await json_body(request, TranslateBody)
+        paths = chapter_paths(series, chapter)
+        direction, _lang = edit_settings(series)
+        scfg = series_config(cfg, series_paths(series).library_dir)
+        known = load_profiles(default_profile_paths())
+        if body.profile is not None:
+            if body.profile not in known:
+                raise HTTPException(status_code=422, detail=f"unknown profile {body.profile!r}")
+            profiles = [known[body.profile]]
+        else:
+            profiles = [p for p in known.values() if p.enabled]
+            if not profiles:
+                raise HTTPException(status_code=422, detail="no translation profile is enabled")
+        regions = edit_store.current_regions(paths)
+        client = chat_client(scfg)
+        try:
+            suggestions = suggest(
+                client,
+                profiles,
+                regions,
+                body.region_ids,
+                glossary_entries(series_paths(series)),
+                final_lines(paths),
+                fallbacks=resolve_fallbacks(profiles, known),
+                story_summary=series_story_context(series_paths(series), chapter),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except OllamaRateLimitError as exc:
+            raise HTTPException(status_code=429, detail=f"Ollama rate limit: {exc}") from exc
+        except OllamaError as exc:
+            raise HTTPException(status_code=502, detail=f"Ollama failed: {exc}") from exc
+        finally:
+            close = getattr(client, "close", None)
+            if close is not None:
+                close()
+        applied: list[dict[str, object]] = []
+        if body.apply:
+            first: dict[str, tuple[str, str]] = {}
+            for item in suggestions:
+                first.setdefault(item.region_id, (item.text, item.profile))
+            for region_id, (text, profile) in first.items():
+                try:
+                    line = edit_store.set_translation(
+                        paths, region_id, text, direction=direction, suggested_by=profile
+                    )
+                except edit_store.EditNotFoundError as exc:
+                    raise HTTPException(status_code=404, detail=str(exc)) from exc
+                applied.append(line.model_dump(mode="json"))
+        return {
+            "suggestions": [
+                {"region_id": x.region_id, "profile": x.profile, "model": x.model, "text": x.text}
+                for x in suggestions
+            ],
+            "applied": applied,
+        }
 
     @app.post("/api/series/{series}/chapters/{chapter}/final/{region_id}/revert")
     async def revert_final_line(

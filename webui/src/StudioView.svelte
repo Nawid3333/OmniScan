@@ -9,13 +9,25 @@
     getInpaint,
     getOcr,
     inpaintPatchUrl,
+    listProfiles,
     pageImageUrl,
     patchRegion,
     putFinalLine,
     revertFinalLine,
     revertRegion,
+    translateRegions,
   } from "./api";
-  import type { BBox, ChapterEdits, FinalLine, InpaintItem, Region, RegionKind, SourceFile } from "./api";
+  import type {
+    BBox,
+    ChapterEdits,
+    FinalLine,
+    InpaintItem,
+    Region,
+    RegionKind,
+    SourceFile,
+    Suggestion,
+    TranslationProfile,
+  } from "./api";
   import { kindColor } from "./ocr";
   import {
     HANDLES,
@@ -61,6 +73,11 @@
   let selectedId = $state<string | null>(null);
   let sourceDraft = $state("");
   let translationDraft = $state("");
+  let profiles = $state<TranslationProfile[]>([]);
+  let profileChoice = $state(""); // "" = every enabled profile
+  let suggestions = $state<Suggestion[]>([]);
+  let kept = $state<Suggestion | null>(null); // the suggestion the English draft was taken from
+  let translating = $state(false);
 
   let svgEl = $state<SVGSVGElement | null>(null);
   let canvasEl = $state<HTMLDivElement | null>(null);
@@ -108,6 +125,11 @@
       return;
     }
     await refresh();
+    try {
+      profiles = await listProfiles();
+    } catch {
+      profiles = []; // translation stays available with the enabled profiles
+    }
     if (canvasEl !== null && files.length > 0) {
       zoom = fitZoom(files[0].width, canvasEl.clientWidth - 24);
     }
@@ -150,6 +172,8 @@
 
   function select(id: string | null): void {
     selectedId = id;
+    suggestions = [];
+    kept = null;
     const region = regions.find((r) => r.id === id);
     sourceDraft = region?.text ?? "";
     translationDraft = region ? (lineById.get(region.id)?.text ?? "") : "";
@@ -288,8 +312,52 @@
 
   async function saveTranslation(): Promise<void> {
     if (selected === null) return;
-    const line = await act(() => putFinalLine(series, chapter, selected!.id, translationDraft));
+    const by = kept !== null && kept.text === translationDraft ? kept.profile : undefined;
+    const line = await act(() => putFinalLine(series, chapter, selected!.id, translationDraft, by));
     if (line !== null) translationDraft = line.text;
+  }
+
+  /** Ask the translation profiles for the selected region (nothing is saved until Save English). */
+  async function translateSelected(): Promise<void> {
+    if (selected === null) return;
+    const id = selected.id;
+    translating = true;
+    actionError = "";
+    try {
+      const result = await translateRegions(series, chapter, [id], { profile: profileChoice || undefined });
+      if (selectedId !== id) return;
+      suggestions = result.suggestions;
+      if (translationDraft.trim() === "" && suggestions.length > 0) useSuggestion(suggestions[0]);
+    } catch (e) {
+      actionError = e instanceof Error ? e.message : String(e);
+    } finally {
+      translating = false;
+    }
+  }
+
+  function useSuggestion(suggestion: Suggestion): void {
+    translationDraft = suggestion.text;
+    kept = suggestion;
+  }
+
+  async function keepSuggestion(suggestion: Suggestion): Promise<void> {
+    useSuggestion(suggestion);
+    await saveTranslation();
+  }
+
+  /** Translate every untranslated region of the page and keep each first suggestion as its English. */
+  async function translatePage(): Promise<void> {
+    const ids = onPage
+      .filter((region) => regionStatus(region, edits, lineById.get(region.id)).untranslated)
+      .map((region) => region.id);
+    if (ids.length === 0) {
+      actionError = "every region on this page already has an English line";
+      return;
+    }
+    translating = true;
+    await act(() => translateRegions(series, chapter, ids, { profile: profileChoice || undefined, apply: true }));
+    translating = false;
+    if (selected !== null) translationDraft = lineById.get(selected.id)?.text ?? translationDraft;
   }
 
   async function setKind(kind: RegionKind): Promise<void> {
@@ -379,8 +447,16 @@
     <label><input type="checkbox" bind:checked={showBubbles} /> bubbles</label>
     <label title="show the cleaned patches (inpaint) over the raw page"><input type="checkbox" bind:checked={showClean} /> cleaned</label>
     <span class="sep"></span>
+    <select bind:value={profileChoice} title="translation profile for the Translate buttons">
+      <option value="">enabled profiles</option>
+      {#each profiles as profile (profile.name)}
+        <option value={profile.name}>{profile.name}{profile.enabled ? "" : " (off)"}</option>
+      {/each}
+    </select>
+    <button onclick={() => void translatePage()} disabled={busy || translating} title="translate every untranslated region of this page and keep the first suggestion">Translate page</button>
+    <span class="sep"></span>
     <RunButton {series} {chapter} through="export" startStage="inpaint" label="Render (inpaint → export)" onDone={refresh} />
-    {#if busy}<span class="muted">saving…</span>{/if}
+    {#if translating}<span class="muted">translating…</span>{:else if busy}<span class="muted">saving…</span>{/if}
   </div>
   {#if actionError}
     <p class="error">{actionError}</p>
@@ -524,6 +600,21 @@
             <p class="muted">judge: {selectedLine.rationale}</p>
           {/if}
           <button onclick={() => void saveTranslation()} disabled={busy || translationDraft === (selectedLine?.text ?? "")}>Save English</button>
+          <button onclick={() => void translateSelected()} disabled={busy || translating || selected.kind === "watermark" || selected.text.trim() === ""} title="ask the translation profile(s); nothing is saved until you keep a suggestion">
+            {translating ? "Translating…" : "Translate"}
+          </button>
+          {#if suggestions.length > 0}
+            <ul class="suggestions">
+              {#each suggestions as suggestion, i (i)}
+                <li>
+                  <span class="muted">{suggestion.profile}</span>
+                  <span>{suggestion.text}</span>
+                  <button class="link" onclick={() => useSuggestion(suggestion)}>use</button>
+                  <button class="link" onclick={() => void keepSuggestion(suggestion)} disabled={busy}>keep</button>
+                </li>
+              {/each}
+            </ul>
+          {/if}
           <div class="actions">
             {#if selectedStatus.manualTranslation}
               <button onclick={() => void revertSelectedTranslation()} disabled={busy}>Revert English</button>
@@ -703,6 +794,20 @@
   }
   .error {
     color: #dc2626;
+  }
+  .suggestions {
+    list-style: none;
+    padding: 0;
+    margin: 6px 0;
+  }
+  .suggestions li {
+    border: 1px solid #e5e7eb;
+    padding: 4px;
+    margin-bottom: 4px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: baseline;
   }
   button.link {
     background: none;

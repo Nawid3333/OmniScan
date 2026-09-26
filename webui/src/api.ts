@@ -388,11 +388,18 @@ export async function getJob(jobId: number): Promise<Job> {
   return getJson<Job>(`${BASE}/jobs/${jobId}`);
 }
 
-/** Overwrite one region's final line; the server sets its decision to "manual". */
-export async function putFinalLine(series: string, chapter: string, regionId: string, text: string): Promise<FinalLine> {
+/** Overwrite one region's final line; the server sets its decision to "manual". `suggestedBy` names the
+ *  translation profile whose suggestion is kept unchanged (omit it for a line typed by hand). */
+export async function putFinalLine(
+  series: string,
+  chapter: string,
+  regionId: string,
+  text: string,
+  suggestedBy?: string,
+): Promise<FinalLine> {
   return putJson<FinalLine>(
     `${BASE}/series/${encodeURIComponent(series)}/chapters/${encodeURIComponent(chapter)}/final/${encodeURIComponent(regionId)}`,
-    { text },
+    suggestedBy === undefined ? { text } : { text, suggested_by: suggestedBy },
   );
 }
 function chapterBase(series: string, chapter: string): string {
@@ -481,4 +488,37 @@ export async function revertFinalLine(
     {},
   );
   return result.line;
+}
+
+export interface TranslationProfile {
+  name: string;
+  model: string;
+  enabled: boolean;
+  style: string;
+}
+
+export interface Suggestion {
+  region_id: string;
+  profile: string;
+  model: string;
+  text: string;
+}
+
+export async function listProfiles(): Promise<TranslationProfile[]> {
+  return getJson<TranslationProfile[]>(`${BASE}/translation-profiles`);
+}
+
+/** Translate regions now (every enabled profile, or `profile`); with `apply` each region's first
+ *  suggestion becomes its English line. */
+export async function translateRegions(
+  series: string,
+  chapter: string,
+  regionIds: string[],
+  options: { profile?: string; apply?: boolean } = {},
+): Promise<{ suggestions: Suggestion[]; applied: FinalLine[] }> {
+  return postJson<{ suggestions: Suggestion[]; applied: FinalLine[] }>(`${chapterBase(series, chapter)}/translate`, {
+    region_ids: regionIds,
+    ...(options.profile ? { profile: options.profile } : {}),
+    ...(options.apply ? { apply: true } : {}),
+  });
 }

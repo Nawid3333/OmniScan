@@ -344,6 +344,7 @@ class TranslationEdit(Model):
     anchor: BBox  # the region's box when the line was written (matched like RegionEdit.anchor)
     text: str
     source: str  # the region's source text when the line was written; a changed source flags the line
+    suggested_by: str | None = None  # the profile whose suggestion was kept as is; None = typed by hand
 
 
 class ChapterEdits(Artifact):

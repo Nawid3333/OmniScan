@@ -302,13 +302,23 @@ def edited_ids(paths: ChapterPaths) -> tuple[list[str], list[str]]:
     )
 
 
-def set_translation(paths: ChapterPaths, region_id: str, text: str, *, direction: Direction) -> FinalLine:
-    """Write a region's English line by hand; it replaces the judge's line on every later judge run."""
+def set_translation(
+    paths: ChapterPaths,
+    region_id: str,
+    text: str,
+    *,
+    direction: Direction,
+    suggested_by: str | None = None,
+) -> FinalLine:
+    """Write a region's English line by hand (or keep a profile's suggestion, `suggested_by`); it replaces
+    the judge's line on every later judge run."""
     with _LOCK:
         _ensure_auto(paths)
         region = _find(current_regions(paths), region_id)
         edits = load_edits(paths)
-        edit = TranslationEdit(region_id=region.id, anchor=region.bbox, text=text, source=region.text)
+        edit = TranslationEdit(
+            region_id=region.id, anchor=region.bbox, text=text, source=region.text, suggested_by=suggested_by
+        )
         index = _translation_edit_of(paths, edits, region.id)
         if index is None:
             edits.translations.append(edit)

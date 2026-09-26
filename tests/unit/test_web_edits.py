@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote
 
 import pytest
@@ -21,6 +23,7 @@ from omniscan.core.schemas import (
     Slice,
     SlicesArtifact,
 )
+from omniscan.llm.ollama import ChatResponse, OllamaError, OllamaRateLimitError
 from omniscan.web.app import create_app
 
 SERIES = "Solo Leveling"
@@ -181,3 +184,133 @@ def test_run_can_start_at_a_later_stage(client: TestClient) -> None:
     assert response.json()["stages"] == ["inpaint", "inpaint_lama", "typeset", "export"]
     assert client.post(f"{BASE}/run", json={"start": "export", "through": "ocr"}).status_code == 422
     assert client.post(f"{BASE}/run", json={"start": "paint", "through": "ocr"}).status_code == 422
+
+
+class FakeChat:
+    """chat_json replies `EN(<source>)` per region; counts calls; closed after the request."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.closed = False
+
+    def chat(self, model: str, messages: list[dict[str, Any]], **_: Any) -> ChatResponse:
+        self.calls += 1
+        regions = json.loads(messages[-1]["content"].split("Regions (reading order):\n", 1)[1])
+        answer = {"translations": [{"id": r["id"], "text": f"EN({r['text']})"} for r in regions]}
+        return ChatResponse(
+            content=json.dumps(answer, ensure_ascii=False),
+            model=model,
+            done=True,
+            total_duration_ns=None,
+            prompt_eval_count=1,
+            eval_count=1,
+            raw={},
+        )
+
+    def close(self) -> None:
+        self.closed = True
+
+
+PROFILES_TOML = """
+[profiles.cloud]
+endpoint = "local"
+model = "cloud-model"
+style = "chat_json"
+
+[profiles.local]
+enabled = false
+endpoint = "local"
+model = "local-model"
+style = "chat_json"
+"""
+
+
+@pytest.fixture
+def chat_client(tmp_path: Path, work: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, FakeChat]:
+    profiles = tmp_path / "translation_profiles.toml"
+    profiles.write_text(PROFILES_TOML, encoding="utf-8")
+    monkeypatch.setattr("omniscan.web.app.default_profile_paths", lambda: [profiles])
+    fake = FakeChat()
+    cfg = Config(
+        paths=PathsConfig(
+            library_root=tmp_path / "lib", work_root=tmp_path / "work", output_root=tmp_path / "out"
+        )
+    )
+    return TestClient(create_app(cfg, chat_client=lambda _cfg: fake)), fake
+
+
+def test_translation_profiles_are_listed(chat_client: tuple[TestClient, FakeChat]) -> None:
+    client, _fake = chat_client
+    assert client.get("/api/translation-profiles").json() == [
+        {"name": "cloud", "model": "cloud-model", "enabled": True, "style": "chat_json"},
+        {"name": "local", "model": "local-model", "enabled": False, "style": "chat_json"},
+    ]
+
+
+def test_translate_returns_suggestions_and_writes_nothing(
+    chat_client: tuple[TestClient, FakeChat], work: Path
+) -> None:
+    client, fake = chat_client
+    before = (work / "final.json").read_bytes()
+    response = client.post(f"{BASE}/translate", json={"region_ids": ["r0002"]})
+    assert response.status_code == 200
+    assert response.json() == {
+        "suggestions": [
+            {"region_id": "r0002", "profile": "cloud", "model": "cloud-model", "text": "EN(반가워)"}
+        ],
+        "applied": [],
+    }
+    assert fake.calls == 1 and fake.closed
+    assert (work / "final.json").read_bytes() == before
+    assert not (work / "edits.json").exists()
+
+
+def test_translate_with_a_named_profile_and_apply(
+    chat_client: tuple[TestClient, FakeChat], work: Path
+) -> None:
+    client, _fake = chat_client
+    response = client.post(
+        f"{BASE}/translate", json={"region_ids": ["r0002", "r0001"], "profile": "local", "apply": True}
+    )
+    assert response.status_code == 200
+    assert [x["profile"] for x in response.json()["suggestions"]] == ["local", "local"]
+    lines = {x.region_id: x for x in FinalArtifact.load(work / "final.json").lines}
+    assert lines["r0002"].text == "EN(반가워)" and lines["r0002"].decision == "manual"
+    edits = client.get(f"{BASE}/edits").json()
+    assert {(e["region_id"], e["suggested_by"]) for e in edits["translations"]} == {
+        ("r0001", "local"),
+        ("r0002", "local"),
+    }
+
+
+def test_translate_errors(chat_client: tuple[TestClient, FakeChat]) -> None:
+    client, _fake = chat_client
+    assert client.post(f"{BASE}/translate", json={"region_ids": ["r0009"]}).status_code == 422
+    assert client.post(f"{BASE}/translate", json={"region_ids": []}).status_code == 422
+    response = client.post(f"{BASE}/translate", json={"region_ids": ["r0001"], "profile": "nope"})
+    assert response.status_code == 422 and response.json() == {"detail": "unknown profile 'nope'"}
+
+
+def test_translate_maps_ollama_failures(tmp_path: Path, work: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    profiles = tmp_path / "translation_profiles.toml"
+    profiles.write_text(PROFILES_TOML, encoding="utf-8")
+    monkeypatch.setattr("omniscan.web.app.default_profile_paths", lambda: [profiles])
+    cfg = Config(
+        paths=PathsConfig(
+            library_root=tmp_path / "lib", work_root=tmp_path / "work", output_root=tmp_path / "out"
+        )
+    )
+
+    class Failing:
+        def __init__(self, error: Exception) -> None:
+            self.error = error
+
+        def chat(self, model: str, messages: list[dict[str, Any]], **_: Any) -> ChatResponse:
+            raise self.error
+
+    for error, status in (
+        (OllamaRateLimitError("slow down", status_code=429), 429),
+        (OllamaError("down"), 502),
+    ):
+        client = TestClient(create_app(cfg, chat_client=lambda _cfg, error=error: Failing(error)))
+        assert client.post(f"{BASE}/translate", json={"region_ids": ["r0001"]}).status_code == status
