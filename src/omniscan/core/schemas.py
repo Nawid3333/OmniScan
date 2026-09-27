@@ -314,6 +314,25 @@ class ExportArtifact(Artifact):
     files: list[ExportFile]
 
 
+# ---------------------------------------------------------------- quality check
+
+
+class QaIssue(Model):
+    """One problem the `qa` stage found on the finished pages (qa.json), in the desktop Studio's issue shape."""
+
+    region_id: str
+    kind: str  # source_left: the original text is still readable; watermark_left: the watermark still shows
+    message: str
+    read: str = ""  # what the OCR read there on the lettered page
+
+
+class QaArtifact(Artifact):
+    """qa.json in the chapter work dir: the `qa` stage's OCR re-read of the exported pages."""
+
+    checked: int  # regions re-read
+    issues: list[QaIssue] = Field(default_factory=list)
+
+
 # ---------------------------------------------------------------- manual edits
 
 

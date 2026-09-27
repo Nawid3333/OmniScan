@@ -37,6 +37,7 @@ to the common strip width. Integers, half-open ranges `[x0, x1)`, `[y0, y1)`. A 
 | `inpaint.json` + `patches.npz` | `InpaintArtifact` + npz (cleaned crops and masks per region) | inpaint |
 | `layout.json` | `LayoutArtifact` (hand lettering applied) | typeset |
 | `export.json` | `ExportArtifact` (files written to `output_root/<Series>/<Chapter>/`) | export |
+| `qa.json` | `QaArtifact` (regions whose original text is still readable on the exported pages) | `qa` stage (`omniscan qa`, not part of `omniscan run`) |
 | `manifest.json` | `Manifest` of `StageRecord`s | stage runner |
 | `<series>/memory.json` | `SeriesMemory` (learned rules + translation memory of the whole series) | `learn/memory.py`, rebuilt from every `edits.json` when one changes; only rule switches are set by hand |
 Save/load only through `Artifact.save()` (atomic tmp+rename) and `Model.load(path)`.

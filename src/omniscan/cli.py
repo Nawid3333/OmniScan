@@ -444,6 +444,38 @@ def cmd_ocr(
 app.command("ocr")(cmd_ocr)
 
 
+def cmd_qa(
+    series: Annotated[str, typer.Argument()],
+    chapter: Annotated[
+        list[str] | None,
+        typer.Option("--chapter", "-c", help="Chapter folder name; repeatable. Default: all."),
+    ] = None,
+    force: Annotated[bool, typer.Option("--force", help="Re-run even if up to date.")] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Print every chapter's issues as JSON.")] = False,
+) -> None:
+    """Re-read the exported pages with OCR and list the regions whose original text is still readable (qa.json).
+    Needs the chapter exported (`omniscan export` or `omniscan run`)."""
+    from omniscan.qa.leftover import load_issues
+    from omniscan.qa.stage import QaStage
+
+    _run_stages("qa", [QaStage()], series, chapter, force, progress=not as_json)
+    series_paths = _series_paths(series)
+    report: dict[str, list[dict[str, str]]] = {}
+    for name in chapter or series_paths.chapters():
+        issues = load_issues(series_paths.chapter(name))
+        report[name] = [issue.model_dump(mode="json") for issue in issues]
+        if not as_json:
+            for issue in issues:
+                _echo_text(f"qa: {name}: {issue.region_id} {issue.kind}: {issue.message}")
+    if as_json:
+        _echo_text(json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        typer.echo(f"qa: {sum(len(v) for v in report.values())} issue(s) in {len(report)} chapter(s)")
+
+
+app.command("qa")(cmd_qa)
+
+
 def _echo_text(text: str) -> None:
     """Echo text that may hold Korean/Japanese; Windows pipes (cp1252) must not crash on it."""
     import sys
