@@ -56,7 +56,7 @@ PASS_OF: dict[str, str] = {
 }
 
 
-def _series_entries(series: SeriesPaths) -> list[GlossaryEntry]:
+def series_entries(series: SeriesPaths) -> list[GlossaryEntry]:
     """All glossary entries of the series, or none when its db does not exist (never created here)."""
     if not series.db.is_file():
         return []
@@ -64,7 +64,7 @@ def _series_entries(series: SeriesPaths) -> list[GlossaryEntry]:
         return store.list()
 
 
-def _series_story_context(series: SeriesPaths, chapter: str, *, max_chapters: int = 3) -> str | None:
+def series_story_context(series: SeriesPaths, chapter: str, *, max_chapters: int = 3) -> str | None:
     """Up to the last `max_chapters` prior chapters' stored summaries, oldest first; None when none exist."""
     if not series.db.is_file():
         return None
@@ -160,8 +160,8 @@ class TranslateStage:
 
     def run(self, ctx: ChapterContext, models: Mapping[str, Any]) -> Mapping[str, float]:
         """Do the work, write outputs, return metrics (seconds are added by the runner)."""
-        entries = _series_entries(ctx.series)
-        story_summary = _series_story_context(ctx.series, ctx.paths.chapter)
+        entries = series_entries(ctx.series)
+        story_summary = series_story_context(ctx.series, ctx.paths.chapter)
         regions = fallbacks_used = 0.0
         for profile in self._profiles:
             fallback = self._fallbacks.get(profile.name)
@@ -265,10 +265,10 @@ class JudgeStage:
             self._client,
             ctx.paths,
             self._judge_cfg,
-            _series_entries(ctx.series),
+            series_entries(ctx.series),
             run_ids=run_ids,
             force=True,
-            story_summary=_series_story_context(ctx.series, ctx.paths.chapter),
+            story_summary=series_story_context(ctx.series, ctx.paths.chapter),
             rate_limit_fallback=True,
         )
         if stats is None:

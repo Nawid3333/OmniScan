@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from omniscan.core.paths import natural_key
@@ -98,10 +99,26 @@ def glossary_subset(regions: Sequence[Region], entries: Sequence[GlossaryEntry])
     return subset
 
 
+@dataclass(frozen=True, slots=True)
+class ContextLine:
+    """A neighbouring line shown to the model for reference when only a few regions are translated."""
+
+    id: str
+    text: str  # source text
+    english: str  # its current English line ("" when it has none yet)
+
+
 def chat_json_messages(
-    regions: Sequence[Region], entries: Sequence[GlossaryEntry], *, story_summary: str | None = None
+    regions: Sequence[Region],
+    entries: Sequence[GlossaryEntry],
+    *,
+    story_summary: str | None = None,
+    context: Sequence[ContextLine] = (),
 ) -> list[dict[str, str]]:
-    """The chat_json prompt: system message plus story context, glossary sections and the regions list."""
+    """The chat_json prompt: system message plus story context, glossary sections and the regions list.
+
+    `context` (translating a few regions on demand) adds the neighbouring lines, source and English, before
+    the regions list; without it the prompt is exactly the whole-chapter one."""
     subset = glossary_subset(regions, entries)
     parts: list[str] = []
     if story_summary:
@@ -111,6 +128,16 @@ def chat_json_messages(
         if section:
             lines = "\n".join(f"- {e.source} -> {e.target} ({e.type})" for e in section)
             parts.append(f"{title}:\n{lines}")
+    if context:
+        context_json = json.dumps(
+            [{"id": line.id, "text": line.text, "english": line.english} for line in context],
+            ensure_ascii=False,
+            indent=1,
+        )
+        parts.append(
+            "Context (the lines around these regions, already lettered; for reference only, do not "
+            f"translate them):\n{context_json}"
+        )
     regions_json = json.dumps(
         [{"id": r.id, "kind": r.kind, "text": source_text(r)} for r in regions],
         ensure_ascii=False,

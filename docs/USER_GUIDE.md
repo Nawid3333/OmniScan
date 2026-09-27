@@ -1108,7 +1108,9 @@ under `_filtered/` (`/api/series/{s}/filtered` is the listing behind the Filtere
 `/api/series/{s}/chapters/{c}/run` (POST `{"through": "<stage>"}`, optionally `"start": "<stage>"`) queues
 pipeline stages for the chapter; and the editing endpoints behind the Studio (see "Studio: editing by hand"):
 `GET …/edits`, `POST …/regions`, `PATCH …/regions/{id}`, `DELETE …/regions/{id}`, `POST …/regions/{id}/revert`,
-`PUT …/final/{id}` and `POST …/final/{id}/revert`. Every write takes `Content-Type: application/json`.
+`PUT …/final/{id}` (optional `suggested_by`) and `POST …/final/{id}/revert`; plus on-demand translation:
+`GET /api/translation-profiles` and `POST …/translate` (`{"region_ids": [...], "profile": null, "apply": false}`,
+returns every profile's suggestion). Every write takes `Content-Type: application/json`.
 
 ```bash
 uv run omniscan serve
@@ -1369,6 +1371,15 @@ shows one raw page at a time with every text region as a box:
 - **English.** Write or correct the region's English line and *Save English* (Ctrl+Enter). A region
   with no English line yet is labelled *untranslated*; a hand-written line whose source text was fixed
   afterwards is labelled *source changed* (and flagged `source_changed` in `final.json`).
+- **Translate.** *Translate* asks the translation model for the selected region — the enabled profiles,
+  or the one picked in the toolbar menu (a disabled profile such as the local `translategemma` can be
+  picked too). The model sees the neighbouring lines of the chapter (their source text and current
+  English), the series glossary and the story so far, so a single bubble reads like the dialogue around
+  it. Nothing is saved until you *keep* a suggestion (or *use* it, edit it and *Save English*).
+  *Translate page* translates every untranslated region of the page and keeps each first suggestion.
+  A kept suggestion is recorded with the profile that wrote it (`suggested_by` in `edits.json`); a line
+  you changed is recorded as typed by hand. The Ollama rate limit answers 429 (a profile with a
+  `fallback` switches to it automatically), an unreachable Ollama 502.
 - **Revert.** *Revert English* brings back the judge's line; *Revert box and text* brings back the
   region as the OCR read it (a box you drew is removed instead).
 - **Render.** *Render (inpaint → export)* re-runs only the render stages (inpaint, LaMa, typeset,
