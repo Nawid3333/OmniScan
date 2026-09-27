@@ -53,6 +53,7 @@ class StudioRow:
     english: str  # what will be lettered: the hand-written line if there is one, else the machine's
     edited: bool  # the region or its English was changed by hand (saved or not)
     speaker: str = ""  # who says the line (translate/voices.py), "" when nobody is set
+    status: str = "todo"  # the line's review state: todo, edited or checked (edits.store.line_statuses)
 
 
 class StudioSession:
@@ -87,10 +88,12 @@ class StudioSession:
         readable = ocr_path.is_file() and regions is not None
         edited, hand = store.edited_ids(self.paths) if readable else ([], [])
         self._edited, self._hand = set(edited) | set(hand), set(hand)
+        self._status: dict[str, store.LineStatus] = store.line_statuses(self.paths) if readable else {}
         self._sources: dict[str, str] = {}
         self._speakers: dict[str, str] = {}  # "": no speaker
         self._english: dict[str, str | None] = {}  # None: back to the judge's line
         self._removed: list[str] = []
+        self._checks: dict[str, bool] = {}  # True: mark the line checked on save, False: unmark it
 
     @property
     def has_regions(self) -> bool:
@@ -100,7 +103,7 @@ class StudioSession:
     @property
     def dirty(self) -> bool:
         """Whether there are unsaved changes."""
-        return bool(self._sources or self._speakers or self._english or self._removed)
+        return bool(self._sources or self._speakers or self._english or self._removed or self._checks)
 
     def regions(self) -> list[Region]:
         """The chapter's regions with every edit applied (saved and unsaved), in reading order."""
@@ -131,22 +134,33 @@ class StudioSession:
     def rows(self) -> list[StudioRow]:
         """One row per remaining region."""
         english = self.translations()
-        return [
-            StudioRow(
-                region_id=region.id,
-                page=region.slice_index,
-                kind=region.kind,
-                source=region.text,
-                machine=self._machine.get(region.id, ""),
-                english=english.get(region.id, ""),
-                edited=region.id in self._edited
-                or region.id in self._sources
-                or region.id in self._speakers
-                or region.id in self._english,
-                speaker=region.speaker or "",
+        rows: list[StudioRow] = []
+        for region in self.regions():
+            unsaved = self._unsaved(region.id)
+            rows.append(
+                StudioRow(
+                    region_id=region.id,
+                    page=region.slice_index,
+                    kind=region.kind,
+                    source=region.text,
+                    machine=self._machine.get(region.id, ""),
+                    english=english.get(region.id, ""),
+                    edited=region.id in self._edited or unsaved,
+                    speaker=region.speaker or "",
+                    status=self._row_status(region.id, unsaved),
+                )
             )
-            for region in self.regions()
-        ]
+        return rows
+
+    def _row_status(self, region_id: str, unsaved: bool) -> str:
+        """A row's review state with the unsaved changes: a pending check wins, an unsaved edit makes it edited."""
+        check = self._checks.get(region_id)
+        if check:
+            return "checked"
+        edited = region_id in self._edited or unsaved
+        if check is False or unsaved:
+            return "edited" if edited else "todo"
+        return self._status.get(region_id, "edited" if edited else "todo")
 
     def issues(self) -> list[Issue]:
         """The automatic QA pass over the edited chapter (omniscan.studio.qa, the desktop Studio's checks)."""
@@ -181,6 +195,21 @@ class StudioSession:
         else:
             self._english[region_id] = wanted
 
+    def set_checked(self, region_id: str, checked: bool = True) -> None:
+        """Mark a region's line checked (its source and English as they are after this save) or unchecked;
+        KeyError for an unknown region or one removed in this session."""
+        self._require(region_id)
+        if region_id in self._removed:
+            raise KeyError(f"region {region_id!r} is removed")
+        if checked == (self._status.get(region_id) == "checked") and not self._unsaved(region_id):
+            self._checks.pop(region_id, None)
+        else:
+            self._checks[region_id] = checked
+
+    def _unsaved(self, region_id: str) -> bool:
+        """Whether the region has an unsaved source text, speaker or English line."""
+        return region_id in self._sources or region_id in self._speakers or region_id in self._english
+
     def remove_region(self, region_id: str) -> None:
         """Drop a region (a false detection: nothing is erased or lettered there)."""
         self._require(region_id)
@@ -189,6 +218,7 @@ class StudioSession:
         self._sources.pop(region_id, None)
         self._speakers.pop(region_id, None)
         self._english.pop(region_id, None)
+        self._checks.pop(region_id, None)
 
     def save(self) -> int:
         """Record every change in edits.json (applied to ocr.json / final.json at once) as one undo step
@@ -215,7 +245,17 @@ class StudioSession:
                     store.set_translation(self.paths, region_id, line, direction=direction)
             for region_id in self._removed:
                 store.delete_region(self.paths, region_id, direction=direction)
-        count = len(self._sources) + len(self._speakers) + len(self._english) + len(self._removed)
+            for checked in (True, False):  # after the text edits: a check approves the saved lines
+                ids = [region_id for region_id, value in self._checks.items() if value is checked]
+                if ids:
+                    store.set_checked(self.paths, ids, checked=checked)
+        count = (
+            len(self._sources)
+            + len(self._speakers)
+            + len(self._english)
+            + len(self._removed)
+            + len(self._checks)
+        )
         self._reload()
         return count
 

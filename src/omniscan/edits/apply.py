@@ -14,6 +14,7 @@ from omniscan.core.schemas import (
     ChapterEdits,
     FinalLine,
     LayoutEdit,
+    LineCheck,
     OcrLine,
     Region,
     RegionEdit,
@@ -29,7 +30,7 @@ SOURCE_CHANGED = "source_changed"  # FinalLine flag: the source text changed aft
 ADDED_PREFIX = "m"  # ids of hand-added regions (m0001, …) never collide with the detector's r0001, …
 
 
-def edit_boxes(edit: RegionEdit | TranslationEdit | LayoutEdit) -> list[BBox]:
+def edit_boxes(edit: RegionEdit | TranslationEdit | LayoutEdit | LineCheck) -> list[BBox]:
     """The boxes an edit is matched on: its anchor, plus the box it moved the region to."""
     if isinstance(edit, RegionEdit) and edit.bbox is not None:
         return [edit.anchor, edit.bbox]
@@ -186,7 +187,7 @@ def apply_region_edits(
 
 
 def _match_all(
-    edits: Sequence[TranslationEdit] | Sequence[LayoutEdit], regions: Sequence[Region]
+    edits: Sequence[TranslationEdit] | Sequence[LayoutEdit] | Sequence[LineCheck], regions: Sequence[Region]
 ) -> dict[int, str]:
     """Index in `edits` -> id of the region each belongs to (each region claimed once, in edit order)."""
     taken: set[str] = set()
@@ -208,6 +209,11 @@ def match_translation_edits(regions: Sequence[Region], edits: ChapterEdits) -> d
 def match_layout_edits(regions: Sequence[Region], edits: ChapterEdits) -> dict[int, str]:
     """Index in `edits.layout` -> id of the region that lettering belongs to (each region claimed once)."""
     return _match_all(edits.layout, regions)
+
+
+def match_checks(regions: Sequence[Region], edits: ChapterEdits) -> dict[int, str]:
+    """Index in `edits.checked` -> id of the region that check belongs to (each region claimed once)."""
+    return _match_all(edits.checked, regions)
 
 
 def manual_line(edit: TranslationEdit, region: Region) -> FinalLine:

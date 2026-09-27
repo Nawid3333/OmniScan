@@ -72,7 +72,7 @@ def test_rows_show_the_machine_line_and_the_hand_line(paths: ChapterPaths) -> No
     rows = open_session(paths).rows()
     assert rows == [
         StudioRow("r0001", 0, "bubble_text", "안녕", "Hi", "Hi", False),
-        StudioRow("r0002", 0, "bubble_text", "반가워", "Glad", "Nice to see you", True),
+        StudioRow("r0002", 0, "bubble_text", "반가워", "Glad", "Nice to see you", True, status="edited"),
         StudioRow("r0003", 1, "bubble_text", "가자", "", "", False),
     ]
 

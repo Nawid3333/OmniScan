@@ -160,6 +160,13 @@ def ollama_client(cfg: Config) -> ChatClient:
     return OllamaClient(cfg.ollama, get_secrets())
 
 
+class CheckedBody(Model):
+    """Body of the per-line status POST request: which regions' lines to mark checked, or unchecked."""
+
+    region_ids: list[str] = Field(min_length=1)
+    checked: bool = True
+
+
 class ReplaceBody(Model):
     """Body of the find & replace POST request (edits/replace.py): the rule, where, and whether to apply it."""
 
@@ -573,18 +580,30 @@ def create_app(
     @app.get("/api/series/{series}/chapters/{chapter}/edits")
     def get_edits(series: str, chapter: str) -> dict[str, object]:
         """The chapter's hand edits (edits.json; empty lists when none), the regions they deleted, which current
-        regions carry a region edit or a hand-written line, and how many steps can be undone and redone."""
+        regions carry a region edit or a hand-written line, whose lines are checked, and how many steps can be
+        undone and redone."""
         paths = chapter_paths(series, chapter)
         edits = edit_store.load_edits(paths)
         edited, translated = edit_store.edited_ids(paths)
         back, forward = edit_store.history_steps(paths)
+        status = edit_store.line_statuses(paths)
         return {
             **edits.model_dump(mode="json"),
             "deleted_regions": [r.model_dump(mode="json") for r in edit_store.deleted_regions(paths)],
             "edited_region_ids": edited,
             "manual_translation_ids": translated,
+            "checked_region_ids": [region_id for region_id, value in status.items() if value == "checked"],
             "history": {"undo": back, "redo": forward},
         }
+
+    @app.post("/api/series/{series}/chapters/{chapter}/checked")
+    async def set_checked(series: str, chapter: str, request: Request) -> dict[str, object]:
+        """Mark regions' lines checked (their source and English as they are now) or unchecked, one undo step;
+        returns the edits as GET does. 404 for an unknown region."""
+        body = await json_body(request, CheckedBody)
+        paths = chapter_paths(series, chapter)
+        run_edit(lambda: edit_store.set_checked(paths, body.region_ids, checked=body.checked))
+        return get_edits(series, chapter)
 
     @app.post("/api/series/{series}/replace")
     async def replace_text(series: str, request: Request) -> dict[str, object]:

@@ -81,12 +81,14 @@ def edit_show(
     chapter: Chapter,
     as_json: Annotated[bool, typer.Option("--json", help="Print the regions as JSON.")] = False,
 ) -> None:
-    """List the chapter's regions: id, kind, source text, English line and what was edited by hand."""
+    """List the chapter's regions: id, kind, source text, English line, what was edited by hand and each line's
+    status (todo, edited, checked)."""
     _cfg, _series, paths = _chapter(series, chapter)
     regions = store.current_regions(paths)
     english = english_lines(paths)
     edited, translated = (set(ids) for ids in store.edited_ids(paths))
     deleted = store.deleted_regions(paths)
+    status = store.line_statuses(paths)
     if as_json:
         rows = [
             {
@@ -97,6 +99,7 @@ def edit_show(
                 "speaker": r.speaker,
                 "edited": r.id in edited,
                 "hand_translated": r.id in translated,
+                "status": status[r.id],
             }
             for r in regions
         ]
@@ -104,14 +107,40 @@ def edit_show(
         typer.echo(json.dumps({"regions": rows, "deleted": gone}, ensure_ascii=False, indent=2))
         return
     table = Table(title=f"edit: {series} / {chapter} ({len(regions)} region(s))")
-    for column in ("Id", "Kind", "Speaker", "Source", "English", "Edited"):
+    for column in ("Id", "Kind", "Speaker", "Source", "English", "Edited", "Status"):
         table.add_column(column)
     for r in regions:
         marks = [label for label, ids in (("region", edited), ("English", translated)) if r.id in ids]
-        table.add_row(r.id, r.kind, r.speaker or "", r.text, english.get(r.id, ""), ", ".join(marks))
+        table.add_row(
+            r.id, r.kind, r.speaker or "", r.text, english.get(r.id, ""), ", ".join(marks), status[r.id]
+        )
     Console().print(table)
     if deleted:
         typer.echo("deleted by hand: " + ", ".join(f"{r.id} ({r.text})" for r in deleted))
+
+
+@edit_app.command("check")
+def edit_check(
+    series: Series,
+    chapter: Chapter,
+    regions: Annotated[list[str] | None, typer.Argument(help="Region ids as `edit show` lists them.")] = None,
+    every: Annotated[bool, typer.Option("--all", help="Every region of the chapter.")] = False,
+    uncheck: Annotated[bool, typer.Option("--uncheck", help="Unmark the lines instead.")] = False,
+) -> None:
+    """Mark lines checked: their source text and English as they are now are approved (a later change to either
+    unchecks them); with --uncheck unmark them. One undo step."""
+    _cfg, _series, paths = _chapter(series, chapter)
+    if every and regions:
+        raise _fail("name regions or pass --all, not both")
+    ids = [region.id for region in store.current_regions(paths)] if every else list(regions or [])
+    if not ids:
+        raise _fail("name the regions to check, or pass --all")
+    _run(lambda: store.set_checked(paths, ids, checked=not uncheck))
+    status = store.line_statuses(paths)
+    done = sum(1 for value in status.values() if value == "checked")
+    typer.echo(
+        f"edit: {len(ids)} line(s) {'unchecked' if uncheck else 'checked'}; {done} of {len(status)} checked"
+    )
 
 
 @edit_app.command("text")

@@ -120,6 +120,14 @@ describe("regionStatus", () => {
     expect(statusLabels(status)).toEqual(["edited", "hand-translated", "source changed"]);
   });
 
+  it("shows a checked line last", () => {
+    const checked = { ...edits, checked_region_ids: ["r0001"] };
+    const status = regionStatus(region("r0001", 0, 10), checked, line([]));
+    expect(status.checked).toBe(true);
+    expect(statusLabels(status)).toEqual(["edited", "hand-translated", "checked"]);
+    expect(regionStatus(region("r0001", 0, 10), edits, line([])).checked).toBe(false); // an older server
+  });
+
   it("flags untranslated, added and low-confidence regions", () => {
     const status = regionStatus(region("m0001", 0, 10, { confidence: 0.2 }), edits, undefined);
     expect(statusLabels(status)).toEqual(["added", "untranslated", "low confidence"]);

@@ -31,7 +31,7 @@ to the common strip width. Integers, half-open ranges `[x0, x1)`, `[y0, y1)`. A 
 | `translations/<run_id>.json` | `CandidateRun` | each translation run |
 | `final.json` | `FinalArtifact` (hand-written lines applied) | judge (+ editing tools) |
 | `final_auto.json` | `FinalArtifact` (the judge's own lines, before hand edits) | judge |
-| `edits.json` | `ChapterEdits` (hand edits: regions, English lines, lettering) | editing tools only (`edits/store.py`) |
+| `edits.json` | `ChapterEdits` (hand edits: regions, English lines, lettering, checked lines) | editing tools only (`edits/store.py`) |
 | `edits_history.json` | `EditsHistory` (earlier states of `edits.json`, for undo and redo) | editing tools only (`edits/store.py`) |
 | `cleanup.json` + `cleanup.npz` | `CleanupArtifact` + npz (hand-painted cleanup patches: masks, pixels) | editing tools only (`cleanup/store.py`); applied last by export |
 | `inpaint.json` + `patches.npz` | `InpaintArtifact` + npz (cleaned crops and masks per region) | inpaint |
@@ -59,6 +59,11 @@ per-chapter `plan`, and `apply_changes` through the same store operations (one `
 `edits/session.py::StudioSession` is the desktop Translator Studio's view of one chapter: it holds the page's
 changes in memory and saves them through the same `edits/store.py` operations (the web Studio and `omniscan edit`
 call those directly).
+
+**Per-line status** (`edits/store.py::line_statuses`): a `LineCheck` in `edits.json` records a proofreader
+approving a line — the region's source text and English at that moment, matched to its region like the other
+edits (`apply.match_checks`). A line is `checked` while both still equal the check, else `edited` when it carries
+a region edit or a hand-written line, else `todo`; a stale check stays recorded (an undo can make it hold again).
 
 **Learning** (`learn/`): `learn/harvest.py` compares every edit with the pipeline text it records
 (`RegionEdit.auto_text`, `TranslationEdit.auto_text`, set when the edit is first made) — OCR fixes,

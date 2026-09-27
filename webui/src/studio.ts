@@ -114,6 +114,7 @@ export interface RegionStatus {
   edited: boolean; // carries a hand edit (or was added by hand)
   added: boolean; // drawn by hand
   manualTranslation: boolean; // its English line was written by hand
+  checked: boolean; // a proofreader approved its source and English (unchanged since)
   sourceChanged: boolean; // the source text changed after the English line was written
   untranslated: boolean; // translatable, but no English line yet
   lowConfidence: boolean; // OCR confidence below 0.5
@@ -126,6 +127,7 @@ export function regionStatus(region: Region, edits: ChapterEdits | null, line: F
     edited: edits?.edited_region_ids.includes(region.id) ?? false,
     added: region.id.startsWith("m"),
     manualTranslation: edits?.manual_translation_ids.includes(region.id) ?? false,
+    checked: edits?.checked_region_ids?.includes(region.id) ?? false,
     sourceChanged: line?.flags.includes("source_changed") ?? false,
     untranslated: translatable && (line === undefined || line.text.trim() === ""),
     lowConfidence: region.confidence < 0.5,
@@ -141,6 +143,7 @@ export function statusLabels(status: RegionStatus): string[] {
   if (status.sourceChanged) labels.push("source changed");
   if (status.untranslated) labels.push("untranslated");
   if (status.lowConfidence) labels.push("low confidence");
+  if (status.checked) labels.push("checked");
   return labels;
 }
 

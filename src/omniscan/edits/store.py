@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import shutil
 import threading
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Literal
@@ -28,6 +28,7 @@ from omniscan.core.schemas import (
     FinalLine,
     Lang,
     LayoutEdit,
+    LineCheck,
     Region,
     RegionEdit,
     RegionKind,
@@ -39,6 +40,7 @@ from omniscan.edits.apply import (
     ADDED_PREFIX,
     apply_region_edits,
     apply_translation_edits,
+    match_checks,
     match_layout_edits,
     match_region_edits,
     match_translation_edits,
@@ -54,6 +56,7 @@ MANUAL_JUDGE = "manual"  # FinalArtifact.judge_model of a final.json no judge ha
 MIN_BOX_PX = 2  # a hand-drawn box narrower or lower than this (after clamping to the strip) is refused
 
 Direction = Literal["ltr", "rtl"]
+LineStatus = Literal["todo", "edited", "checked"]  # a line's review state (`line_statuses`)
 
 # One edit at a time in this process: the web server runs its handlers on a thread pool, and every
 # operation is a read-modify-write of edits.json, ocr.json and final.json.
@@ -554,6 +557,65 @@ def hand_lettered_ids(paths: ChapterPaths) -> list[str]:
     current = current_regions(paths)
     claimed = set(match_layout_edits(current, load_edits(paths)).values())
     return [region.id for region in current if region.id in claimed]
+
+
+def _norm(text: str) -> str:
+    """`text` with every run of whitespace collapsed to one space."""
+    return " ".join(text.split())
+
+
+def _current_english(paths: ChapterPaths) -> dict[str, str]:
+    """The chapter's English lines as they will be lettered (final.json) by region id; {} when it has none."""
+    path = paths.artifact("final.json")
+    lines: dict[str, str] = {}
+    if path.is_file():
+        for line in FinalArtifact.load(path).lines:
+            lines.setdefault(line.region_id, line.text)
+    return lines
+
+
+def set_checked(paths: ChapterPaths, region_ids: Sequence[str], *, checked: bool = True) -> None:
+    """Mark regions' lines checked — their source text and English as they are now, so a later change to either
+    unchecks them — or unchecked; one undo step. EditNotFoundError for a region the chapter does not have."""
+    with _LOCK:
+        regions = current_regions(paths)
+        wanted = {region_id: _find(regions, region_id) for region_id in region_ids}
+        edits = load_edits(paths)
+        claims = match_checks(regions, edits)
+        kept = [check for i, check in enumerate(edits.checked) if claims.get(i) not in wanted]
+        if checked:
+            english = _current_english(paths)
+            kept += [
+                LineCheck(
+                    region_id=region.id,
+                    anchor=region.bbox,
+                    source=_norm(region.text),
+                    english=_norm(english.get(region.id, "")),
+                )
+                for region in wanted.values()
+            ]
+        save_edits(paths, edits.model_copy(update={"checked": kept}))
+
+
+def line_statuses(paths: ChapterPaths) -> dict[str, LineStatus]:
+    """Each current region's line status: `checked` while a check still matches its source text and English,
+    else `edited` when it carries a region edit or a hand-written line, else `todo`."""
+    regions = current_regions(paths)
+    edits = load_edits(paths)
+    english = _current_english(paths)
+    by_id = {region.id: region for region in regions}
+    held = {
+        region_id
+        for i, region_id in match_checks(regions, edits).items()
+        if edits.checked[i].source == _norm(by_id[region_id].text)
+        and edits.checked[i].english == _norm(english.get(region_id, ""))
+    }
+    edited, translated = edited_ids(paths)
+    touched = {*edited, *translated}
+    return {
+        region.id: "checked" if region.id in held else "edited" if region.id in touched else "todo"
+        for region in regions
+    }
 
 
 def set_cuts(
