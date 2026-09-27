@@ -10,6 +10,7 @@ from omniscan.core.stage import (
     ChapterContext,
     RunAbortedError,
     StageOutcome,
+    input_hash,
     make_context,
     run_chapter,
     run_series,
@@ -101,6 +102,29 @@ def test_stage_runs_then_skips_then_reruns_on_change(cfg: Config) -> None:
     (ctx.paths.raw_dir / "input.txt").write_text("changed")
     assert run_stage(CopyStage(), make_context(cfg, "S", "Chapter 1")).status == "done"
     assert CopyStage.runs == 2
+
+
+class ExtraStage(CopyStage):
+    """CopyStage whose output also depends on something that is no file (like the series' lessons)."""
+
+    name: ClassVar[str] = "extra"
+    lessons: ClassVar[list[str]] = []
+
+    def input_extra(self, ctx: ChapterContext) -> Mapping[str, Any]:
+        return {"lessons": list(self.lessons)} if self.lessons else {}
+
+
+def test_input_extra_is_hashed_with_the_inputs(cfg: Config) -> None:
+    ctx = make_context(cfg, "S", "Chapter 1")
+    assert run_stage(ExtraStage(), ctx).status == "done"
+    assert run_stage(ExtraStage(), make_context(cfg, "S", "Chapter 1")).status == "skipped"
+    ExtraStage.lessons = ["rn -> m"]
+    assert run_stage(ExtraStage(), make_context(cfg, "S", "Chapter 1")).status == "done"
+    assert run_stage(ExtraStage(), make_context(cfg, "S", "Chapter 1")).status == "skipped"
+    ExtraStage.lessons = []
+    assert run_stage(ExtraStage(), make_context(cfg, "S", "Chapter 1")).status == "done"
+    # no extra: the same hash as a stage without the hook, so adding it re-runs nothing that did not change
+    assert input_hash(ExtraStage(), ctx) == hash_inputs(ExtraStage().inputs(ctx))
 
 
 def test_config_change_invalidates(cfg: Config) -> None:
