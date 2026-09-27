@@ -168,6 +168,24 @@ def test_ocr_stage_applies_the_series_lessons(cfg: Config) -> None:
     assert RegionsArtifact.load(ctx.paths.artifact("ocr.json")).regions[0].text == "텍스트"
 
 
+def test_switching_a_lesson_off_re_runs_the_ocr(cfg: Config) -> None:
+    """The active lessons are hashed with the inputs: a region a rule dropped comes back once it is off."""
+    ctx = prepared(cfg)
+    drop = SeriesMemory(rules=[LearnedRule(id="drop", kind="drop_text", wrong="텍스트", count=2)])
+    drop.save(memory_path(ctx.series))
+    lines = {0: [((20, 60, 200, 90), 0.95)]}
+    ctx.gpu = _scheduler_with(lines)
+    assert run_stage(OcrStage(), ctx).status == "done"
+    assert RegionsArtifact.load(ctx.paths.artifact("ocr.json")).regions == []  # dropped by the lesson
+    again = make_context(cfg, SERIES, CHAPTER, _scheduler_with(lines))
+    assert run_stage(OcrStage(), again).status == "skipped"
+    off = drop.model_copy(update={"rules": [drop.rules[0].model_copy(update={"enabled": False})]})
+    off.save(memory_path(ctx.series))
+    later = make_context(cfg, SERIES, CHAPTER, _scheduler_with(lines))
+    assert run_stage(OcrStage(), later).status == "done"
+    assert [r.text for r in RegionsArtifact.load(ctx.paths.artifact("ocr.json")).regions] == ["텍스트"]
+
+
 def test_ocr_stage_writes_ocr_json_and_is_resumable(cfg: Config) -> None:
     def scheduler() -> FakeScheduler:
         """Fresh scripted models — the fake detector counts tiles across runs."""

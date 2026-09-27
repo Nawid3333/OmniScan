@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from itertools import pairwise
@@ -26,10 +27,20 @@ def _slice_at(slices: Sequence[Slice], y: int) -> int:
     return slices[-1].index if slices else 0
 
 
-def output_segments(slices: Sequence[Slice], strip_height: int, cuts: Sequence[int] | None) -> list[Segment]:
+def _split(y0: int, y1: int, max_height: int | None) -> list[tuple[int, int]]:
+    """Rows [y0, y1) as equal parts no taller than `max_height` (one part when it fits, or without a limit)."""
+    parts = 1 if max_height is None else max(1, math.ceil((y1 - y0) / max_height))
+    bounds = [y0 + (y1 - y0) * i // parts for i in range(parts + 1)]
+    return list(pairwise(bounds))
+
+
+def output_segments(
+    slices: Sequence[Slice], strip_height: int, cuts: Sequence[int] | None, max_height: int | None = None
+) -> list[Segment]:
     """The output images of a chapter in order: one per slice that is not filtered, or — with hand cuts —
     the pieces between the cuts, with the rows of filtered slices taken out (a piece a filtered slice
-    splits becomes two)."""
+    splits becomes two). A hand piece taller than `max_height` is split into equal parts no taller than it:
+    a JPEG holds at most 65,535 rows, and the slicer's own slices already respect the limit."""
     if cuts is None:
         return [Segment(s.y0, s.y1, s.index) for s in slices if not s.filtered]
     bounds = [0, *sorted({c for c in cuts if 0 < c < strip_height}), strip_height]
@@ -44,7 +55,9 @@ def output_segments(slices: Sequence[Slice], strip_height: int, cuts: Sequence[i
                 for part in ((y0, min(y1, f0)), (max(y0, f1), y1))
                 if part[0] < part[1]
             ]
-        segments.extend(Segment(y0, y1, _slice_at(slices, y0)) for y0, y1 in pieces)
+        segments.extend(
+            Segment(a, b, _slice_at(slices, a)) for y0, y1 in pieces for a, b in _split(y0, y1, max_height)
+        )
     return segments
 
 

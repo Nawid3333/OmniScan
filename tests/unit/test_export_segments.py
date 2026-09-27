@@ -40,6 +40,22 @@ def test_a_piece_entirely_inside_a_filtered_slice_disappears() -> None:
     ]
 
 
+def test_a_hand_piece_over_the_height_limit_is_split_evenly() -> None:
+    one = [Slice(index=0, y0=0, y1=1000)]
+    assert output_segments(one, 1000, [100], max_height=400) == [
+        Segment(0, 100, 0),
+        Segment(100, 400, 0),
+        Segment(400, 700, 0),
+        Segment(700, 1000, 0),
+    ]
+    assert [(s.y0, s.y1) for s in output_segments(one, 1000, [], max_height=400)] == [
+        (0, 333),
+        (333, 666),
+        (666, 1000),
+    ]
+    assert output_segments(one, 1000, [500], max_height=500) == output_segments(one, 1000, [500])
+
+
 def test_cut_crossings_name_the_regions_a_cut_splits() -> None:
     regions = [
         Region(id="r0001", slice_index=0, kind="bubble_text", bbox=BBox(x0=0, y0=100, x1=50, y1=150)),

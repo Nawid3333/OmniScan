@@ -495,6 +495,24 @@ def test_translate_stage_gives_speakers_their_voices_and_reruns_when_one_changes
     )  # r0002 kept, only Jinwoo's line re-sent
 
 
+def test_translate_stage_hashes_only_the_memory_lines_of_its_chapter(cfg: Config) -> None:
+    ctx = make_context(cfg, SERIES, CHAPTER)
+    stage = TranslateStage(FakeClient([]), [cloud_profile()])
+    assert stage.input_extra(ctx) == {}  # no ocr.json yet
+    write_ocr(ctx.paths, ("r0001", "안녕"), ("r0002", "반가워"))
+    assert stage.input_extra(ctx) == {}  # nothing remembered: the hash is the stage's usual one
+    memory = SeriesMemory(
+        translations=[
+            MemoryEntry(source="안녕", english="Hey there", chapter="Chapter 0"),
+            MemoryEntry(source="다른 줄", english="Another line", chapter="Chapter 9"),  # not in this chapter
+        ]
+    )
+    memory.save(memory_path(ctx.series))
+    assert stage.input_extra(ctx) == {"memory": {"안녕": "Hey there"}}
+    off = make_context(cfg.model_copy(update={"learn": LearnConfig(enabled=False)}), SERIES, CHAPTER)
+    assert stage.input_extra(off) == {}
+
+
 def test_judge_stage_judges_only_its_own_runs(cfg: Config) -> None:
     ctx = make_context(cfg, SERIES, CHAPTER)
     write_ocr(ctx.paths, ("r0001", "안녕"))
