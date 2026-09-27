@@ -283,3 +283,29 @@ def test_edits_remember_the_pipeline_text_they_replaced(paths: ChapterPaths) -> 
     ]
     # the judge's line, not the first hand-written one; a region the judge never saw has none
     assert [(e.region_id, e.auto_text) for e in edits.translations] == [("r0001", "Hi"), ("m0001", None)]
+
+
+def test_several_lines_are_written_at_once_or_not_at_all(paths: ChapterPaths) -> None:
+    with pytest.raises(store.EditNotFoundError, match="r0009"):
+        store.set_translations(paths, {"r0001": "Hello", "r0009": "Lost"}, direction="ltr")
+    assert store.load_edits(paths).translations == []  # nothing half-imported
+    lines = store.set_translations(
+        paths,
+        {"r0002": "Glad to see you", "r0001": "Hello"},
+        direction="ltr",
+        suggested_by={"r0001": "cloud"},
+    )
+    assert [(line.region_id, line.text, line.decision) for line in lines] == [
+        ("r0002", "Glad to see you", "manual"),
+        ("r0001", "Hello", "manual"),
+    ]
+    edits = store.load_edits(paths).translations
+    assert [(e.region_id, e.suggested_by, e.auto_text) for e in edits] == [
+        ("r0002", None, "Glad"),  # the judge's own line, kept for learning
+        ("r0001", "cloud", "Hi"),
+    ]
+    store.set_translations(paths, {"r0001": "Hi there"}, direction="ltr")  # replaces, keeps the judge's line
+    assert [(e.region_id, e.text, e.auto_text) for e in store.load_edits(paths).translations] == [
+        ("r0002", "Glad to see you", "Glad"),
+        ("r0001", "Hi there", "Hi"),
+    ]

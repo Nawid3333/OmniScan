@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import shutil
 import threading
+from collections.abc import Mapping
 from typing import Literal
 
 from omniscan.core.paths import ChapterPaths
@@ -351,12 +352,54 @@ def edited_ids(paths: ChapterPaths) -> tuple[list[str], list[str]]:
     )
 
 
-def _judged_line(paths: ChapterPaths, region_id: str) -> str | None:
-    """The judge's own English line of a region (final_auto.json), or None when it has none."""
+def _judged_lines(paths: ChapterPaths) -> dict[str, str]:
+    """The judge's own English lines (final_auto.json) by region id; {} when it has none."""
     path = paths.artifact(FINAL_AUTO_FILE)
     if not path.is_file():
-        return None
-    return next((line.text for line in FinalArtifact.load(path).lines if line.region_id == region_id), None)
+        return {}
+    return {line.region_id: line.text for line in FinalArtifact.load(path).lines}
+
+
+def set_translations(
+    paths: ChapterPaths,
+    lines: Mapping[str, str],
+    *,
+    direction: Direction,
+    suggested_by: Mapping[str, str] | None = None,
+) -> list[FinalLine]:
+    """Write several regions' English lines by hand at once (region id -> line; `suggested_by`: region id ->
+    the profile whose suggestion was kept): one write of edits.json and one rebuild, so an import either
+    lands whole or not at all (EditNotFoundError, nothing written, for a region ocr.json does not have). The
+    lines replace the judge's on every later judge run; returns them in the order given."""
+    with _LOCK:
+        _ensure_auto(paths)
+        current = current_regions(paths)
+        regions = {region.id: region for region in current}
+        for region_id in lines:
+            _find(current, region_id)
+        edits = load_edits(paths)
+        index_of = {region_id: i for i, region_id in match_translation_edits(current, edits).items()}
+        judged = _judged_lines(paths)
+        for region_id, text in lines.items():
+            region, index = regions[region_id], index_of.get(region_id)
+            first = edits.translations[index].auto_text if index is not None else None
+            edit = TranslationEdit(
+                region_id=region.id,
+                anchor=region.bbox,
+                text=text,
+                source=region.text,
+                suggested_by=(suggested_by or {}).get(region_id),
+                auto_text=first if first is not None else judged.get(region.id),
+            )
+            if index is None:
+                index_of[region_id] = len(edits.translations)
+                edits.translations.append(edit)
+            else:
+                edits.translations[index] = edit
+        save_edits(paths, edits)
+        rebuild(paths, edits, direction=direction)
+        final = {line.region_id: line for line in FinalArtifact.load(paths.artifact("final.json")).lines}
+        return [final[region_id] for region_id in lines]
 
 
 def set_translation(
@@ -369,28 +412,13 @@ def set_translation(
 ) -> FinalLine:
     """Write a region's English line by hand (or keep a profile's suggestion, `suggested_by`); it replaces
     the judge's line on every later judge run."""
-    with _LOCK:
-        _ensure_auto(paths)
-        region = _find(current_regions(paths), region_id)
-        edits = load_edits(paths)
-        index = _translation_edit_of(paths, edits, region.id)
-        first = edits.translations[index].auto_text if index is not None else None
-        edit = TranslationEdit(
-            region_id=region.id,
-            anchor=region.bbox,
-            text=text,
-            source=region.text,
-            suggested_by=suggested_by,
-            auto_text=first if first is not None else _judged_line(paths, region.id),
-        )
-        if index is None:
-            edits.translations.append(edit)
-        else:
-            edits.translations[index] = edit
-        save_edits(paths, edits)
-        rebuild(paths, edits, direction=direction)
-        final = FinalArtifact.load(paths.artifact("final.json"))
-        return next(line for line in final.lines if line.region_id == region.id)
+    (line,) = set_translations(
+        paths,
+        {region_id: text},
+        direction=direction,
+        suggested_by=None if suggested_by is None else {region_id: suggested_by},
+    )
+    return line
 
 
 def revert_translation(paths: ChapterPaths, region_id: str, *, direction: Direction) -> FinalLine | None:
