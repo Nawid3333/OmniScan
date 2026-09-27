@@ -94,12 +94,11 @@ def labelplus_import(
     found = match_labels(doc, _ingest(paths.artifact("ingest.json")), store.current_regions(paths))
     current = english_lines(paths)
     changed = {rid: text for rid, text in found.texts.items() if current.get(rid) != text}
-    if not dry_run:
-        for region_id, line in changed.items():
-            try:
-                store.set_translation(paths, region_id, line, direction=direction)
-            except store.EditNotFoundError as exc:
-                raise _fail(str(exc)) from exc
+    if not dry_run and changed:
+        try:  # one write and one rebuild: the file lands whole or not at all
+            store.set_translations(paths, changed, direction=direction)
+        except store.EditNotFoundError as exc:
+            raise _fail(str(exc)) from exc
     verb = "would import" if dry_run else "imported"
     typer.echo(
         f"labelplus: {verb} {len(changed)} line(s); {len(found.texts) - len(changed)} already the same"
