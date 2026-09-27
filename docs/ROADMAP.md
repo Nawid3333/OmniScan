@@ -40,6 +40,11 @@ Why the Qt app and not the browser (or Electron/Tauri around the web UI):
   GPU on every vendor; the LLM runs on the GPU through Ollama (or in the cloud). The CPU is a fallback for machines
   without a supported GPU, never the default, and every CPU exception in the pipeline needs benchmark evidence
   (`docs/DECISIONS.md` lists the two accepted ones: DB post-processing and glyph rasterisation).
+- **One universal path first, vendor-specific fast paths where they win** (owner, 2026-09-27). Every feature works
+  through the shared PyTorch path on every GPU. Where one vendor has something clearly faster (nvJPEG, MIOpen tuning,
+  oneDNN, Metal), it is added as an optional backend behind the same interface (like `gpu.codec`), picked
+  automatically for that hardware, and kept only when a benchmark shows the gain; the universal path stays the
+  fallback and the reference the fast path is tested against.
 - **Fully optimised, and proven by measurement.** Speed claims come from `scripts/measure_run.py` and the
   `docs/benchmarks/` probes on real hardware, not from reasoning.
 - **A full test suite that guards correctness and speed:**
