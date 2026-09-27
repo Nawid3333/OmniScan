@@ -7,6 +7,29 @@ from collections.abc import Iterator
 import pytest
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """--perf runs the performance tests (tests/perf); --perf-update records their timings as the baseline."""
+    parser.addoption("--perf", action="store_true", help="run the `perf` tests (stage timings vs baselines)")
+    parser.addoption(
+        "--perf-update", action="store_true", help="record the perf timings as this device's baseline"
+    )
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Register the `perf` marker."""
+    config.addinivalue_line("markers", "perf: stage-timing regression test, runs only with --perf")
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Skip the `perf` tests unless --perf (or --perf-update) is given: they are slow and need the GPU."""
+    if config.getoption("--perf") or config.getoption("--perf-update"):
+        return
+    skip = pytest.mark.skip(reason="perf test: run with --perf")
+    for item in items:
+        if "perf" in item.keywords:
+            item.add_marker(skip)
+
+
 @pytest.fixture(autouse=True)
 def _skip_gpu_when_unavailable(request: pytest.FixtureRequest) -> Iterator[None]:
     """Skip tests marked `gpu` when no CUDA device is reachable (torch imported lazily); otherwise
