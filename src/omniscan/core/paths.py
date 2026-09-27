@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from omniscan.core.config import Config
+from omniscan.core.schemas import IngestArtifact
 
 IMAGE_SUFFIXES = frozenset({".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".avif", ".tif", ".tiff"})
 REFERENCE_DIR = "_reference_en"
@@ -63,6 +64,16 @@ class ChapterPaths:
     def artifact(self, name: str) -> Path:
         """Path of a JSON/npz artifact inside the chapter work dir (e.g. 'slices.json')."""
         return self.work_dir / name
+
+
+def jpeg_paths(ingest: IngestArtifact, raw_dir: Path, cache_dir: Path) -> list[Path]:
+    """The JPEG file to decode for every entry of ingest.files, in order (raw original or cache copy)."""
+    return [
+        raw_dir / file.name
+        if file.converted_from is None
+        else cache_dir / f"{file.index:04d}_{Path(file.name).stem}.jpg"
+        for file in ingest.files
+    ]
 
 
 @dataclass(frozen=True, slots=True)

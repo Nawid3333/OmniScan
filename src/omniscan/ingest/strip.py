@@ -7,21 +7,12 @@ from pathlib import Path
 
 import torch
 
+from omniscan.core.paths import jpeg_paths
 from omniscan.core.schemas import IngestArtifact
 from omniscan.core.stage import ChapterContext
 from omniscan.gpu.codec.base import JpegCodec
 from omniscan.gpu.codec.select import get_codec
 from omniscan.gpu.timeline import mark
-
-
-def jpeg_paths(ingest: IngestArtifact, raw_dir: Path, cache_dir: Path) -> list[Path]:
-    """The JPEG file to decode for every entry of ingest.files, in order (raw original or cache copy)."""
-    return [
-        raw_dir / file.name
-        if file.converted_from is None
-        else cache_dir / f"{file.index:04d}_{Path(file.name).stem}.jpg"
-        for file in ingest.files
-    ]
 
 
 def build_strip(ingest: IngestArtifact, paths: Sequence[Path], codec: JpegCodec) -> torch.Tensor:

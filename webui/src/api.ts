@@ -522,3 +522,49 @@ export async function translateRegions(
     ...(options.apply ? { apply: true } : {}),
   });
 }
+
+export type CleanupMethod = "fill" | "inpaint" | "clone" | "restore";
+
+export interface CleanupPatch {
+  id: string;
+  box: BBox;
+  method: CleanupMethod;
+  color: [number, number, number] | null;
+  offset: [number, number] | null;
+  mask_px: number;
+}
+
+export interface CleanupArtifact {
+  strip_width?: number;
+  strip_height?: number;
+  patches: CleanupPatch[];
+}
+
+export async function getCleanup(series: string, chapter: string): Promise<CleanupArtifact> {
+  return getJson<CleanupArtifact>(`${chapterBase(series, chapter)}/cleanup`);
+}
+
+/** Clean one brush stroke painted on page `page` (box and offset in that page's pixels; mask = PNG data URL
+ *  the size of the box). */
+export async function addCleanup(
+  series: string,
+  chapter: string,
+  stroke: {
+    page: number;
+    box: BBox;
+    mask: string;
+    method: CleanupMethod;
+    color?: [number, number, number] | null;
+    offset?: [number, number] | null;
+  },
+): Promise<CleanupPatch> {
+  return postJson<CleanupPatch>(`${chapterBase(series, chapter)}/cleanup`, stroke);
+}
+
+export async function deleteCleanup(series: string, chapter: string, patchId: string): Promise<void> {
+  await deleteJson<unknown>(`${chapterBase(series, chapter)}/cleanup/${encodeURIComponent(patchId)}`);
+}
+
+export function cleanupPatchUrl(series: string, chapter: string, patchId: string, version: number): string {
+  return `${chapterBase(series, chapter)}/cleanup/${encodeURIComponent(patchId)}.png?v=${version}`;
+}

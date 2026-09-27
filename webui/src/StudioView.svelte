@@ -1,8 +1,12 @@
 <script lang="ts">
   import RunButton from "./RunButton.svelte";
   import {
+    addCleanup,
     addRegion,
+    cleanupPatchUrl,
+    deleteCleanup,
     deleteRegion,
+    getCleanup,
     getEdits,
     getFinal,
     getIngest,
@@ -20,6 +24,8 @@
   import type {
     BBox,
     ChapterEdits,
+    CleanupMethod,
+    CleanupPatch,
     FinalLine,
     InpaintItem,
     Region,
@@ -36,6 +42,8 @@
     fitZoom,
     handleCursor,
     handlePoint,
+    hexToRgb,
+    maskBounds,
     overlapsPage,
     pageOf,
     pageRectToStrip,
@@ -65,7 +73,7 @@
 
   let pageIndex = $state(0);
   let zoom = $state(1);
-  let tool = $state<"select" | "draw">("select");
+  let tool = $state<"select" | "draw" | "clean">("select");
   let newKind = $state<RegionKind>("bubble_text");
   let showBoxes = $state(true);
   let showBubbles = $state(true);
@@ -78,6 +86,18 @@
   let suggestions = $state<Suggestion[]>([]);
   let kept = $state<Suggestion | null>(null); // the suggestion the English draft was taken from
   let translating = $state(false);
+  let cleanups = $state<CleanupPatch[]>([]);
+  let cleanVersion = $state(0); // bumped on every refresh: patch ids are reused after a delete
+  let cleanMethod = $state<CleanupMethod>("inpaint");
+  let brush = $state(24);
+  let fillColor = $state("#ffffff");
+  let autoColor = $state(true);
+  let cloneSource = $state<{ x: number; y: number } | null>(null);
+  let cloneOffset: [number, number] | null = null;
+  let painting: { x: number; y: number } | null = null;
+  let painted = $state(false);
+  let pointer = $state<{ x: number; y: number } | null>(null);
+  let maskEl = $state<HTMLCanvasElement | null>(null);
 
   let svgEl = $state<SVGSVGElement | null>(null);
   let canvasEl = $state<HTMLDivElement | null>(null);
@@ -98,6 +118,7 @@
   let cleanOnPage = $derived(
     page && showClean ? patches.filter((patch) => patch.method !== "none" && overlapsPage(page, patch.box)) : [],
   );
+  let cleanupsOnPage = $derived(page ? cleanups.filter((patch) => overlapsPage(page, patch.box)) : []);
   let todo = $derived(regions.filter((region) => regionStatus(region, edits, lineById.get(region.id)).untranslated).length);
 
   $effect(() => {
@@ -138,12 +159,15 @@
 
   /** Re-read everything an edit can change (regions, lines, edits summary, clean patches). */
   async function refresh(): Promise<void> {
-    const [ocr, final, summary, inpaint] = await Promise.allSettled([
+    const [ocr, final, summary, inpaint, cleanup] = await Promise.allSettled([
       getOcr(series, chapter),
       getFinal(series, chapter),
       getEdits(series, chapter),
       getInpaint(series, chapter),
+      getCleanup(series, chapter),
     ]);
+    cleanups = cleanup.status === "fulfilled" ? cleanup.value.patches : [];
+    cleanVersion += 1;
     hasOcr = ocr.status === "fulfilled";
     regions = ocr.status === "fulfilled" ? ocr.value.regions : [];
     lines = final.status === "fulfilled" ? final.value.lines : [];
@@ -181,6 +205,8 @@
 
   function goToPage(index: number): void {
     if (index < 0 || index >= files.length) return;
+    discardStrokes();
+    cloneSource = null;
     pageIndex = index;
     if (selected !== null && page !== null && !overlapsPage(page, selected.bbox)) select(null);
   }
@@ -212,6 +238,10 @@
 
   function onBackgroundDown(event: PointerEvent): void {
     if (busy) return;
+    if (tool === "clean") {
+      startPaint(event);
+      return;
+    }
     if (tool === "draw") {
       const point = toPagePoint(event);
       drawing = { ax: point.x, ay: point.y, bx: point.x, by: point.y };
@@ -224,7 +254,10 @@
   function onPointerMove(event: PointerEvent): void {
     if (page === null) return;
     const point = toPagePoint(event);
-    if (drag !== null) {
+    pointer = point;
+    if (painting !== null) {
+      paintTo(point);
+    } else if (drag !== null) {
       const s = page.scale > 0 ? page.scale : 1;
       const box = dragBox(drag.box, drag.handle, (point.x - drag.startX) * s, (point.y - drag.startY) * s);
       preview = { id: drag.id, box };
@@ -234,7 +267,9 @@
   }
 
   async function onPointerUp(): Promise<void> {
-    if (drag !== null) {
+    if (painting !== null) {
+      painting = null;
+    } else if (drag !== null) {
       const started = drag;
       const moved = preview;
       drag = null;
@@ -253,6 +288,100 @@
           select(region.id);
         }
       }
+    }
+  }
+
+  function maskContext(): CanvasRenderingContext2D | null {
+    return maskEl?.getContext("2d") ?? null;
+  }
+
+  function startPaint(event: PointerEvent): void {
+    const point = toPagePoint(event);
+    if (cleanMethod === "clone" && event.altKey) {
+      cloneSource = point;
+      cloneOffset = null;
+      return;
+    }
+    if (cleanMethod === "clone" && cloneSource === null) {
+      actionError = "Alt+click the spot to copy from first";
+      return;
+    }
+    if (cleanMethod === "clone" && cloneOffset === null && cloneSource !== null) {
+      cloneOffset = [Math.round(cloneSource.x - point.x), Math.round(cloneSource.y - point.y)];
+    }
+    actionError = "";
+    painting = point;
+    svgEl!.setPointerCapture(event.pointerId);
+    paintTo(point);
+  }
+
+  function paintTo(point: { x: number; y: number }): void {
+    const ctx = maskContext();
+    if (ctx === null || painting === null) return;
+    ctx.strokeStyle = "#ff0050";
+    ctx.fillStyle = "#ff0050";
+    ctx.lineWidth = brush;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    ctx.moveTo(painting.x, painting.y);
+    ctx.lineTo(point.x, point.y);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, brush / 2, 0, Math.PI * 2);
+    ctx.fill();
+    painting = point;
+    painted = true;
+  }
+
+  function discardStrokes(): void {
+    const ctx = maskContext();
+    if (ctx !== null && maskEl !== null) ctx.clearRect(0, 0, maskEl.width, maskEl.height);
+    painted = false;
+    cloneOffset = null;
+  }
+
+  /** Send the painted strokes as one cleanup patch of the chosen method. */
+  async function applyStrokes(): Promise<void> {
+    const ctx = maskContext();
+    if (ctx === null || maskEl === null || page === null) return;
+    const bounds = maskBounds(ctx.getImageData(0, 0, maskEl.width, maskEl.height).data, maskEl.width, maskEl.height);
+    if (bounds === null) return;
+    const out = document.createElement("canvas");
+    out.width = bounds.x1 - bounds.x0;
+    out.height = bounds.y1 - bounds.y0;
+    out.getContext("2d")!.drawImage(maskEl, bounds.x0, bounds.y0, out.width, out.height, 0, 0, out.width, out.height);
+    const stroke = {
+      page: page.index,
+      box: bounds,
+      mask: out.toDataURL("image/png"),
+      method: cleanMethod,
+      color: cleanMethod === "fill" && !autoColor ? hexToRgb(fillColor) : null,
+      offset: cleanMethod === "clone" ? cloneOffset : null,
+    };
+    const patch = await act(() => addCleanup(series, chapter, stroke));
+    if (patch !== null) {
+      discardStrokes();
+      showClean = true;
+    }
+  }
+
+  async function removeCleanup(patchId: string): Promise<void> {
+    await act(() => deleteCleanup(series, chapter, patchId));
+  }
+
+  /** Hand the keyboard back to the page after a toolbar control changed, so Enter, [ ] and Alt+click reach
+   *  the editor instead of the control. */
+  function blurControl(event: Event): void {
+    (event.currentTarget as HTMLElement).blur();
+  }
+
+  function setTool(next: "select" | "draw" | "clean"): void {
+    if (tool === "clean" && next !== "clean") discardStrokes();
+    tool = next;
+    if (next === "clean") {
+      showClean = true;
+      select(null);
     }
   }
 
@@ -279,14 +408,24 @@
       return;
     }
     const step = event.shiftKey ? 10 : 1;
-    if (event.key === "Escape") {
+    if (tool === "clean" && event.key === "Enter") {
+      void applyStrokes();
+    } else if (tool === "clean" && event.key === "Escape" && painted) {
+      discardStrokes();
+    } else if (event.key === "[") {
+      brush = Math.max(2, brush - 4);
+    } else if (event.key === "]") {
+      brush = Math.min(120, brush + 4);
+    } else if (event.key === "c" || event.key === "C") {
+      setTool("clean");
+    } else if (event.key === "Escape") {
       drawing = null;
       tool = "select";
       select(null);
     } else if (event.key === "b" || event.key === "B") {
-      tool = "draw";
+      setTool("draw");
     } else if (event.key === "v" || event.key === "V") {
-      tool = "select";
+      setTool("select");
     } else if (event.key === "PageDown") {
       goToPage(pageIndex + 1);
     } else if (event.key === "PageUp") {
@@ -435,8 +574,9 @@
       {/if}
     </select>
     <span class="sep"></span>
-    <button class:active={tool === "select"} onclick={() => (tool = "select")} title="select, move and resize boxes (V)">Select</button>
-    <button class:active={tool === "draw"} onclick={() => (tool = "draw")} title="draw a new text box (B)">Draw box</button>
+    <button class:active={tool === "select"} onclick={() => setTool("select")} title="select, move and resize boxes (V)">Select</button>
+    <button class:active={tool === "draw"} onclick={() => setTool("draw")} title="draw a new text box (B)">Draw box</button>
+    <button class:active={tool === "clean"} onclick={() => setTool("clean")} title="paint over what to clean or restore (C)">Clean</button>
     <select bind:value={newKind} title="kind of the next drawn box">
       {#each KINDS as kind (kind)}
         <option value={kind}>{kind}</option>
@@ -458,6 +598,26 @@
     <RunButton {series} {chapter} through="export" startStage="inpaint" label="Render (inpaint → export)" onDone={refresh} />
     {#if translating}<span class="muted">translating…</span>{:else if busy}<span class="muted">saving…</span>{/if}
   </div>
+  {#if tool === "clean"}
+    <div class="toolbar cleanbar">
+      <select bind:value={cleanMethod} onchange={blurControl} title="what the painted pixels become">
+        <option value="inpaint">inpaint (rebuild from the surroundings)</option>
+        <option value="fill">fill with a colour</option>
+        <option value="clone">clone (Alt+click the source first)</option>
+        <option value="restore">restore the raw page</option>
+      </select>
+      <label title="brush size ([ and ])">brush <input type="range" min="2" max="120" bind:value={brush} onchange={blurControl} /> {brush}px</label>
+      {#if cleanMethod === "fill"}
+        <label><input type="checkbox" bind:checked={autoColor} /> colour around the stroke</label>
+        {#if !autoColor}<input type="color" bind:value={fillColor} title="fill colour" />{/if}
+      {/if}
+      {#if cleanMethod === "clone"}
+        <span class="muted">{cloneSource === null ? "Alt+click where to copy from" : "source set — paint to copy"}</span>
+      {/if}
+      <button onclick={() => void applyStrokes()} disabled={busy || !painted} title="Enter">Apply</button>
+      <button onclick={discardStrokes} disabled={!painted} title="Esc">Discard strokes</button>
+    </div>
+  {/if}
   {#if actionError}
     <p class="error">{actionError}</p>
   {/if}
@@ -473,12 +633,20 @@
       {#if page !== null}
         <div class="page" style="width: {page.width * zoom}px; height: {page.height * zoom}px;">
           <img src={pageImageUrl(series, chapter, page.index)} alt={page.name} width={page.width * zoom} height={page.height * zoom} draggable="false" />
+          <canvas
+            bind:this={maskEl}
+            width={page.width}
+            height={page.height}
+            class="mask"
+            style="width: {page.width * zoom}px; height: {page.height * zoom}px;"
+          ></canvas>
           <svg
             bind:this={svgEl}
             width={page.width * zoom}
             height={page.height * zoom}
             viewBox="0 0 {page.width} {page.height}"
-            style="cursor: {tool === 'draw' ? 'crosshair' : 'default'};"
+            style="cursor: {tool === 'select' ? 'default' : tool === 'clean' ? 'none' : 'crosshair'};"
+            onpointerleave={() => (pointer = null)}
             onpointerdown={onBackgroundDown}
             onpointermove={onPointerMove}
             onpointerup={() => void onPointerUp()}
@@ -489,7 +657,13 @@
               {@const rect = stripToPage(page, patch.box)}
               <image href={inpaintPatchUrl(series, chapter, patch.region_id)} x={rect.x} y={rect.y} width={rect.width} height={rect.height} preserveAspectRatio="none" pointer-events="none" />
             {/each}
-            {#if showBoxes}
+            {#if showClean}
+              {#each cleanupsOnPage as patch (patch.id)}
+                {@const rect = stripToPage(page, patch.box)}
+                <image href={cleanupPatchUrl(series, chapter, patch.id, cleanVersion)} x={rect.x} y={rect.y} width={rect.width} height={rect.height} preserveAspectRatio="none" pointer-events="none" />
+              {/each}
+            {/if}
+            {#if showBoxes && tool !== "clean"}
               {#each onPage as region (region.id)}
                 {@const rect = stripToPage(page, boxOf(region))}
                 {@const color = kindColor(region.kind)}
@@ -534,6 +708,15 @@
                   {/each}
                 {/if}
               {/each}
+            {/if}
+            {#if tool === "clean" && pointer !== null}
+              <circle cx={pointer.x} cy={pointer.y} r={brush / 2} fill="none" stroke="#ff0050" stroke-width={1.5 / zoom} pointer-events="none" />
+            {/if}
+            {#if tool === "clean" && cleanMethod === "clone" && cloneSource !== null}
+              <g pointer-events="none" stroke="#1f6feb" stroke-width={2 / zoom}>
+                <line x1={cloneSource.x - 8 / zoom} y1={cloneSource.y} x2={cloneSource.x + 8 / zoom} y2={cloneSource.y} />
+                <line x1={cloneSource.x} y1={cloneSource.y - 8 / zoom} x2={cloneSource.x} y2={cloneSource.y + 8 / zoom} />
+              </g>
             {/if}
             {#if drawing !== null}
               <rect
@@ -625,11 +808,35 @@
             <button class="danger" onclick={() => void removeSelected()} disabled={busy} title="Delete">Delete region</button>
           </div>
         </section>
+      {:else if tool === "clean"}
+        <section>
+          <h3>Clean page {pageIndex + 1}</h3>
+          <p class="muted">
+            Paint over leftover lettering or damaged art, then <b>Apply</b> (Enter). <i>inpaint</i> rebuilds the
+            pixels from what surrounds them, <i>fill</i> paints one colour (by default the colour around the
+            stroke), <i>clone</i> copies from the spot you Alt+clicked, <i>restore</i> brings back the raw page
+            where the automatic cleaning went too far. <b>[</b> and <b>]</b> change the brush. Your patches go on
+            after the automatic cleaning at export; use Render to see them in the finished pages.
+          </p>
+          <h4>Hand cleanup on this page</h4>
+          {#if cleanupsOnPage.length === 0}<p class="muted">none yet</p>{/if}
+          <ul class="list">
+            {#each cleanupsOnPage as patch (patch.id)}
+              <li>
+                {patch.id} · {patch.method} · {patch.mask_px} px
+                <button class="link" onclick={() => void removeCleanup(patch.id)} disabled={busy}>delete</button>
+              </li>
+            {/each}
+          </ul>
+          {#if cleanups.length > 0}
+            <button onclick={() => void removeCleanup(cleanups[cleanups.length - 1].id)} disabled={busy}>Undo last cleanup</button>
+          {/if}
+        </section>
       {:else}
         <section>
           <h3>Page {pageIndex + 1}</h3>
           <p class="muted">
-            Click a box to edit it, drag it to move, drag its handles to resize. <b>B</b> draws a new box,
+            Click a box to edit it, drag it to move, drag its handles to resize. <b>B</b> draws a new box, <b>C</b> cleans,
             <b>Del</b> removes the selected one, arrows nudge it (Shift = 10 px), PageUp/PageDown change page.
             {regions.length} regions in the chapter, {todo} untranslated.
           </p>
@@ -716,6 +923,17 @@
   }
   .page svg {
     touch-action: none;
+  }
+  .page canvas.mask {
+    position: absolute;
+    left: 0;
+    top: 0;
+    opacity: 0.45;
+    pointer-events: none;
+  }
+  .cleanbar {
+    background: #fff1f2;
+    padding: 4px;
   }
   .panel {
     overflow: auto;

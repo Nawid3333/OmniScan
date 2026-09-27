@@ -5,12 +5,15 @@ import {
   dragBox,
   fitZoom,
   handlePoint,
+  hexToRgb,
+  maskBounds,
   overlapsPage,
   pageOf,
   pageRectToStrip,
   pageRegions,
   pageToStripPoint,
   regionStatus,
+  rgbToHex,
   statusLabels,
   stripToPage,
 } from "./studio";
@@ -130,5 +133,22 @@ describe("fitZoom", () => {
     expect(fitZoom(2000, 1000)).toBe(0.5);
     expect(fitZoom(500, 1000)).toBe(1);
     expect(fitZoom(0, 1000)).toBe(1);
+  });
+});
+
+describe("cleanup helpers", () => {
+  it("finds the painted pixels' bounds", () => {
+    const width = 6;
+    const height = 4;
+    const data = new Uint8ClampedArray(width * height * 4);
+    expect(maskBounds(data, width, height)).toBeNull();
+    data[(1 * width + 2) * 4 + 3] = 255; // (2, 1)
+    data[(3 * width + 4) * 4 + 3] = 30; // (4, 3), faint anti-aliasing still counts
+    expect(maskBounds(data, width, height)).toEqual({ x0: 2, y0: 1, x1: 5, y1: 4 });
+  });
+
+  it("converts colours both ways", () => {
+    expect(hexToRgb("#0a80ff")).toEqual([10, 128, 255]);
+    expect(rgbToHex([10, 128, 255])).toBe("#0a80ff");
   });
 });
