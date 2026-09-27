@@ -19,6 +19,26 @@ def _active(memory: SeriesMemory, cfg: LearnConfig, kind: LearnKind) -> list[tup
     return [(rule.wrong, rule.right) for rule in memory.rules if rule.kind == kind and is_active(rule, cfg)]
 
 
+OCR_KINDS: tuple[LearnKind, ...] = ("ocr_fix", "drop_text", "watermark_text", "sfx_text")  # apply_to_regions
+
+
+def ocr_lessons(memory: SeriesMemory, cfg: LearnConfig) -> list[tuple[str, str, str]]:
+    """The active lessons `apply_to_regions` applies, as sorted (kind, wrong, right): what the ocr stage's
+    output depends on besides its files (none when learning is off)."""
+    if not cfg.enabled:
+        return []
+    return sorted((kind, wrong, right) for kind in OCR_KINDS for wrong, right in _active(memory, cfg, kind))
+
+
+def remembered_lines(memory: SeriesMemory, cfg: LearnConfig, texts: Sequence[str]) -> dict[str, str]:
+    """The editor's English from the translation memory for those of `texts` (source lines) it holds: what
+    a chapter's translation takes as is (none when learning is off)."""
+    if not cfg.enabled:
+        return {}
+    exact = {entry.source: entry.english for entry in memory.translations}
+    return {text: exact[text] for text in sorted(set(texts)) if text in exact}
+
+
 def fix_words(text: str, fixes: dict[str, str]) -> str:
     """`text` with every whole word listed in `fixes` replaced (punctuation around words and spacing kept)."""
     if not fixes:
