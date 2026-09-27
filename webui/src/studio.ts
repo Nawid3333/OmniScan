@@ -1,6 +1,6 @@
 /** Pure helpers behind the Studio editor (no DOM, no Svelte): page <-> strip coordinates, box dragging. */
 
-import type { BBox, ChapterEdits, FinalLine, Region, SourceFile } from "./api";
+import type { BBox, ChapterEdits, FinalLine, LayoutEdit, LayoutFields, Region, SourceFile } from "./api";
 
 /** A rectangle in one page's natural (unscaled) pixels. */
 export interface PageRect {
@@ -187,4 +187,24 @@ export function hexToRgb(hex: string): [number, number, number] {
 /** [r, g, b] -> "#rrggbb". */
 export function rgbToHex(rgb: [number, number, number]): string {
   return `#${rgb.map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+}
+
+/** The hand lettering fields actually set on `edit` (nulls dropped), for re-sending with one change. */
+export function setFields(edit: LayoutEdit | undefined): LayoutFields {
+  if (edit === undefined) return {};
+  const fields: LayoutFields = {};
+  for (const key of ["font", "size_px", "color", "stroke_px", "stroke_color", "align", "angle", "box", "lines"] as const) {
+    if (edit[key] !== null) (fields as Record<string, unknown>)[key] = edit[key];
+  }
+  if (edit.hidden) fields.hidden = true;
+  return fields;
+}
+
+/** Line breaks typed one per row -> the lines to send (none when the text is blank: automatic breaks). */
+export function typedLines(text: string): string[] | undefined {
+  const lines = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+  return lines.length > 0 ? lines : undefined;
 }

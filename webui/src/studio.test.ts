@@ -14,8 +14,10 @@ import {
   pageToStripPoint,
   regionStatus,
   rgbToHex,
+  setFields,
   statusLabels,
   stripToPage,
+  typedLines,
 } from "./studio";
 
 function file(index: number, y0: number, y1: number, height: number, scale = 1): SourceFile {
@@ -150,5 +152,33 @@ describe("cleanup helpers", () => {
   it("converts colours both ways", () => {
     expect(hexToRgb("#0a80ff")).toEqual([10, 128, 255]);
     expect(rgbToHex([10, 128, 255])).toBe("#0a80ff");
+  });
+});
+
+describe("lettering helpers", () => {
+  it("keeps only the fields a hand lettering sets", () => {
+    const box = { x0: 1, y0: 2, x1: 3, y1: 4 };
+    expect(setFields(undefined)).toEqual({});
+    expect(
+      setFields({
+        region_id: "r0001",
+        anchor: box,
+        font: null,
+        size_px: 20,
+        color: [1, 2, 3],
+        stroke_px: null,
+        stroke_color: null,
+        align: "left",
+        angle: null,
+        box,
+        lines: null,
+        hidden: false,
+      }),
+    ).toEqual({ size_px: 20, color: [1, 2, 3], align: "left", box });
+  });
+
+  it("turns typed rows into line breaks", () => {
+    expect(typedLines("  WAIT\n\nFOR ME!  \n")).toEqual(["WAIT", "FOR ME!"]);
+    expect(typedLines("  \n ")).toBeUndefined();
   });
 });

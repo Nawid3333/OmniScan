@@ -5,17 +5,22 @@
     addRegion,
     cleanupPatchUrl,
     deleteCleanup,
+    deleteLayout,
     deleteRegion,
     getCleanup,
     getEdits,
     getFinal,
     getIngest,
     getInpaint,
+    getLiveLayout,
     getOcr,
     inpaintPatchUrl,
+    listFonts,
     listProfiles,
     pageImageUrl,
     patchRegion,
+    previewUrl,
+    putLayout,
     putFinalLine,
     revertFinalLine,
     revertRegion,
@@ -28,6 +33,9 @@
     CleanupPatch,
     FinalLine,
     InpaintItem,
+    LayoutEdit,
+    LayoutFields,
+    LayoutItem,
     Region,
     RegionKind,
     SourceFile,
@@ -49,9 +57,12 @@
     pageRectToStrip,
     pageRegions,
     regionStatus,
+    rgbToHex,
     sameBox,
+    setFields,
     statusLabels,
     stripToPage,
+    typedLines,
   } from "./studio";
   import type { Handle } from "./studio";
 
@@ -78,6 +89,23 @@
   let showBoxes = $state(true);
   let showBubbles = $state(true);
   let showClean = $state(false);
+  let showPreview = $state(false);
+  let showLettering = $state(true);
+  let fonts = $state<string[]>([]);
+  let liveItems = $state<LayoutItem[]>([]);
+  let handSet = $state<string[]>([]);
+  let previewVersion = $state(0);
+  let letter = $state({
+    font: "",
+    size: 24,
+    color: "#000000",
+    strokePx: 0,
+    strokeColor: "#ffffff",
+    align: "center" as "center" | "left" | "right",
+    angle: 0,
+    lines: "",
+    hidden: false,
+  });
   let selectedId = $state<string | null>(null);
   let sourceDraft = $state("");
   let translationDraft = $state("");
@@ -101,8 +129,9 @@
 
   let svgEl = $state<SVGSVGElement | null>(null);
   let canvasEl = $state<HTMLDivElement | null>(null);
-  let drag: { id: string; handle: Handle; startX: number; startY: number; box: BBox } | null = null;
-  let preview = $state<{ id: string; box: BBox } | null>(null);
+  type DragKind = "region" | "lettering";
+  let drag: { id: string; kind: DragKind; handle: Handle; startX: number; startY: number; box: BBox } | null = null;
+  let preview = $state<{ id: string; kind: DragKind; box: BBox } | null>(null);
   let drawing = $state<{ ax: number; ay: number; bx: number; by: number } | null>(null);
   let nudgeTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -119,6 +148,12 @@
     page && showClean ? patches.filter((patch) => patch.method !== "none" && overlapsPage(page, patch.box)) : [],
   );
   let cleanupsOnPage = $derived(page ? cleanups.filter((patch) => overlapsPage(page, patch.box)) : []);
+  let liveById = $derived(new Map(liveItems.map((item) => [item.region_id, item])));
+  let letteringOnPage = $derived(page && showLettering ? liveItems.filter((item) => overlapsPage(page, item.box)) : []);
+  let selectedItem = $derived(selected ? liveById.get(selected.id) : undefined);
+  let selectedLayout = $derived<LayoutEdit | undefined>(
+    selected ? edits?.layout?.find((edit) => edit.region_id === selected!.id) : undefined,
+  );
   let todo = $derived(regions.filter((region) => regionStatus(region, edits, lineById.get(region.id)).untranslated).length);
 
   $effect(() => {
@@ -151,6 +186,11 @@
     } catch {
       profiles = []; // translation stays available with the enabled profiles
     }
+    try {
+      fonts = await listFonts();
+    } catch {
+      fonts = [];
+    }
     if (canvasEl !== null && files.length > 0) {
       zoom = fitZoom(files[0].width, canvasEl.clientWidth - 24);
     }
@@ -159,13 +199,17 @@
 
   /** Re-read everything an edit can change (regions, lines, edits summary, clean patches). */
   async function refresh(): Promise<void> {
-    const [ocr, final, summary, inpaint, cleanup] = await Promise.allSettled([
+    const [ocr, final, summary, inpaint, cleanup, layout] = await Promise.allSettled([
       getOcr(series, chapter),
       getFinal(series, chapter),
       getEdits(series, chapter),
       getInpaint(series, chapter),
       getCleanup(series, chapter),
+      getLiveLayout(series, chapter),
     ]);
+    liveItems = layout.status === "fulfilled" ? layout.value.items : [];
+    handSet = layout.status === "fulfilled" ? layout.value.hand_set : [];
+    previewVersion += 1;
     cleanups = cleanup.status === "fulfilled" ? cleanup.value.patches : [];
     cleanVersion += 1;
     hasOcr = ocr.status === "fulfilled";
@@ -198,9 +242,55 @@
     selectedId = id;
     suggestions = [];
     kept = null;
+    resetLetterDraft(id);
     const region = regions.find((r) => r.id === id);
     sourceDraft = region?.text ?? "";
     translationDraft = region ? (lineById.get(region.id)?.text ?? "") : "";
+  }
+
+  /** The lettering form from the region's hand lettering where set, else from the typesetter's item. */
+  function resetLetterDraft(id: string | null): void {
+    const item = id === null ? undefined : liveById.get(id);
+    const edit = id === null ? undefined : edits?.layout?.find((e) => e.region_id === id);
+    letter = {
+      font: edit?.font ?? item?.font ?? fonts[0] ?? "",
+      size: edit?.size_px ?? item?.size_px ?? 24,
+      color: rgbToHex(edit?.color ?? item?.color ?? [0, 0, 0]),
+      strokePx: edit?.stroke_px ?? item?.stroke_px ?? 0,
+      strokeColor: rgbToHex(edit?.stroke_color ?? item?.stroke_color ?? [255, 255, 255]),
+      align: edit?.align ?? item?.align ?? "center",
+      angle: edit?.angle ?? item?.angle ?? 0,
+      lines: (edit?.lines ?? []).join("\n"),
+      hidden: edit?.hidden ?? false,
+    };
+  }
+
+  /** Send the lettering form as the region's hand lettering (keeping a box dragged earlier). */
+  async function applyLettering(): Promise<void> {
+    if (selected === null) return;
+    const id = selected.id;
+    const fields: LayoutFields = letter.hidden
+      ? { hidden: true }
+      : {
+          font: letter.font || undefined,
+          size_px: Math.round(letter.size),
+          color: hexToRgb(letter.color),
+          stroke_px: Math.round(letter.strokePx),
+          stroke_color: hexToRgb(letter.strokeColor),
+          align: letter.align,
+          angle: Number(letter.angle) || 0,
+          lines: typedLines(letter.lines),
+          box: selectedLayout?.box ?? undefined,
+        };
+    await act(() => putLayout(series, chapter, id, fields));
+    resetLetterDraft(id);
+  }
+
+  async function revertLettering(): Promise<void> {
+    if (selected === null) return;
+    const id = selected.id;
+    await act(() => deleteLayout(series, chapter, id));
+    resetLetterDraft(id);
   }
 
   function goToPage(index: number): void {
@@ -218,7 +308,11 @@
   }
 
   function boxOf(region: Region): BBox {
-    return preview !== null && preview.id === region.id ? preview.box : region.bbox;
+    return preview !== null && preview.kind === "region" && preview.id === region.id ? preview.box : region.bbox;
+  }
+
+  function letteringBoxOf(item: LayoutItem): BBox {
+    return preview !== null && preview.kind === "lettering" && preview.id === item.region_id ? preview.box : item.box;
   }
 
   function toPagePoint(event: PointerEvent): { x: number; y: number } {
@@ -226,13 +320,21 @@
     return { x: (event.clientX - rect.left) / zoom, y: (event.clientY - rect.top) / zoom };
   }
 
-  function startDrag(event: PointerEvent, region: Region, handle: Handle): void {
+  function startDrag(
+    event: PointerEvent,
+    id: string,
+    handle: Handle,
+    kind: DragKind = "region",
+    box: BBox | null = null,
+  ): void {
     if (tool !== "select" || busy) return;
     event.stopPropagation();
     event.preventDefault();
-    if (selectedId !== region.id) select(region.id);
+    if (selectedId !== id) select(id);
+    const start = box ?? regions.find((region) => region.id === id)?.bbox;
+    if (start === undefined) return;
     const point = toPagePoint(event);
-    drag = { id: region.id, handle, startX: point.x, startY: point.y, box: region.bbox };
+    drag = { id, kind, handle, startX: point.x, startY: point.y, box: start };
     svgEl!.setPointerCapture(event.pointerId);
   }
 
@@ -260,7 +362,7 @@
     } else if (drag !== null) {
       const s = page.scale > 0 ? page.scale : 1;
       const box = dragBox(drag.box, drag.handle, (point.x - drag.startX) * s, (point.y - drag.startY) * s);
-      preview = { id: drag.id, box };
+      preview = { id: drag.id, kind: drag.kind, box };
     } else if (drawing !== null) {
       drawing = { ...drawing, bx: point.x, by: point.y };
     }
@@ -274,7 +376,12 @@
       const moved = preview;
       drag = null;
       if (moved !== null && !sameBox(moved.box, started.box)) {
-        await act(() => patchRegion(series, chapter, started.id, { bbox: moved.box }));
+        if (started.kind === "lettering") {
+          const fields = { ...setFields(edits?.layout?.find((e) => e.region_id === started.id)), box: moved.box };
+          await act(() => putLayout(series, chapter, started.id, fields));
+        } else {
+          await act(() => patchRegion(series, chapter, started.id, { bbox: moved.box }));
+        }
       }
       preview = null;
     } else if (drawing !== null && page !== null) {
@@ -388,8 +495,8 @@
   function nudge(dx: number, dy: number): void {
     if (selected === null || page === null) return;
     const s = page.scale > 0 ? page.scale : 1;
-    const base = preview !== null && preview.id === selected.id ? preview.box : selected.bbox;
-    preview = { id: selected.id, box: dragBox(base, "move", dx * s, dy * s) };
+    const base = preview !== null && preview.kind === "region" && preview.id === selected.id ? preview.box : selected.bbox;
+    preview = { id: selected.id, kind: "region", box: dragBox(base, "move", dx * s, dy * s) };
     if (nudgeTimer !== null) clearTimeout(nudgeTimer);
     const id = selected.id;
     nudgeTimer = setTimeout(() => {
@@ -586,6 +693,8 @@
     <label><input type="checkbox" bind:checked={showBoxes} /> boxes</label>
     <label><input type="checkbox" bind:checked={showBubbles} /> bubbles</label>
     <label title="show the cleaned patches (inpaint) over the raw page"><input type="checkbox" bind:checked={showClean} /> cleaned</label>
+    <label title="show the page as the release will look: cleaned and lettered, your edits included"><input type="checkbox" bind:checked={showPreview} /> preview</label>
+    <label title="show where each English line is lettered (drag the selected one to move or resize it)"><input type="checkbox" bind:checked={showLettering} /> lettering</label>
     <span class="sep"></span>
     <select bind:value={profileChoice} title="translation profile for the Translate buttons">
       <option value="">enabled profiles</option>
@@ -632,7 +741,13 @@
     <div class="canvas" bind:this={canvasEl}>
       {#if page !== null}
         <div class="page" style="width: {page.width * zoom}px; height: {page.height * zoom}px;">
-          <img src={pageImageUrl(series, chapter, page.index)} alt={page.name} width={page.width * zoom} height={page.height * zoom} draggable="false" />
+          <img
+            src={showPreview ? previewUrl(series, chapter, page.index, previewVersion) : pageImageUrl(series, chapter, page.index)}
+            alt={page.name}
+            width={page.width * zoom}
+            height={page.height * zoom}
+            draggable="false"
+          />
           <canvas
             bind:this={maskEl}
             width={page.width}
@@ -682,7 +797,7 @@
                   stroke={color}
                   stroke-width={(isSelected ? 3 : 1.5) / zoom}
                   style="cursor: {tool === 'select' ? 'move' : 'crosshair'};"
-                  onpointerdown={(e) => (tool === "select" ? startDrag(e, region, "move") : undefined)}
+                  onpointerdown={(e) => (tool === "select" ? startDrag(e, region.id, "move") : undefined)}
                   role="button"
                   tabindex="-1"
                   aria-label={region.id}
@@ -700,10 +815,48 @@
                       stroke={color}
                       stroke-width={1.5 / zoom}
                       style="cursor: {handleCursor(handle)};"
-                      onpointerdown={(e) => startDrag(e, region, handle)}
+                      onpointerdown={(e) => startDrag(e, region.id, handle)}
                       role="button"
                       tabindex="-1"
                       aria-label="resize {handle}"
+                    />
+                  {/each}
+                {/if}
+              {/each}
+            {/if}
+            {#if tool === "select"}
+              {#each letteringOnPage as item (item.region_id)}
+                {@const rect = stripToPage(page, letteringBoxOf(item))}
+                {@const mine = item.region_id === selectedId}
+                <rect
+                  x={rect.x}
+                  y={rect.y}
+                  width={rect.width}
+                  height={rect.height}
+                  fill="none"
+                  stroke={item.overflow ? "#dc2626" : "#0d9488"}
+                  stroke-width={(mine ? 2 : 1) / zoom}
+                  stroke-dasharray="{5 / zoom} {3 / zoom}"
+                  pointer-events={mine ? "all" : "none"}
+                  style="cursor: move;"
+                  onpointerdown={(e) => startDrag(e, item.region_id, "move", "lettering", item.box)}
+                  role="button"
+                  tabindex="-1"
+                  aria-label="lettering {item.region_id}"
+                />
+                {#if mine}
+                  {#each HANDLES as handle (handle)}
+                    {@const point = handlePoint(rect, handle)}
+                    <circle
+                      cx={point.x}
+                      cy={point.y}
+                      r={4 / zoom}
+                      fill="#0d9488"
+                      style="cursor: {handleCursor(handle)};"
+                      onpointerdown={(e) => startDrag(e, item.region_id, handle, "lettering", item.box)}
+                      role="button"
+                      tabindex="-1"
+                      aria-label="lettering resize {handle}"
                     />
                   {/each}
                 {/if}
@@ -808,6 +961,51 @@
             <button class="danger" onclick={() => void removeSelected()} disabled={busy} title="Delete">Delete region</button>
           </div>
         </section>
+        {#if selectedItem !== undefined || selectedLayout?.hidden}
+          <section class="lettering">
+            <h4>
+              Lettering
+              {#if handSet.includes(selected.id)}<span class="labels">hand-set</span>{/if}
+              {#if selectedItem?.overflow}<span class="error">overflows its box</span>{/if}
+            </h4>
+            <div class="grid2">
+              <label>
+                font
+                <select bind:value={letter.font}>
+                  {#each fonts as font (font)}
+                    <option value={font}>{font.replace(/\.(ttf|otf)$/i, "")}</option>
+                  {/each}
+                  {#if letter.font && !fonts.includes(letter.font)}<option value={letter.font}>{letter.font}</option>{/if}
+                </select>
+              </label>
+              <label>size <input type="number" min="4" max="400" bind:value={letter.size} /></label>
+              <label>colour <input type="color" bind:value={letter.color} /></label>
+              <label>outline <input type="number" min="0" max="40" bind:value={letter.strokePx} /></label>
+              <label>outline colour <input type="color" bind:value={letter.strokeColor} /></label>
+              <label>
+                align
+                <select bind:value={letter.align}>
+                  <option value="center">centre</option>
+                  <option value="left">left</option>
+                  <option value="right">right</option>
+                </select>
+              </label>
+              <label>angle <input type="number" min="-180" max="180" step="1" bind:value={letter.angle} /></label>
+              <label><input type="checkbox" bind:checked={letter.hidden} /> no lettering</label>
+            </div>
+            <label>
+              line breaks <span class="muted">(one line per row; empty = automatic)</span>
+              <textarea rows="3" bind:value={letter.lines} lang="en"></textarea>
+            </label>
+            <p class="muted">Drag the teal dashed box on the page to move or resize the lettering.</p>
+            <div class="actions">
+              <button onclick={() => void applyLettering()} disabled={busy}>Apply lettering</button>
+              {#if handSet.includes(selected.id)}
+                <button onclick={() => void revertLettering()} disabled={busy}>Revert lettering</button>
+              {/if}
+            </div>
+          </section>
+        {/if}
       {:else if tool === "clean"}
         <section>
           <h3>Clean page {pageIndex + 1}</h3>
@@ -1012,6 +1210,20 @@
   }
   .error {
     color: #dc2626;
+  }
+  .grid2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px 8px;
+  }
+  .grid2 input[type="number"],
+  .grid2 select {
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .lettering {
+    border-top: 1px solid #e5e7eb;
+    margin-top: 8px;
   }
   .suggestions {
     list-style: none;
