@@ -18,6 +18,7 @@ from omniscan.core.schemas import (
 )
 from omniscan.studio.qa import check_chapter
 
+
 def _region(region_id: str, text: str, kind: str = "bubble_text", y: int = 0) -> Region:
     return Region(id=region_id, slice_index=0, kind=kind, bbox=BBox(x0=0, y0=y, x1=20, y1=y + 10), text=text)  # type: ignore[arg-type]
 
@@ -76,4 +77,3 @@ def test_qa_finds_each_kind_of_issue(paths: ChapterPaths) -> None:
 
 def test_qa_keeps_untranslated_sfx_quiet() -> None:
     assert check_chapter([_region("r1", "쾅", kind="sfx")], {}) == []
-

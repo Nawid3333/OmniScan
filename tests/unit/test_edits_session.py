@@ -183,3 +183,9 @@ def test_issues_use_the_desktop_studios_checks(paths: ChapterPaths) -> None:
     pytest.importorskip("omniscan.studio.qa")  # the desktop Studio's QA module (PR #18)
     issues = open_session(paths).issues()
     assert [(issue.region_id, issue.kind) for issue in issues] == [("r0003", "untranslated")]
+
+
+def test_an_unreadable_ocr_json_opens_as_no_regions(paths: ChapterPaths) -> None:
+    paths.artifact("ocr.json").write_text("{}", encoding="utf-8")
+    session = StudioSession(paths)
+    assert not session.has_regions and session.rows() == []

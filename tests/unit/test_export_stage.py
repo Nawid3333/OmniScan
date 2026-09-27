@@ -301,6 +301,7 @@ def test_hand_set_output_cuts_decide_the_images(cfg: Config) -> None:
         "0002.jpg",
         "0003.jpg",
         "0004.jpg",
+        "omniscan-chapter.json",  # the reader index beside the images
     ]
 
 

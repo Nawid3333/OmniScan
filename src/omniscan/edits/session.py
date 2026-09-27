@@ -83,7 +83,9 @@ class StudioSession:
         self._current = {line.region_id: line.text for line in self._final}  # hand lines applied
         layout = _load(LayoutArtifact, self.paths.artifact("layout.json"))
         self._layout = layout.items if layout is not None else []
-        edited, hand = store.edited_ids(self.paths) if ocr_path.is_file() else ([], [])
+        # an unreadable ocr.json loads as no regions (like _load), so there is nothing edited to look up
+        readable = ocr_path.is_file() and regions is not None
+        edited, hand = store.edited_ids(self.paths) if readable else ([], [])
         self._edited, self._hand = set(edited) | set(hand), set(hand)
         self._sources: dict[str, str] = {}
         self._speakers: dict[str, str] = {}  # "": no speaker

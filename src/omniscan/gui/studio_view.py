@@ -30,12 +30,12 @@ from PySide6.QtWidgets import (
 
 from omniscan.core.config import Config, series_config
 from omniscan.core.paths import SeriesPaths
+from omniscan.edits.session import StudioRow, StudioSession
 from omniscan.gui.run_worker import RunWorker
 from omniscan.gui.services import library
 from omniscan.gui.services.runs import RunController, RunOutcome, RunSpec
 from omniscan.gui.strip_view import StripView
 from omniscan.gui.theme import set_role
-from omniscan.edits.session import StudioRow, StudioSession
 
 COLUMNS = ("Page", "Kind", "Source", "English", "Issues")
 _SOURCE_COL, _ENGLISH_COL, _ISSUES_COL = 2, 3, 4

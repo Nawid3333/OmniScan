@@ -14,9 +14,9 @@ from PySide6.QtWidgets import QApplication
 from omniscan.core.config import Config
 from omniscan.core.paths import SeriesPaths
 from omniscan.core.schemas import BBox, FinalArtifact, FinalLine, Region, RegionsArtifact
+from omniscan.edits.store import load_edits
 from omniscan.gui.services.runs import RunOutcome, RunSpec
 from omniscan.gui.studio_view import RELETTER_STAGES, StudioView
-from omniscan.edits.store import load_edits
 from tests.fixtures.gui_library import CHAPTERS, SERIES, build_library
 
 CHAPTER = CHAPTERS[0]
