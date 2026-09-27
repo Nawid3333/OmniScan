@@ -202,6 +202,14 @@ class FilterConfig(BaseModel):
     threshold: float = 0.90  # dHash similarity at or above which a file/slice counts as a match
 
 
+class LearnConfig(BaseModel):
+    """Learning from hand corrections (learn/): what a series' edits teach the pipeline for later chapters."""
+
+    enabled: bool = True
+    min_count: int = Field(default=2, ge=1)  # a wording/OCR/drop rule needs this many matching corrections
+    examples: int = Field(default=5, ge=0, le=20)  # translation-memory examples shown per translation request
+
+
 class Secrets(BaseSettings):
     """Secrets only come from the environment or ~/.config/omniscan/secrets.env — never from TOML."""
 
@@ -224,6 +232,7 @@ class Config(BaseSettings):
     sfx: SfxConfig = SfxConfig()
     export: ExportConfig = ExportConfig()
     filter: FilterConfig = FilterConfig()
+    learn: LearnConfig = LearnConfig()
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -287,6 +296,7 @@ SERIES_SECTIONS = (
     "sfx",
     "export",
     "filter",
+    "learn",
 )  # machine-level sections are not per series
 
 

@@ -12,10 +12,19 @@ import pytest
 import torch
 from PIL import Image
 
-from omniscan.core.config import Config, GpuConfig, OcrConfig, PathsConfig, SfxConfig
-from omniscan.core.schemas import BBox, ChapterEdits, Region, RegionEdit, RegionsArtifact
+from omniscan.core.config import Config, GpuConfig, LearnConfig, OcrConfig, PathsConfig, SfxConfig
+from omniscan.core.schemas import (
+    BBox,
+    ChapterEdits,
+    LearnedRule,
+    Region,
+    RegionEdit,
+    RegionsArtifact,
+    SeriesMemory,
+)
 from omniscan.core.stage import ChapterContext, make_context, run_chapter, run_stage
 from omniscan.ingest.stage import IngestStage
+from omniscan.learn.memory import memory_path
 from omniscan.ocr.lines import LineBox
 from omniscan.ocr.stage import OcrStage
 from omniscan.slicer.stage import SliceStage
@@ -137,6 +146,44 @@ def test_ocr_stage_reapplies_hand_edits_and_keeps_its_own_reading(cfg: Config) -
     assert [(r.id, r.text) for r in edited] == [("r0001", "고친 글"), ("m0001", "툭")]
     auto = RegionsArtifact.load(ctx.paths.artifact("ocr_auto.json")).regions
     assert [(r.id, r.text) for r in auto] == [("r0001", "텍스트")]
+
+
+def test_ocr_stage_applies_the_series_lessons(cfg: Config) -> None:
+    """An active word fix in memory.json changes the reading (the raw one kept as ocr_alt); off when
+    learning is switched off."""
+    ctx = prepared(cfg)
+    SeriesMemory(rules=[LearnedRule(id="fix", kind="ocr_fix", wrong="텍스트", right="글자", count=2)]).save(
+        memory_path(ctx.series)
+    )
+    ctx.gpu = _scheduler_with({0: [((20, 60, 200, 90), 0.95)]})
+    outcome = run_stage(OcrStage(), ctx)
+    assert outcome.status == "done" and outcome.metrics["learned_fixes"] == 1.0
+    (read,) = RegionsArtifact.load(ctx.paths.artifact("ocr_auto.json")).regions
+    assert (read.text, read.ocr_alt) == ("글자", "텍스트")
+
+    off = cfg.model_copy(update={"learn": LearnConfig(enabled=False)})
+    ctx = make_context(off, SERIES, CHAPTER, _scheduler_with({0: [((20, 60, 200, 90), 0.95)]}))
+    outcome = run_stage(OcrStage(), ctx, force=True)
+    assert "learned_fixes" not in outcome.metrics
+    assert RegionsArtifact.load(ctx.paths.artifact("ocr.json")).regions[0].text == "텍스트"
+
+
+def test_switching_a_lesson_off_re_runs_the_ocr(cfg: Config) -> None:
+    """The active lessons are hashed with the inputs: a region a rule dropped comes back once it is off."""
+    ctx = prepared(cfg)
+    drop = SeriesMemory(rules=[LearnedRule(id="drop", kind="drop_text", wrong="텍스트", count=2)])
+    drop.save(memory_path(ctx.series))
+    lines = {0: [((20.0, 60.0, 200.0, 90.0), 0.95)]}
+    ctx.gpu = _scheduler_with(lines)
+    assert run_stage(OcrStage(), ctx).status == "done"
+    assert RegionsArtifact.load(ctx.paths.artifact("ocr.json")).regions == []  # dropped by the lesson
+    again = make_context(cfg, SERIES, CHAPTER, _scheduler_with(lines))
+    assert run_stage(OcrStage(), again).status == "skipped"
+    off = drop.model_copy(update={"rules": [drop.rules[0].model_copy(update={"enabled": False})]})
+    off.save(memory_path(ctx.series))
+    later = make_context(cfg, SERIES, CHAPTER, _scheduler_with(lines))
+    assert run_stage(OcrStage(), later).status == "done"
+    assert [r.text for r in RegionsArtifact.load(ctx.paths.artifact("ocr.json")).regions] == ["텍스트"]
 
 
 def test_ocr_stage_writes_ocr_json_and_is_resumable(cfg: Config) -> None:

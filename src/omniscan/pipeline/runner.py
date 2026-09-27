@@ -19,6 +19,7 @@ from omniscan.core.paths import SeriesPaths
 from omniscan.core.stage import (
     AfterStage,
     ChapterContext,
+    ExtraInputs,
     GpuScheduler,
     RunAbortedError,
     Stage,
@@ -71,6 +72,9 @@ class TimedStage:
 
     def config_subset(self, cfg: Config) -> Mapping[str, Any]:
         return self._stage.config_subset(cfg)
+
+    def input_extra(self, ctx: ChapterContext) -> Mapping[str, Any] | None:
+        return self._stage.input_extra(ctx) if isinstance(self._stage, ExtraInputs) else None
 
     def run(self, ctx: ChapterContext, models: Mapping[str, Any]) -> Mapping[str, float]:
         name = self._stage.name

@@ -32,6 +32,7 @@ from omniscan.importer.plan import (
     files_to_convert,
     plan_import,
 )
+from omniscan.learn.memory import current_memory, is_active, set_rule_enabled
 from omniscan.library.cli import library_app
 from omniscan.llm.ollama import OllamaClient, OllamaError, OllamaRateLimitError
 from omniscan.log import setup_logging
@@ -1472,6 +1473,70 @@ def watermark_remove(
 
 
 app.add_typer(watermark_app, name="watermark")
+
+learn_app = typer.Typer(no_args_is_help=True, help="What a series' hand corrections taught the pipeline.")
+
+_LEARN_LABELS = {
+    "ocr_fix": "OCR fix",
+    "preferred_term": "wording",
+    "drop_text": "delete",
+    "watermark_text": "watermark",
+    "sfx_text": "sound effect",
+}
+
+
+@learn_app.command("show")
+def learn_show(
+    series: Annotated[str, typer.Argument()],
+    rebuild: Annotated[bool, typer.Option("--rebuild", help="Rebuild from every edits.json first.")] = False,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Print memory.json with each rule's state.")
+    ] = False,
+) -> None:
+    """Print the rules and translation memory the series' hand edits add up to (rebuilt when stale)."""
+    paths = _series_paths(series)
+    learn = series_config(get_config(), paths.library_dir).learn
+    memory = current_memory(paths, rebuild=rebuild)
+    if as_json:
+        rules = [{**rule.model_dump(mode="json"), "active": is_active(rule, learn)} for rule in memory.rules]
+        translations = [entry.model_dump(mode="json") for entry in memory.translations]
+        typer.echo(json.dumps({"rules": rules, "translations": translations}, ensure_ascii=False, indent=2))
+        return
+    table = Table(title=f"learn: {series} ({len(memory.rules)} rule(s), min count {learn.min_count})")
+    for column in ("Id", "Kind", "Wrong", "Right", "Count", "State"):
+        table.add_column(column, justify="right" if column == "Count" else "left")
+    for rule in memory.rules:
+        state = "active" if is_active(rule, learn) else "off" if not rule.enabled else "needs more"
+        table.add_row(rule.id, _LEARN_LABELS[rule.kind], rule.wrong, rule.right, str(rule.count), state)
+    Console().print(table)
+    typer.echo(f"learn: {len(memory.translations)} line(s) in the translation memory")
+    if not learn.enabled:
+        typer.echo("learn: learning is switched off for this series ([learn] enabled = false)")
+
+
+def _switch_rule(series: str, rule: str, enabled: bool) -> None:
+    """Switch one learned rule, exiting 2 when the series has no such rule."""
+    try:
+        set_rule_enabled(_series_paths(series), rule, enabled)
+    except LookupError as exc:
+        typer.echo(f"learn: {exc.args[0]}", err=True)
+        raise typer.Exit(2) from exc
+    typer.echo(f"learn: rule {rule} {'on' if enabled else 'off'}")
+
+
+@learn_app.command("enable")
+def learn_enable(series: Annotated[str, typer.Argument()], rule: Annotated[str, typer.Argument()]) -> None:
+    """Switch a learned rule back on."""
+    _switch_rule(series, rule, True)
+
+
+@learn_app.command("disable")
+def learn_disable(series: Annotated[str, typer.Argument()], rule: Annotated[str, typer.Argument()]) -> None:
+    """Switch a learned rule off (it stays off when the memory is rebuilt)."""
+    _switch_rule(series, rule, False)
+
+
+app.add_typer(learn_app, name="learn")
 
 queue_app = typer.Typer(no_args_is_help=True, help="Persistent job queue: run pipeline stages over series.")
 

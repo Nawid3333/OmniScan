@@ -7,7 +7,8 @@ from typing import Any, Literal
 
 import pytest
 
-from omniscan.core.schemas import BBox, GlossaryEntry, Region, RegionKind
+from omniscan.core.schemas import BBox, GlossaryEntry, MemoryEntry, Region, RegionKind
+from omniscan.learn.apply import TranslationHints
 from omniscan.llm.ollama import ChatResponse, OllamaRateLimitError
 from omniscan.translate.profiles import TranslationProfile
 from omniscan.translate.prompts import ContextLine, chat_json_messages, context_lines
@@ -145,3 +146,20 @@ def test_suggest_refuses_unknown_and_untranslatable_regions() -> None:
         suggest(FakeClient(), [profile()], REGIONS, ["r0009"], [], {})
     with pytest.raises(ValueError, match="watermark"):
         suggest(FakeClient(), [profile()], REGIONS, ["r0002"], [], {})
+
+
+def test_suggest_asks_the_model_even_for_a_remembered_line() -> None:
+    client = FakeClient()
+    hints = TranslationHints(
+        exact={"집에.": "Home."},
+        entries=(
+            MemoryEntry(source="집에.", english="Home.", chapter="1"),
+            MemoryEntry(source="집에!", english="Home!", chapter="1"),
+        ),
+        preferences=(),
+        examples=5,
+    )
+    suggestions = suggest(client, [profile()], REGIONS, ["r0004"], [], ENGLISH, hints=hints)
+    assert [s.text for s in suggestions] == ["gemma4:31b-cloud:r0004"]
+    user = client.messages[0][1]["content"]
+    assert "- 집에! => Home!" in user and "=> Home." not in user  # a similar line, never the line itself
