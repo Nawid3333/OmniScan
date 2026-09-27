@@ -35,6 +35,22 @@ Why the Qt app and not the browser (or Electron/Tauri around the web UI):
   app can stay under its own licence); `PySide6-Essentials` keeps the installer small (no bundled Chromium).
 - Electron/Tauri would mean shipping a second runtime and keeping Python as a sidecar server anyway.
 
+## Principles that hold for every milestone (owner, 2026-09-27)
+- **GPU first, everywhere.** Image work (decode, slicing, masks, compositing), detection/OCR and inpainting run on the
+  GPU on every vendor; the LLM runs on the GPU through Ollama (or in the cloud). The CPU is a fallback for machines
+  without a supported GPU, never the default, and every CPU exception in the pipeline needs benchmark evidence
+  (`docs/DECISIONS.md` lists the two accepted ones: DB post-processing and glyph rasterisation).
+- **Fully optimised, and proven by measurement.** Speed claims come from `scripts/measure_run.py` and the
+  `docs/benchmarks/` probes on real hardware, not from reasoning.
+- **A full test suite that guards correctness and speed:**
+  - the CPU suite (`pytest -m "not gpu"`) on all three OSes in CI, on every push;
+  - the GPU suite (`pytest -m gpu`) on each vendor's real hardware, today the owner's AMD PC; the `gpu` fixture
+    must accept `xpu`/`mps` devices once those machines exist to run it;
+  - performance regression tests (a `perf` marker): a synthetic chapter per stage with a stored per-GPU baseline,
+    failing when a stage gets slower than its budget, so an optimisation or a regression is visible in numbers;
+  - mutation checks (`scripts/mutate.py`) for logic, and the end-to-end synthetic chapter
+    (`tests/unit/test_e2e_synthetic.py`) viewed as images after any change to decoding or compositing.
+
 ## Milestones
 Each one ends in something a user can run. Card IDs follow the existing scheme (`docs/tasks/<ID>.md`).
 
