@@ -116,3 +116,14 @@ Stage outputs stay JSON / `.npz`; the pixels of the final chapter are produced o
 - **inpaint_lama** (later card, `gpu_group` "inpaint"): handles the `needs_lama` items; writes `inpaint_lama.json` (`InpaintArtifact`, method `"lama"`) and `patches_lama.npz` (same layout as `patches.npz`);
   export applies `patches.npz` first and `patches_lama.npz` after it, so a LaMa patch overrides the flat-fill placeholder of the same region.
 - Config sections: `[inpaint]`, `[typeset]`, `[export]` (see `config/default.toml`). `export.json` lists the written slices (name, size, bytes) and is the stage's manifest output.
+
+## Performance tests (`tests/perf`, `pytest --perf`)
+`tests/perf/test_pipeline_perf.py` runs the real pipeline (all ten stages) on the E1 golden test's synthetic
+pages, twice in one run, and measures the second chapter, so model loading and first-use warm-up do not count.
+Each stage's seconds are compared with this device's baseline in `tests/perf/baselines.json` (keyed by
+`cuda:<device name>`): a stage fails when it is slower than its baseline by more than 30 % plus 0.25 s
+(`tests/perf/budget.py`). A device without a baseline only prints its timings. `pytest --perf --perf-update`
+records the current timings as the device's baseline; commit the updated `baselines.json` with the change that
+explains the new numbers. The perf tests are skipped unless `--perf` is given (and need the GPU and the cached
+model weights, like E1), so the CI suite never runs them.
+
