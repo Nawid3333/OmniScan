@@ -1071,6 +1071,43 @@ inside a stored watermark zone is excluded from translation, scoring and evaluat
 (text-pattern) and tier 2 (image-hash) matches are. Existing chapters re-detect automatically, because the detect stage now depends on
 `watermarks.json`.
 
+### `omniscan edit`
+
+The Studio's hand edits from the command line — for scripts and batch fixes. Every command records its
+edit in the chapter's `edits.json` and applies it to `ocr.json` / `final.json` at once, exactly like the
+Studio, so it survives every re-run (see "Studio: editing by hand"). Boxes and cuts are strip pixels.
+
+```bash
+uv run omniscan edit show "Solo Leveling" "Chapter 1"            # regions: id, kind, source, English, edited
+uv run omniscan edit show "Solo Leveling" "Chapter 1" --json
+uv run omniscan edit text "Solo Leveling" "Chapter 1" r0003 "진우야, 도망쳐!"
+uv run omniscan edit kind "Solo Leveling" "Chapter 1" r0007 watermark
+uv run omniscan edit box "Solo Leveling" "Chapter 1" r0003 120 840 460 910
+uv run omniscan edit add "Solo Leveling" "Chapter 1" 300 1200 420 1260 --kind sfx --text 쾅
+uv run omniscan edit delete "Solo Leveling" "Chapter 1" r0009
+uv run omniscan edit english "Solo Leveling" "Chapter 1" r0003 "Jinwoo, run!"
+uv run omniscan edit translate "Solo Leveling" "Chapter 1" r0003 r0004 --apply
+uv run omniscan edit revert "Solo Leveling" "Chapter 1" r0003 --english
+uv run omniscan edit cuts "Solo Leveling" "Chapter 1" 2400 4800
+uv run omniscan edit cuts "Solo Leveling" "Chapter 1" --reset
+```
+
+| Command | What it does |
+|---|---|
+| `show` | list the regions (`--json` for scripts), and the ones deleted by hand |
+| `text`, `kind`, `box` | correct a region's source text, kind (`bubble_text`, `free_text`, `sfx`, `watermark`) or text box |
+| `add` | add a region the detector missed (`--kind`, `--text`); prints its id (`m0001`, …) |
+| `delete` | remove a region (a false detection); `revert` brings it back |
+| `english` | write a region's English line |
+| `translate` | translate regions now with every enabled profile (`--profile` for one, a disabled one too) and print the suggestions; `--apply` keeps each first suggestion |
+| `revert` | drop a region's hand edits (a drawn region is removed), or with `--english` its hand-written line |
+| `cuts` | show or set where the exported images split; `--reset` goes back to one image per slice |
+
+A missing chapter artifact or region, a box outside the strip or a cut outside it exits 2 with the reason;
+an Ollama failure in `translate` exits 1. `omniscan run SERIES --chapter CHAPTER` (or the Studio's
+*Render*) then brings the output up to date: stages whose inputs no edit changed are skipped, and the
+translation redoes only the edited regions.
+
 ### `omniscan learn`
 
 What a series' hand corrections taught (see "Learning from your corrections").
@@ -1107,13 +1144,16 @@ uv run omniscan pack DemoSeries --chapter "Chapter 1" --format cbz --format pdf
 
 ### `omniscan serve`
 
-Run the web debug tool's API (pair with `npm run dev` in `webui/` for the UI).
+Run the web app: the API and, once built (`npm run build` in `webui/`), the Studio at the same address
+(see "Web viewer").
 
 | Option | Meaning |
 |---|---|
 | `--host <str>` | bind address. Default: 127.0.0.1 |
 | `--port <int>` | port. Default: 8000 |
 | `--reload` | auto-reload on code changes |
+| `--ui` / `--no-ui` | serve the built web UI at `/` too. Default: on (API only while `webui/dist` is not built) |
+| `--open` | open the Studio in the browser |
 
 Serves existing artifacts read-only: `/api/series`, `/api/series/{s}/chapters`,
 `/api/series/{s}/chapters/{c}/ingest`, `/api/series/{s}/chapters/{c}/slices`,
@@ -1495,19 +1535,22 @@ that hold the same line, and the remembered English always wins over a line kept
 
 ## Web viewer
 
-Start the API and the UI in two terminals:
-
-```bash
-uv run omniscan serve
-```
+Build the web UI once (again after updating OmniScan), then start it:
 
 ```bash
 cd webui
 npm install
-npm run dev
+npm run build
 ```
 
-The Vite dev server proxies `/api` to `http://localhost:8000`, so the defaults of both commands work
+```bash
+uv run omniscan serve --open
+```
+
+`omniscan serve` serves the built UI (`webui/dist`) and the API at the same address,
+`http://127.0.0.1:8000/`; `--open` opens it in the browser. Until the UI is built it serves the API only
+and says so. For working on the UI itself, run `npm run dev` in `webui/` instead of building: the Vite dev
+server proxies `/api` to `http://localhost:8000`, so the defaults of both commands work
 together. Open the local URL Vite prints and pick a series and chapter.
 
 The chapter views (Studio, Slicer, OCR, Translation, Reader, Inpaint, Layout, Edit) need a chapter; the

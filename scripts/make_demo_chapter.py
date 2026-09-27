@@ -50,7 +50,9 @@ def main() -> None:
     make_page(rng, 800).save(chapter_dir / "003.png")
     make_page(rng, 720).save(chapter_dir / "004.jpg", quality=92)
     print(f"wrote 4 pages to {chapter_dir}")
-    print(f"next: omniscan slice {args.series!r} && omniscan serve   (then `npm run dev` in webui/)")
+    print(
+        f"next: omniscan slice {args.series!r} && omniscan serve --open   (build the UI once: npm run build in webui/)"
+    )
 
 
 if __name__ == "__main__":
