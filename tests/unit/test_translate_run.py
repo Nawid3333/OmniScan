@@ -371,6 +371,18 @@ def test_hints_answer_known_lines_and_show_memory_and_wording() -> None:
     assert "Editor's preferred wording" in user and "- Hunter => Hunters" in user
     assert user.index("Translation memory") < user.index("Regions (reading order):")
 
+    reused = {
+        "r0001": Candidate(region_id="r0001", text="Old model line"),
+        "r0002": Candidate(region_id="r0002", text="Kept"),
+    }
+    again = FakeClient([json_reply(["r0003"])])
+    rerun = run_profile(again, profile(), regions, [], reused=reused, hints=hints)
+    assert [(c.region_id, c.text) for c in rerun.candidates][:2] == [
+        ("r0001", "Hello there"),
+        ("r0002", "Kept"),
+    ]
+    # the editor's line wins over a reused model line of the same region
+
     plain = FakeClient([json_reply(["r0001", "r0002", "r0003"])])
     run = run_profile(plain, profile(), regions, [])
     assert run.usage["memory"] == 0.0 and "Translation memory" not in plain.calls[0]["messages"][1]["content"]

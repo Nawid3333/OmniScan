@@ -179,6 +179,21 @@ def test_a_line_the_judge_failed_on_is_judged_again(paths: ChapterPaths) -> None
     assert len(again.requests) == 1
 
 
+def test_the_counts_of_a_reusing_run_describe_the_whole_final_json(paths: ChapterPaths) -> None:
+    write_ocr(paths, {"r0001": "안녕", "r0002": "반가워"})
+    write_runs(paths, {"r0001": "Hi", "r0002": "Nice"}, {"r0001": "Hello", "r0002": "Glad"})
+    judge_chapter(EchoClient(), paths, JUDGE, [], force=True, reuse=True)
+    auto = FinalArtifact.load(paths.artifact("final_auto.json"))
+    flagged = [auto.lines[0].model_copy(update={"flags": ["glossary_violation"]}), auto.lines[1]]
+    auto.model_copy(update={"lines": flagged}).save(paths.artifact("final_auto.json"))
+    write_runs(paths, {"r0001": "Hi", "r0002": "Nice to see you"}, {"r0001": "Hello", "r0002": "Glad"})
+    _s, _artifact, stats = judge_chapter(EchoClient(), paths, JUDGE, [], force=True, reuse=True)
+    assert stats is not None and stats.reused == 1
+    assert (
+        stats.violations_left == 1
+    )  # the kept r0001 still breaks the glossary, though only r0002 was judged
+
+
 def test_judge_key_follows_candidates_and_judge_settings() -> None:
     r = region("r0001", "안녕", 0)
     runs = {"a": {"r0001": "Hi"}, "b": {"r0001": "Hello"}}

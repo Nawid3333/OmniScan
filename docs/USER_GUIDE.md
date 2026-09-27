@@ -1501,14 +1501,16 @@ shows one raw page at a time with every text region as a box:
   lettering*; *Apply lettering* keeps them, *Revert lettering* gives the region back to the typesetter.
   A new font, size or box sets the line again (the text is re-fitted into the box at the given size, or
   the largest that fits); colour, outline, alignment and angle only restyle it. Hand lettering is stored
-  in `edits.json` (`layout`) and applied by every `typeset` run (the typesetter's own items stay in
-  `layout_auto.json`); an edit whose region is gone counts as the stage's `edits_orphaned`.
+  in `edits.json` (`layout`) and applied by every `typeset` run (the typesetter recomputes its own items
+  each time); an edit whose region is gone counts as the stage's `edits_orphaned`.
 - **Preview.** *preview* shows the page as the release will look — raw page, automatic cleaning, your
   hand cleanup and the lettering with your edits — rendered on the spot (CPU, no pipeline run). It is a
   preview: the export decodes and composites the strip on the GPU, so single pixels may differ.
 - **Output cuts** (in the **Slicer** view). The processing slices stay the slicer's; where the finished
   images split is yours to choose: *Edit output cuts* starts from the slicer's cuts; click to add a cut,
-  drag one to move it, × removes it, *Reset to one image per slice* goes back. With *snap to calm rows* a
+  drag one to move it, × removes it, *Reset to one image per slice* goes back (so does removing
+  every cut). No image may be taller than `slicer.hard_max_height` (15000 rows by default): a cut that would
+  leave a taller one is refused. With *snap to calm rows* a
   cut jumps into a uniform band within 60 rows (a clean place between panels). A cut that runs through a
   region's text or bubble is drawn red ("cuts through r0003") so no balloon is split across two images.
   Export writes one image per piece between the cuts; the rows of filtered (promo) slices stay out. Stored
@@ -1551,9 +1553,11 @@ memory is rebuilt) and search the translation memory. `omniscan learn show SERIE
 Lessons apply when a stage runs: the `ocr` stage (metrics `learned_fixes`, `learned_drops`,
 `learned_kinds`), the `translate` stage (metric `memory`: lines taken from the translation memory) and
 the Studio's *Translate* (similar lines and your wording only — it always asks the model for a fresh
-suggestion). Chapters already processed are not re-run by a new lesson; re-run one with
-`omniscan run --force` to apply it. Set `[learn] enabled = false` in a series' `series.toml` to switch
-learning off for that series.
+suggestion). The next `omniscan run` brings processed chapters up to date: an OCR lesson that becomes active
+or is switched off (or a changed `[learn]` setting) re-runs the `ocr` stage, so a region a rule dropped comes
+back once the rule is off; a line you translated by hand re-runs the `translate` stage only for the chapters
+that hold the same line, and the remembered English always wins over a line kept from an earlier run. Set
+`[learn] enabled = false` in a series' `series.toml` to switch learning off for that series.
 
 ## Web viewer
 

@@ -26,7 +26,14 @@ from omniscan.core.schemas import (
     SlicesArtifact,
 )
 from omniscan.edits import store
-from omniscan.learn.apply import apply_to_regions, fix_words, similarity, translation_hints
+from omniscan.learn.apply import (
+    apply_to_regions,
+    fix_words,
+    ocr_lessons,
+    remembered_lines,
+    similarity,
+    translation_hints,
+)
 from omniscan.learn.harvest import Corrections, harvest_chapter, harvest_series
 from omniscan.learn.memory import (
     build_memory,
@@ -189,6 +196,23 @@ def test_apply_to_regions_fixes_drops_and_relabels() -> None:
         regions,
         {"learned_fixes": 0.0, "learned_drops": 0.0, "learned_kinds": 0.0},
     )
+
+
+def test_what_the_stages_depend_on_is_only_the_active_lessons() -> None:
+    memory = SeriesMemory(
+        rules=[
+            rule("ocr_fix", "Jlnwoo", "Jinwoo"),
+            rule("ocr_fix", "rn", "m", 1),  # not enough evidence: no effect, not hashed
+            rule("drop_text", "www.site.com", enabled=False),
+            rule("sfx_text", "쾅", count=1),
+            rule("preferred_term", "Hunter", "Hunters"),  # a translation lesson, not the OCR's
+        ],
+        translations=[MemoryEntry(source="어디 가요?", english="Where are you going?", chapter="2")],
+    )
+    assert ocr_lessons(memory, CFG) == [("ocr_fix", "Jlnwoo", "Jinwoo"), ("sfx_text", "쾅", "")]
+    assert ocr_lessons(memory, LearnConfig(enabled=False)) == []
+    assert remembered_lines(memory, CFG, ["배고파", "어디 가요?"]) == {"어디 가요?": "Where are you going?"}
+    assert remembered_lines(memory, LearnConfig(enabled=False), ["어디 가요?"]) == {}
 
 
 def test_a_learned_fix_keeps_a_second_engines_reading() -> None:
