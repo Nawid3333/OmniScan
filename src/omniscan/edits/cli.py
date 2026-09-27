@@ -278,6 +278,28 @@ def edit_translate(
         typer.echo(f"edit: {line.region_id} English kept")
 
 
+def _history(paths: ChapterPaths) -> str:
+    """How many steps are left to undo and to redo, for a message."""
+    back, forward = store.history_steps(paths)
+    return f"{back} more to undo, {forward} to redo"
+
+
+@edit_app.command("undo")
+def edit_undo(series: Series, chapter: Chapter) -> None:
+    """Take back the last hand edit of the chapter (an import or a desktop save counts as one)."""
+    cfg, _series, paths = _chapter(series, chapter)
+    _run(lambda: store.undo(paths, direction=cfg.detect.reading_direction))
+    typer.echo(f"edit: undone ({_history(paths)})")
+
+
+@edit_app.command("redo")
+def edit_redo(series: Series, chapter: Chapter) -> None:
+    """Make the last undone edit again (a new edit since the undo forgets what could be redone)."""
+    cfg, _series, paths = _chapter(series, chapter)
+    _run(lambda: store.redo(paths, direction=cfg.detect.reading_direction))
+    typer.echo(f"edit: redone ({_history(paths)})")
+
+
 @edit_app.command("cuts")
 def edit_cuts(
     series: Series,

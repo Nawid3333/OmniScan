@@ -118,7 +118,7 @@ def labelplus_import(
     current = english_lines(paths)
     changed = {rid: text for rid, text in found.texts.items() if current.get(rid) != text}
     if not dry_run and changed:
-        try:  # one write and one rebuild: the file lands whole or not at all
+        try:  # one write, one rebuild, one undo step: the file lands whole or not at all
             store.set_translations(paths, changed, direction=direction)
         except store.EditNotFoundError as exc:
             raise _fail(str(exc)) from exc
@@ -208,24 +208,25 @@ def _import_blocks(
     new_sources = {rid: text for rid, text in sources.items() if text and texts.get(rid) != text}
     notes: list[str] = []  # per unmatched block: what became of it
     try:
-        if not dry_run:
-            for region_id, text in new_sources.items():
-                store.update_region(paths, region_id, direction=direction, text=text)
-            for region_id, line in new_lines.items():
-                store.set_translation(paths, region_id, line, direction=direction)
-        for block, box in found.unmatched:
-            if not add:
-                notes.append("")
-            elif dry_run:
-                notes.append(" — would add a region")
-            else:
-                region = store.add_region(
-                    paths, box, direction=direction, text=block.text, lang=scfg.ocr.lang
-                )
-                if block.translation.strip():
-                    line = " ".join(block.translation.split())
-                    store.set_translation(paths, region.id, line, direction=direction)
-                notes.append(f" — added as {region.id}")
+        with store.edit_group(paths):  # the whole import is one undo step
+            if not dry_run:
+                for region_id, text in new_sources.items():
+                    store.update_region(paths, region_id, direction=direction, text=text)
+                for region_id, line in new_lines.items():
+                    store.set_translation(paths, region_id, line, direction=direction)
+            for block, box in found.unmatched:
+                if not add:
+                    notes.append("")
+                elif dry_run:
+                    notes.append(" — would add a region")
+                else:
+                    region = store.add_region(
+                        paths, box, direction=direction, text=block.text, lang=scfg.ocr.lang
+                    )
+                    if block.translation.strip():
+                        line = " ".join(block.translation.split())
+                        store.set_translation(paths, region.id, line, direction=direction)
+                    notes.append(f" — added as {region.id}")
     except (store.EditNotFoundError, ValueError) as exc:
         raise _fail(str(exc), tool) from exc
     joined = sum(len(bs) - 1 for bs in found.matched.values())

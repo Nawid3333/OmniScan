@@ -32,6 +32,7 @@ to the common strip width. Integers, half-open ranges `[x0, x1)`, `[y0, y1)`. A 
 | `final.json` | `FinalArtifact` (hand-written lines applied) | judge (+ editing tools) |
 | `final_auto.json` | `FinalArtifact` (the judge's own lines, before hand edits) | judge |
 | `edits.json` | `ChapterEdits` (hand edits: regions, English lines, lettering) | editing tools only (`edits/store.py`) |
+| `edits_history.json` | `EditsHistory` (earlier states of `edits.json`, for undo and redo) | editing tools only (`edits/store.py`) |
 | `cleanup.json` + `cleanup.npz` | `CleanupArtifact` + npz (hand-painted cleanup patches: masks, pixels) | editing tools only (`cleanup/store.py`); applied last by export |
 | `inpaint.json` + `patches.npz` | `InpaintArtifact` + npz (cleaned crops and masks per region) | inpaint |
 | `layout.json` | `LayoutArtifact` (hand lettering applied) | typeset |
@@ -50,6 +51,9 @@ renumbers regions. `edits.json` is deliberately *not* an input of `ocr` (a text 
 models); the tools apply it themselves. It *is* an input of `typeset`, which is cheap: its hand lettering
 (`layout`) is applied there (`typeset/overrides.py`), and `typeset/chapter.py::chapter_layout` is the one
 function both the stage and the studio's live preview (`typeset/page_preview.py`) letter a chapter with.
+Every change of `edits.json` goes through `edits/store.py::save_edits`, which pushes the state it replaces
+onto `edits_history.json` (at most `HISTORY_DEPTH` steps); `edit_group` makes several operations one step (an
+import, a desktop save), and `undo`/`redo` swap states and rebuild `ocr.json`/`final.json` like any edit.
 `edits/session.py::StudioSession` is the desktop Translator Studio's view of one chapter: it holds the page's
 changes in memory and saves them through the same `edits/store.py` operations (the web Studio and `omniscan edit`
 call those directly).

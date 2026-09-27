@@ -89,7 +89,7 @@ def translate_now(
         first: dict[str, Suggestion] = {}
         for item in suggestions:
             first.setdefault(item.region_id, item)
-        applied = edit_store.set_translations(  # one write and one rebuild for every line kept
+        applied = edit_store.set_translations(  # one write, one rebuild, one undo step
             paths,
             {item.region_id: item.text for item in first.values()},
             direction=cfg.detect.reading_direction,

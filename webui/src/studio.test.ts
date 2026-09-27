@@ -6,6 +6,7 @@ import {
   fitZoom,
   handlePoint,
   hexToRgb,
+  historyShortcut,
   maskBounds,
   overlapsPage,
   pageOf,
@@ -180,5 +181,24 @@ describe("lettering helpers", () => {
   it("turns typed rows into line breaks", () => {
     expect(typedLines("  WAIT\n\nFOR ME!  \n")).toEqual(["WAIT", "FOR ME!"]);
     expect(typedLines("  \n ")).toBeUndefined();
+  });
+});
+
+describe("historyShortcut", () => {
+  const press = (key: string, mods: Partial<{ ctrlKey: boolean; metaKey: boolean; shiftKey: boolean; altKey: boolean }> = {}) =>
+    historyShortcut({ key, ctrlKey: false, metaKey: false, shiftKey: false, altKey: false, ...mods });
+
+  it("maps Ctrl/Cmd+Z to undo and Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y to redo", () => {
+    expect(press("z", { ctrlKey: true })).toBe("undo");
+    expect(press("z", { metaKey: true })).toBe("undo");
+    expect(press("Z", { ctrlKey: true, shiftKey: true })).toBe("redo");
+    expect(press("y", { ctrlKey: true })).toBe("redo");
+  });
+
+  it("ignores plain letters and other combinations", () => {
+    expect(press("z")).toBeNull();
+    expect(press("y", { ctrlKey: true, shiftKey: true })).toBeNull();
+    expect(press("z", { ctrlKey: true, altKey: true })).toBeNull();
+    expect(press("c", { ctrlKey: true })).toBeNull();
   });
 });
