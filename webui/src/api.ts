@@ -622,3 +622,19 @@ export async function deleteLayout(series: string, chapter: string, regionId: st
 export function previewUrl(series: string, chapter: string, page: number, version: number): string {
   return `${chapterBase(series, chapter)}/preview/${page}.png?v=${version}`;
 }
+
+export interface CutsState {
+  cuts: number[] | null; // hand-set output cuts; null = one image per slice
+  auto: number[]; // the slicer's own cut rows
+  strip_height: number;
+  crossings: { cut: number; region_id: string }[];
+}
+
+export async function getCuts(series: string, chapter: string): Promise<CutsState> {
+  return getJson<CutsState>(`${chapterBase(series, chapter)}/cuts`);
+}
+
+/** Set the output cuts (strip rows), or reset them to one image per slice with null. */
+export async function putCuts(series: string, chapter: string, cuts: number[] | null): Promise<CutsState> {
+  return putJson<CutsState>(`${chapterBase(series, chapter)}/cuts`, { cuts });
+}

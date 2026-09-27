@@ -222,6 +222,19 @@ def test_hand_lettering_set_replace_revert_and_follow_a_moved_region(paths: Chap
         store.set_layout(paths, "r0002", {"size_px": 1})  # below LayoutEdit's minimum
 
 
+def test_output_cuts_are_sorted_validated_and_reset(paths: ChapterPaths) -> None:
+    assert store.set_cuts(paths, [400, 200, 400]) == [200, 400]
+    assert store.load_edits(paths).cuts == [200, 400]
+    with pytest.raises(ValueError, match="outside the strip"):
+        store.set_cuts(paths, [100, 600])  # the strip is 600 rows: a cut must lie strictly inside
+    assert store.load_edits(paths).cuts == [200, 400]
+    assert store.set_cuts(paths, None) is None and store.load_edits(paths).cuts is None
+    assert store.set_cuts(paths, []) is None  # no cuts at all is one image per slice, not one whole strip
+    with pytest.raises(ValueError, match=r"rows 200-600 would be 400 rows tall, more than 300"):
+        store.set_cuts(paths, [200], max_height=300)
+    assert store.set_cuts(paths, [200, 400], max_height=300) == [200, 400]
+
+
 def test_the_stages_write_their_output_under_the_edit_lock(paths: ChapterPaths) -> None:
     """The ocr and judge stages run in `omniscan serve`'s queue worker, next to the Studio's edit handlers."""
     store.update_region(paths, "r0001", direction="ltr", text="안녕하세요")

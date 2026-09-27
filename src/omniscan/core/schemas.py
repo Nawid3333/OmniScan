@@ -376,6 +376,9 @@ class ChapterEdits(Artifact):
     regions: list[RegionEdit] = Field(default_factory=list)
     translations: list[TranslationEdit] = Field(default_factory=list)
     layout: list[LayoutEdit] = Field(default_factory=list)
+    # Output cuts: the strip rows where the exported images split, set by hand (sorted, inside the strip);
+    # None = one image per slice. Filtered slices stay out of the output either way.
+    cuts: list[int] | None = None
 
 
 # ---------------------------------------------------------------- hand cleanup
