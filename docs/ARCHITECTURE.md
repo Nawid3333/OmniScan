@@ -68,6 +68,12 @@ from it through the optional `input_extra(ctx)` hook (`core/stage.py`, hashed wi
 this chapter's lines (`remembered_lines`). A switched-off rule re-runs the OCR; a new hand translation re-runs
 only the chapters holding that line, and an exact memory line wins over a reused candidate.
 
+**Speakers and voices** (`translate/voices.py`): `Region.speaker` is set by hand (a `RegionEdit.speaker`, applied
+like every region edit); a series' hand-written `voices.toml` (library dir, next to `series.toml`) describes how
+each character talks. The chat_json prompt carries each region's speaker and the voices of the characters who
+speak or are named in the request; `translation_key` includes a region's speaker and voice only when it has a
+speaker, so unassigned lines keep their keys. `voices.toml` is an input of the translate stage.
+
 ## Stages (`core/stage.py`)
 A stage is a class with `name`, `version`, `gpu_group` class vars and four methods:
 `inputs(ctx) -> list[Path]`, `outputs(ctx) -> list[str]`, `config_subset(cfg) -> Mapping`, `run(ctx, models) -> metrics`.

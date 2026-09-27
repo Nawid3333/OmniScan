@@ -11,6 +11,7 @@ from omniscan.translate.incremental import translation_key
 from omniscan.translate.profiles import TranslationProfile
 from omniscan.translate.prompts import translatable
 from omniscan.translate.run import ChatClient, run_profile
+from omniscan.translate.voices import Character
 
 if TYPE_CHECKING:
     from omniscan.learn.apply import TranslationHints
@@ -26,13 +27,14 @@ def translate_chapter(
     story_summary: str | None = None,
     reuse: bool = False,
     hints: TranslationHints | None = None,
+    characters: Sequence[Character] = (),
 ) -> tuple[Literal["done", "skipped"], CandidateRun | None]:
     """Run one translation profile over a chapter; write `translations/<profile>.json` (skip if present).
 
     Every candidate is stamped with its key (translate/incremental.py). With `reuse`, the candidates of the
     existing run whose key still matches are kept and only the other regions are sent — the pipeline's
     way of re-translating just what a hand edit or a glossary change touched. `hints` is the series' learned
-    translation memory and preferred wording (learn/apply.py)."""
+    translation memory and preferred wording (learn/apply.py); `characters` its voices (translate/voices.py)."""
     output = paths.artifact(f"translations/{profile.name}.json")
     partial = paths.artifact(f"translations/.{profile.name}.partial.json")
     if output.is_file() and not force:
@@ -43,7 +45,10 @@ def translate_chapter(
     if force:
         partial.unlink(missing_ok=True)  # a leftover partial from another attempt is stale under --force
     artifact = RegionsArtifact.load(ocr_path)
-    keys = {region.id: translation_key(region, entries, profile) for region in translatable(artifact.regions)}
+    keys = {
+        region.id: translation_key(region, entries, profile, characters)
+        for region in translatable(artifact.regions)
+    }
     reused: dict[str, Candidate] = {}
     if reuse and output.is_file():
         previous = CandidateRun.load(output)
@@ -61,6 +66,7 @@ def translate_chapter(
         story_summary=story_summary,
         reused=reused,
         hints=hints,
+        characters=characters,
     )
     run = run.model_copy(
         update={"candidates": [c.model_copy(update={"key": keys.get(c.region_id)}) for c in run.candidates]}

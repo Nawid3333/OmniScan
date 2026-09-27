@@ -51,6 +51,7 @@ class StudioRow:
     machine: str  # the judge's own line, "" before translation
     english: str  # what will be lettered: the hand-written line if there is one, else the machine's
     edited: bool  # the region or its English was changed by hand (saved or not)
+    speaker: str = ""  # who says the line (translate/voices.py), "" when nobody is set
 
 
 class StudioSession:
@@ -84,6 +85,7 @@ class StudioSession:
         edited, hand = store.edited_ids(self.paths) if ocr_path.is_file() else ([], [])
         self._edited, self._hand = set(edited) | set(hand), set(hand)
         self._sources: dict[str, str] = {}
+        self._speakers: dict[str, str] = {}  # "": no speaker
         self._english: dict[str, str | None] = {}  # None: back to the judge's line
         self._removed: list[str] = []
 
@@ -95,18 +97,21 @@ class StudioSession:
     @property
     def dirty(self) -> bool:
         """Whether there are unsaved changes."""
-        return bool(self._sources or self._english or self._removed)
+        return bool(self._sources or self._speakers or self._english or self._removed)
 
     def regions(self) -> list[Region]:
         """The chapter's regions with every edit applied (saved and unsaved), in reading order."""
         removed = set(self._removed)
-        return [
-            region.model_copy(update={"text": self._sources[region.id]})
-            if region.id in self._sources
-            else region
-            for region in self._all
-            if region.id not in removed
-        ]
+        return [self._pending(region) for region in self._all if region.id not in removed]
+
+    def _pending(self, region: Region) -> Region:
+        """`region` with its unsaved source text and speaker applied."""
+        update: dict[str, object] = {}
+        if region.id in self._sources:
+            update["text"] = self._sources[region.id]
+        if region.id in self._speakers:
+            update["speaker"] = self._speakers[region.id] or None
+        return region.model_copy(update=update) if update else region
 
     def translations(self) -> dict[str, str]:
         """The effective English per region: the judge's lines with the hand-written ones on top."""
@@ -131,7 +136,11 @@ class StudioSession:
                 source=region.text,
                 machine=self._machine.get(region.id, ""),
                 english=english.get(region.id, ""),
-                edited=region.id in self._edited or region.id in self._sources or region.id in self._english,
+                edited=region.id in self._edited
+                or region.id in self._sources
+                or region.id in self._speakers
+                or region.id in self._english,
+                speaker=region.speaker or "",
             )
             for region in self.regions()
         ]
@@ -150,6 +159,15 @@ class StudioSession:
         else:
             self._sources[region_id] = text
 
+    def set_speaker(self, region_id: str, name: str) -> None:
+        """Say who speaks a region's line (a character of the series' voices.toml, or any name; "" for nobody)."""
+        self._require(region_id)
+        saved = next(region.speaker or "" for region in self._all if region.id == region_id)
+        if name.strip() == saved:
+            self._speakers.pop(region_id, None)
+        else:
+            self._speakers[region_id] = name.strip()
+
     def set_translation(self, region_id: str, text: str) -> None:
         """Set a region's English line; setting it back to the machine's line clears the hand-written one."""
         self._require(region_id)
@@ -166,6 +184,7 @@ class StudioSession:
         if region_id not in self._removed:
             self._removed.append(region_id)
         self._sources.pop(region_id, None)
+        self._speakers.pop(region_id, None)
         self._english.pop(region_id, None)
 
     def save(self) -> int:
@@ -176,8 +195,14 @@ class StudioSession:
             self._direction if self._direction is not None else self._series_direction()
         )
         self._start_ocr_json()
-        for region_id, text in self._sources.items():
-            store.update_region(self.paths, region_id, direction=direction, text=text)
+        for region_id in {*self._sources, *self._speakers}:
+            store.update_region(
+                self.paths,
+                region_id,
+                direction=direction,
+                text=self._sources.get(region_id),
+                speaker=self._speakers.get(region_id),
+            )
         for region_id, line in self._english.items():
             if line is None:
                 store.revert_translation(self.paths, region_id, direction=direction)
@@ -185,7 +210,7 @@ class StudioSession:
                 store.set_translation(self.paths, region_id, line, direction=direction)
         for region_id in self._removed:
             store.delete_region(self.paths, region_id, direction=direction)
-        count = len(self._sources) + len(self._english) + len(self._removed)
+        count = len(self._sources) + len(self._speakers) + len(self._english) + len(self._removed)
         self._reload()
         return count
 

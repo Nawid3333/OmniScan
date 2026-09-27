@@ -21,6 +21,7 @@ from omniscan.llm.ollama import OllamaRateLimitError
 from omniscan.story.store import SummaryStore
 from omniscan.translate.chapter import translate_chapter
 from omniscan.translate.judge_chapter import judge_chapter
+from omniscan.translate.voices import VOICES_FILE, Character, load_voices
 
 if TYPE_CHECKING:
     from omniscan.core.schemas import CandidateRun, GlossaryEntry
@@ -149,6 +150,9 @@ class TranslateStage:
         inputs = [ctx.paths.artifact("ocr.json")]
         if ctx.series.db.is_file():
             inputs.append(ctx.series.db)  # the glossary: a locked term changes the translations
+        voices = ctx.series.library_dir / VOICES_FILE
+        if voices.is_file():
+            inputs.append(voices)  # a changed voice re-translates that character's lines
         return inputs
 
     def outputs(self, ctx: ChapterContext) -> list[str]:
@@ -187,13 +191,14 @@ class TranslateStage:
             from omniscan.learn.memory import current_memory
 
             hints = translation_hints(current_memory(ctx.series), ctx.cfg.learn)
+        characters = load_voices(ctx.series)
         regions = fallbacks_used = reused = remembered = 0.0
         for profile in self._profiles:
             fallback = self._fallbacks.get(profile.name)
             run: CandidateRun | None = None
             if fallback is None or profile.name not in self._rate_limited:
                 try:
-                    run = self._translate(ctx, profile, entries, story_summary, hints)
+                    run = self._translate(ctx, profile, entries, story_summary, hints, characters)
                 except OllamaRateLimitError:
                     if fallback is None:
                         raise
@@ -206,7 +211,7 @@ class TranslateStage:
                     )
                     self._rate_limited.add(profile.name)
             if run is None and fallback is not None:
-                run = self._translate(ctx, fallback, entries, story_summary, hints)
+                run = self._translate(ctx, fallback, entries, story_summary, hints, characters)
                 fallbacks_used += 1.0
                 ctx.paths.artifact(f"translations/{profile.name}.json").unlink(missing_ok=True)  # stale
             elif fallback is not None:
@@ -230,6 +235,7 @@ class TranslateStage:
         entries: Sequence[GlossaryEntry],
         story_summary: str | None,
         hints: TranslationHints | None = None,
+        characters: Sequence[Character] = (),
     ) -> CandidateRun:
         """One profile over the chapter (the only local model in VRAM while it runs); its written run."""
         _make_sole_local_model(ctx, profile.endpoint, profile.model)
@@ -242,6 +248,7 @@ class TranslateStage:
             story_summary=story_summary,
             reuse=True,
             hints=hints,
+            characters=characters,
         )
         if run is None:
             raise RuntimeError(f"translate_chapter skipped {profile.name} despite force=True")

@@ -19,6 +19,7 @@ from omniscan.translate.run import ChatClient, run_profile
 
 if TYPE_CHECKING:
     from omniscan.learn.apply import TranslationHints
+    from omniscan.translate.voices import Character
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +43,7 @@ def suggest(
     fallbacks: Mapping[str, TranslationProfile] | None = None,
     story_summary: str | None = None,
     hints: TranslationHints | None = None,
+    characters: Sequence[Character] = (),
 ) -> list[Suggestion]:
     """Translate the target regions with every profile; a profile that hits the Ollama rate limit is
     replaced by its fallback. `hints` (the series' learned memory) shows the models similar lines the editor
@@ -63,7 +65,14 @@ def suggest(
         used = profile
         try:
             run = run_profile(
-                client, profile, targets, entries, story_summary=story_summary, context=context, hints=hints
+                client,
+                profile,
+                targets,
+                entries,
+                story_summary=story_summary,
+                context=context,
+                hints=hints,
+                characters=characters,
             )
         except OllamaRateLimitError:
             fallback = (fallbacks or {}).get(profile.name)
@@ -71,7 +80,14 @@ def suggest(
                 raise
             used = fallback
             run = run_profile(
-                client, fallback, targets, entries, story_summary=story_summary, context=context, hints=hints
+                client,
+                fallback,
+                targets,
+                entries,
+                story_summary=story_summary,
+                context=context,
+                hints=hints,
+                characters=characters,
             )
         suggestions.extend(
             Suggestion(region_id=c.region_id, profile=used.name, model=used.model, text=c.text)
