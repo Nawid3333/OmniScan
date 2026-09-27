@@ -33,6 +33,7 @@ from omniscan.importer.plan import (
     files_to_convert,
     plan_import,
 )
+from omniscan.interchange.cli import labelplus_app
 from omniscan.learn.memory import current_memory, is_active, set_rule_enabled
 from omniscan.library.cli import library_app
 from omniscan.llm.ollama import OllamaClient, OllamaError, OllamaRateLimitError
@@ -1558,6 +1559,7 @@ def learn_disable(series: Annotated[str, typer.Argument()], rule: Annotated[str,
 
 app.add_typer(learn_app, name="learn")
 app.add_typer(edit_app, name="edit")
+app.add_typer(labelplus_app, name="labelplus")
 
 queue_app = typer.Typer(no_args_is_help=True, help="Persistent job queue: run pipeline stages over series.")
 

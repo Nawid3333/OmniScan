@@ -1108,6 +1108,32 @@ an Ollama failure in `translate` exits 1. `omniscan run SERIES --chapter CHAPTER
 *Render*) then brings the output up to date: stages whose inputs no edit changed are skipped, and the
 translation redoes only the edited regions.
 
+### `omniscan labelplus`
+
+Move a chapter's text in and out of [LabelPlus](https://github.com/LabelPlus/LabelPlus), the labelling tool many
+scanlation groups translate and proofread in. A LabelPlus file (`.txt`) lists, per page image, numbered labels:
+a point on the page, a group (`框内` inside a balloon, `框外` outside) and the label's text.
+
+```bash
+uv run omniscan labelplus export "Solo Leveling" "Chapter 1"                  # English lines
+uv run omniscan labelplus export "Solo Leveling" "Chapter 1" --text source    # OCR text, to translate in LabelPlus
+uv run omniscan labelplus import "Solo Leveling" "Chapter 1" proofread.txt --dry-run
+uv run omniscan labelplus import "Solo Leveling" "Chapter 1" proofread.txt
+```
+
+**Export** writes one label per region (watermarks never) at the centre of its text box, on the raw page it sits
+on, with the English line (`--text english`, the default) or the OCR text (`--text source`); balloon text goes in
+group 1, everything else in group 2. Default file: `<output_root>/<series>/_labelplus/<chapter>.txt` (`--out` to
+choose), UTF-8 with a BOM as LabelPlus writes it. Label the raw pages in LabelPlus.
+
+**Import** reads a LabelPlus file and takes each label's text (on one line) as the English line of the region it
+points into: the smallest text box holding the label, else the smallest balloon. Several labels in one region are
+joined. Lines are recorded as hand-written (`edits.json`), so every re-run keeps them and learning remembers them;
+a label whose text already is the region's line changes nothing. Labels outside every region and pages the chapter
+does not have are listed (draw the missing boxes in the Studio or with `omniscan edit add`, then import again).
+A page renamed by the group (`001.png` for `001.jpg`) is matched by its name without the extension. Needs the
+chapter's `ingest.json` (page positions); a file that is not LabelPlus exits 2.
+
 ### `omniscan learn`
 
 What a series' hand corrections taught (see "Learning from your corrections").
