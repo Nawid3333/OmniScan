@@ -173,7 +173,7 @@ def test_switching_a_lesson_off_re_runs_the_ocr(cfg: Config) -> None:
     ctx = prepared(cfg)
     drop = SeriesMemory(rules=[LearnedRule(id="drop", kind="drop_text", wrong="텍스트", count=2)])
     drop.save(memory_path(ctx.series))
-    lines = {0: [((20, 60, 200, 90), 0.95)]}
+    lines = {0: [((20.0, 60.0, 200.0, 90.0), 0.95)]}
     ctx.gpu = _scheduler_with(lines)
     assert run_stage(OcrStage(), ctx).status == "done"
     assert RegionsArtifact.load(ctx.paths.artifact("ocr.json")).regions == []  # dropped by the lesson
