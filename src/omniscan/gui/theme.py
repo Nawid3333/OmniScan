@@ -22,8 +22,8 @@ DEFAULT_ACCENT = "#7c5cff"
 # sidebar pages each mode shows; "pro" shows everything (the Studio's advanced panels key off it too)
 MODE_PAGES: dict[UiMode, frozenset[str]] = {
     "quick": frozenset({"Library", "Reader", "Run", "Settings", "Import"}),
-    "standard": frozenset({"Library", "Reader", "Run", "Models", "Settings", "Import"}),
-    "pro": frozenset({"Library", "Reader", "Run", "Models", "Settings", "Import"}),
+    "standard": frozenset({"Library", "Reader", "Run", "Models", "Settings", "Import", "Studio"}),
+    "pro": frozenset({"Library", "Reader", "Run", "Models", "Settings", "Import", "Studio"}),
 }
 
 # (window, base, alternate base, text, muted text, button) per theme; OLED uses true black for the large areas

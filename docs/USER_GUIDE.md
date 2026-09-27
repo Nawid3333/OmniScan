@@ -1287,7 +1287,7 @@ uv run omniscan gui          # or: uv run python -m omniscan.gui
 
 Without the extra installed the command prints one line naming the extra and exits 2.
 
-The window has six pages in the left sidebar (also `Ctrl+1`…`Ctrl+6`). The status bar shows the
+The window has seven pages in the left sidebar (also `Ctrl+1`…`Ctrl+7`; Quick mode hides Models and Studio). The status bar shows the
 configured GPU device and the job state; window size and the last open page are remembered across
 restarts.
 
@@ -1350,6 +1350,23 @@ detected chapter grouping — move pages between chapters, reorder, rename, merg
 before committing. Non-JPEG pages are flagged for conversion (quality 95, on the CPU) in the
 preview. `Move instead of copy` deletes the source pages as they're imported (disabled for
 archives, since there both extraction and the archive itself would need separate handling).
+
+**Studio** is the translator's workbench for one chapter (after detection and OCR have run). The raw strip is on
+the left with every text region outlined; the table on the right has one row per region: page, kind, source
+text, English and issues. Click a box to jump to its row, or a row to jump to its box.
+
+- Double-click a **Source** cell to fix the OCR text, or an **English** cell to write your own line (the
+  machine's line stays in the tooltip). `Remove box` deletes a false detection.
+- `Check` runs the automatic quality check: lines with no English, Korean/Chinese/Japanese left in the English,
+  lettering that does not fit its balloon, lines the judge was unsure about or that miss a locked glossary term,
+  and English far longer than the source. `Only lines with issues` hides the rest.
+- `Save` writes your changes: source fixes and removed boxes go into `ocr.json` (so a new translate, inpaint or
+  typeset run uses them), your English lines into `studio.json` (lettering uses them over the judge's pick, even
+  after a re-translation; a re-run OCR keeps your source fixes too). Every change is also appended to
+  `corrections.jsonl` in the chapter's work folder, with before, after and the source line. It stays on your
+  computer.
+- `Re-letter` saves, then re-runs `typeset` and `export` for the chapter, so the Reader shows the new output. A
+  changed source line needs a translate/judge run (Run page) before the machine's English follows it.
 
 ## Web viewer
 

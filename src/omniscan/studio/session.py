@@ -8,9 +8,10 @@ studio.json (typeset applies it on top of final.json) and one record per change 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from omniscan.core.paths import ChapterPaths
-from omniscan.core.schemas import FinalArtifact, LayoutArtifact, Region, RegionsArtifact
+from omniscan.core.schemas import Artifact, FinalArtifact, LayoutArtifact, Region, RegionsArtifact
 from omniscan.studio.corrections import (
     CORRECTIONS_NAME,
     Correction,
@@ -20,6 +21,14 @@ from omniscan.studio.corrections import (
 )
 from omniscan.studio.edits import STUDIO_NAME, apply_source_edits, load_edits
 from omniscan.studio.qa import Issue, check_chapter
+
+
+def _load[T: Artifact](cls: type[T], path: Path) -> T | None:
+    """An artifact, or None when it is missing or unreadable (the Studio then shows what it can)."""
+    try:
+        return cls.load(path)
+    except OSError, ValueError:
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,12 +51,12 @@ class StudioSession:
         self.paths = paths
         ocr_path = paths.artifact("ocr.json")
         self._regions_name = "ocr.json" if ocr_path.is_file() else "regions.json"
-        regions_path = paths.artifact(self._regions_name)
-        self._all: list[Region] = RegionsArtifact.load(regions_path).regions if regions_path.is_file() else []
-        final_path = paths.artifact("final.json")
-        self._final = FinalArtifact.load(final_path).lines if final_path.is_file() else []
-        layout_path = paths.artifact("layout.json")
-        self._layout = LayoutArtifact.load(layout_path).items if layout_path.is_file() else []
+        regions = _load(RegionsArtifact, paths.artifact(self._regions_name))
+        self._all: list[Region] = regions.regions if regions is not None else []
+        final = _load(FinalArtifact, paths.artifact("final.json"))
+        self._final = final.lines if final is not None else []
+        layout = _load(LayoutArtifact, paths.artifact("layout.json"))
+        self._layout = layout.items if layout is not None else []
         self._machine = {line.region_id: line.text for line in self._final}
         self._saved = load_edits(paths)
         self._edits = self._saved.model_copy(deep=True)

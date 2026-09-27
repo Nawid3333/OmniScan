@@ -16,6 +16,7 @@ from omniscan.core.schemas import (
     LayoutArtifact,
     Region,
     RegionsArtifact,
+    StudioEdits,
 )
 from omniscan.core.stage import make_context, run_stage
 from omniscan.typeset.stage import TypesetStage
@@ -160,6 +161,17 @@ def test_typeset_stage_reads_what_lama_erased(cfg: Config) -> None:
     assert work / "inpaint_lama.json" in TypesetStage().inputs(ctx)
     assert run_stage(TypesetStage(), ctx).status == "done"
     assert LayoutArtifact.load(work / "layout.json").items[1].font_role == "sfx"
+
+
+def test_typeset_stage_letters_the_studio_lines_over_the_judge(cfg: Config) -> None:
+    write_inputs(cfg)
+    work = cfg.paths.work_root / SERIES / CHAPTER
+    StudioEdits(translations={"r0001": "Hey, you alright?"}).save(work / "studio.json")
+    ctx = make_context(cfg, SERIES, CHAPTER)
+    assert work / "studio.json" in TypesetStage().inputs(ctx)
+    assert run_stage(TypesetStage(), ctx).status == "done"
+    dialogue = LayoutArtifact.load(work / "layout.json").items[0]
+    assert " ".join(dialogue.lines) == "Hey, you alright?"
 
 
 def test_typeset_stage_is_resumable_and_invalidated(cfg: Config) -> None:

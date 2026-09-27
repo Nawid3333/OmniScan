@@ -15,16 +15,21 @@ from pathlib import Path
 from PySide6.QtCore import QCoreApplication, QEvent, QObject, QRectF, Qt, Signal
 from PySide6.QtGui import (
     QBrush,
+    QColor,
     QImage,
+    QMouseEvent,
     QPainter,
     QPaintEvent,
     QPalette,
+    QPen,
     QResizeEvent,
     QWheelEvent,
 )
 from PySide6.QtWidgets import QAbstractScrollArea, QWidget
 
 from omniscan.gui.services.library import Tile
+
+Overlay = tuple[str, int, int, int, int]  # (id, x0, y0, x1, y1) in strip space
 
 MIN_ZOOM = 0.05
 MAX_ZOOM = 4.0
@@ -42,6 +47,7 @@ class StripView(QAbstractScrollArea):
 
     strip_y_changed = Signal(float)  # strip y of the viewport's top edge
     zoom_changed = Signal(float)
+    overlay_clicked = Signal(str)  # id of the overlay box under a left click
 
     def __init__(self, parent: QWidget | None = None, *, max_cached_images: int = 32) -> None:
         """Create an empty view; `set_tiles` fills it."""
@@ -54,6 +60,8 @@ class StripView(QAbstractScrollArea):
         self._sync_guard = False  # True while this view itself moves the bars (no strip_y_changed)
         self._image_cache: OrderedDict[Path, QImage] = OrderedDict()  # LRU: path -> image
         self._max_cached_images = max(1, max_cached_images)
+        self._overlays: tuple[Overlay, ...] = ()
+        self._selected: str | None = None
         self.verticalScrollBar().valueChanged.connect(self._on_value_changed)
         self.viewport().installEventFilter(self)
 
@@ -83,6 +91,44 @@ class StripView(QAbstractScrollArea):
             if tile.y0 <= strip_y < tile.y1:
                 return tile
         return None
+
+    # ------------------------------------------------------------------ overlays
+
+    def set_overlays(self, overlays: Sequence[Overlay], selected: str | None = None) -> None:
+        """Outline boxes over the strip (e.g. text regions); `selected` is drawn filled."""
+        self._overlays = tuple(overlays)
+        self._selected = selected
+        self.viewport().update()
+
+    def overlays(self) -> tuple[Overlay, ...]:
+        """The overlay boxes currently drawn."""
+        return self._overlays
+
+    def overlay_at(self, x: float, y: float) -> str | None:
+        """Id of the smallest overlay box containing strip point (x, y), or None."""
+        hits = [box for box in self._overlays if box[1] <= x < box[3] and box[2] <= y < box[4]]
+        if not hits:
+            return None
+        return min(hits, key=lambda box: (box[3] - box[1]) * (box[4] - box[2]))[0]
+
+    def _strip_x_offset(self) -> float:
+        """Widget x of strip x 0 (the strip is centred when narrower than the viewport)."""
+        strip_w_px = self._strip_width * self._zoom
+        width = self.viewport().width()
+        if strip_w_px <= width:
+            return (width - strip_w_px) / 2.0
+        return float(-self.horizontalScrollBar().value())
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        """A left click on an overlay box emits its id."""
+        if event.button() == Qt.MouseButton.LeftButton and self._overlays:
+            pos = event.position()
+            x = (pos.x() - self._strip_x_offset()) / self._zoom
+            y = (pos.y() + self.verticalScrollBar().value()) / self._zoom
+            hit = self.overlay_at(x, y)
+            if hit is not None:
+                self.overlay_clicked.emit(hit)
+        super().mousePressEvent(event)
 
     # ------------------------------------------------------------------ zoom
 
@@ -227,10 +273,7 @@ class StripView(QAbstractScrollArea):
             return
         zoom = self._zoom
         strip_w_px = self._strip_width * zoom
-        if strip_w_px <= vp.width():
-            x_off = (vp.width() - strip_w_px) / 2.0
-        else:
-            x_off = float(-self.horizontalScrollBar().value())
+        x_off = self._strip_x_offset()
         value = self.verticalScrollBar().value()
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
         for tile in self._tiles:
@@ -244,4 +287,23 @@ class StripView(QAbstractScrollArea):
                 painter.drawImage(rect, image)
             else:
                 self._paint_gap(painter, rect, tile.label)
+        self._paint_overlays(painter, x_off, value)
         painter.end()
+
+    def _paint_overlays(self, painter: QPainter, x_off: float, value: int) -> None:
+        """Outline every overlay box in the highlight colour; fill the selected one lightly."""
+        if not self._overlays:
+            return
+        zoom = self._zoom
+        color = self.palette().color(QPalette.ColorRole.Highlight)
+        fill = QColor(color)
+        fill.setAlpha(60)
+        pen = QPen(color, 2.0)
+        painter.setPen(pen)
+        for region_id, x0, y0, x1, y1 in self._overlays:
+            rect = QRectF(x_off + x0 * zoom, y0 * zoom - value, (x1 - x0) * zoom, (y1 - y0) * zoom)
+            if rect.bottom() < 0 or rect.top() > self.viewport().height():
+                continue
+            if region_id == self._selected:
+                painter.fillRect(rect, fill)
+            painter.drawRect(rect)

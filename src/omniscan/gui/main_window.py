@@ -1,4 +1,4 @@
-"""MainWindow: the desktop shell — sidebar navigation, the five pages, status bar, remembered geometry.
+"""MainWindow: the desktop shell — sidebar navigation, the pages, status bar, remembered geometry.
 
 Pages are built once and shown via a QStackedWidget; the library's double-click jumps to the reader
 and a settings write reloads the config into every page. Window geometry and the last page persist
@@ -31,10 +31,11 @@ from omniscan.gui.services.hardware import HardwareService
 from omniscan.gui.services.importer import ImporterService
 from omniscan.gui.services.models import ModelsService
 from omniscan.gui.settings_view import SettingsView
+from omniscan.gui.studio_view import StudioView
 from omniscan.gui.theme import MODE_PAGES, Appearance
 
-# "Import" is last so the other four keep their existing indices (scripts/gui_screenshots.py hard-codes them).
-PAGES = ("Library", "Reader", "Run", "Models", "Settings", "Import")
+# new pages go last so the first five keep their indices (scripts/gui_screenshots.py hard-codes them).
+PAGES = ("Library", "Reader", "Run", "Models", "Settings", "Import", "Studio")
 
 
 class MainWindow(QMainWindow):
@@ -63,6 +64,7 @@ class MainWindow(QMainWindow):
         self.models_view = ModelsView(models_service or ModelsService(self._cfg))
         self.settings_view = SettingsView(self._cfg, hardware=hardware_service, qsettings=self._qsettings)
         self.import_view = ImportView(importer_service or ImporterService(self._cfg))
+        self.studio_view = StudioView(self._cfg)
 
         self.stack = QStackedWidget()
         for view in (
@@ -72,6 +74,7 @@ class MainWindow(QMainWindow):
             self.models_view,
             self.settings_view,
             self.import_view,
+            self.studio_view,
         ):
             self.stack.addWidget(view)
         self.sidebar = QListWidget()
@@ -97,6 +100,7 @@ class MainWindow(QMainWindow):
         self.sidebar.currentRowChanged.connect(self._on_sidebar)
         self.library_view.chapter_opened.connect(self._on_chapter_opened)
         self.run_view.busy_changed.connect(self._on_busy_changed)
+        self.studio_view.busy_changed.connect(self._on_busy_changed)
         self.settings_view.settings_changed.connect(self._reload_config)
         self.settings_view.appearance_changed.connect(self.apply_mode)
 
@@ -107,7 +111,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ state
 
     def show_page(self, index: int) -> None:
-        """Switch to page `index` (0..4); the sidebar selection drives the stack."""
+        """Switch to page `index` (an index into PAGES); the sidebar selection drives the stack."""
         self.sidebar.setCurrentRow(index)
 
     def apply_mode(self, appearance: Appearance) -> None:
@@ -144,6 +148,7 @@ class MainWindow(QMainWindow):
         self.run_view.reconfigure(self._cfg)
         self.settings_view.reconfigure(self._cfg)
         self.import_view.reconfigure(ImporterService(self._cfg))
+        self.studio_view.reconfigure(self._cfg)
         self._show_device()
 
     # ------------------------------------------------------------------ internals

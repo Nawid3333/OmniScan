@@ -92,6 +92,10 @@ Each one ends in something a user can run. Card IDs follow the existing scheme (
   (local or cloud) or pick a cloud translation provider.
 
 ### X3 — Translator Studio (the manual workbench)
+Built so far (2026-09-27): the Studio page with region boxes over the raw strip, editable source and English,
+removing false boxes, the automatic QA check over the artifacts, `studio.json` edits that survive re-runs, the local
+`corrections.jsonl` log and a one-click re-letter (typeset + export). Everything else below is still to do.
+
 A new "Studio" page in the desktop app, working on the pipeline's own artifacts (regions, OCR, translation,
 inpaint patches, layout), so every manual change is just a better version of a stage output:
 - Page canvas with the original, the cleaned page and the lettered result, side by side or as layers.
