@@ -51,6 +51,15 @@ Why the Qt app and not the browser (or Electron/Tauri around the web UI):
   - mutation checks (`scripts/mutate.py`) for logic, and the end-to-end synthetic chapter
     (`tests/unit/test_e2e_synthetic.py`) viewed as images after any change to decoding or compositing.
 
+- **Progress and time left everywhere.** Long actions show a progress bar and an estimate learned from this
+  machine's measured seconds per page per stage (`omniscan.pipeline.eta`, remembered across runs per device and usage
+  level). The Run page has it; model downloads, imports and the Studio's re-runs get the same.
+- **Shaders / custom GPU kernels: only where profiling proves torch is the bottleneck.** The image work already runs
+  as GPU compute through PyTorch on every vendor. Hand-written graphics shaders would mean four versions (CUDA, ROCm,
+  Intel, Metal); the plan instead: GPU JPEG decode where the vendor ships one (nvJPEG via torchvision on NVIDIA,
+  question F1 for AMD), Triton kernels (NVIDIA, AMD and Intel from one source) for hot spots a profile finds, and a
+  GPU-rendered canvas (Qt RHI) for the Studio's zoom, layers and overlays.
+
 ## Milestones
 Each one ends in something a user can run. Card IDs follow the existing scheme (`docs/tasks/<ID>.md`).
 

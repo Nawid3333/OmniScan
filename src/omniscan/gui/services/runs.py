@@ -17,8 +17,9 @@ from dataclasses import dataclass, field
 from typing import IO, Any, Literal
 
 from omniscan.core.config import Config
-from omniscan.core.paths import SeriesPaths
+from omniscan.core.paths import SeriesPaths, list_images
 from omniscan.core.stage import StageOutcome
+from omniscan.pipeline.eta import HISTORY_NAME, EtaEstimator, load_history, save_history
 from omniscan.pipeline.preview import describe
 from omniscan.pipeline.runner import GateEvent, PipelineResult, needs_gpu, run_pipeline
 from omniscan.pipeline.stages import PASS_OF, STAGE_ORDER
@@ -53,6 +54,8 @@ class StageUpdate:
     chapter_total: int
     stage_number: int  # 1-based count of stages already reported for this chapter
     stage_total: int
+    fraction_done: float = 0.0  # 0..1 of the whole run, weighted by predicted time (omniscan.pipeline.eta)
+    eta_seconds: float | None = None  # predicted time left; None until every remaining stage has a rate
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,10 +155,20 @@ class RunController:
         chapter_of = {name: index + 1 for index, name in enumerate(chapters)}
         stages_seen: dict[str, int] = {}
         is_step = spec.mode == "step"
+        series_paths = SeriesPaths.from_config(cfg, spec.series)
+        planned = [name for name in names if spec.lama or name != "inpaint_lama"]
+        eta_key = f"{cfg.gpu.device}/{cfg.gpu.usage}"  # rates differ per device and usage level
+        history_path = cfg.paths.work_root / HISTORY_NAME
+        eta = EtaEstimator(
+            [(chapter, stage) for chapter in chapters for stage in planned],
+            pages={chapter: len(list_images(series_paths.chapter(chapter).raw_dir)) for chapter in chapters},
+            history=load_history(history_path, eta_key),
+        )
 
         def report_update(chapter: str, outcome: StageOutcome) -> None:
             number = stages_seen.get(chapter, 0) + 1
             stages_seen[chapter] = number
+            eta.record(chapter, outcome.stage, outcome.status, outcome.seconds)
             on_stage(
                 StageUpdate(
                     chapter=chapter,
@@ -167,6 +180,8 @@ class RunController:
                     chapter_total=len(chapters),
                     stage_number=number,
                     stage_total=len(names),
+                    fraction_done=eta.fraction_done(),
+                    eta_seconds=eta.remaining_seconds(),
                 )
             )
 
@@ -235,6 +250,7 @@ class RunController:
                 release_gpu_lock(hw_lock)
             if client is not None:
                 client.close()
+            save_history(history_path, eta_key, eta.learned_rates())
         return RunOutcome(
             ok=result.ok,
             aborted=result.aborted,

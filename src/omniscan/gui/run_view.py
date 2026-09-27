@@ -38,7 +38,10 @@ from omniscan.gui.services.runs import (
     StepPreview,
     validate_spec,
 )
+from omniscan.pipeline.eta import format_duration
 from omniscan.pipeline.stages import STAGE_ORDER
+
+_PROGRESS_STEPS = 1000  # the bar shows the run's time-weighted fraction done in tenths of a percent
 
 MODE_OF: dict[str, RunMode] = {"Full": "full", "Subset": "subset", "Step": "step", "Auto": "auto"}
 MODES = tuple(MODE_OF)
@@ -258,11 +261,16 @@ class RunView(QWidget):
 
     def _on_stage(self, update: StageUpdate) -> None:
         """One finished stage: advance the progress bar and append a log line."""
-        self.progress.setMaximum(update.chapter_total * update.stage_total)
-        self.progress.setValue((update.chapter_number - 1) * update.stage_total + update.stage_number)
+        self.progress.setMaximum(_PROGRESS_STEPS)
+        self.progress.setValue(round(update.fraction_done * _PROGRESS_STEPS))
+        left = (
+            "estimating time left"
+            if update.eta_seconds is None
+            else f"about {format_duration(update.eta_seconds)} left"
+        )
         self.progress_label.setText(
             f"chapter {update.chapter_number}/{update.chapter_total} — "
-            f"{update.stage}: {update.status} ({update.seconds:.1f}s)"
+            f"{update.stage}: {update.status} ({update.seconds:.1f}s) — {left}"
         )
         line = f"[{update.chapter_number}/{update.chapter_total}] {update.chapter} — {update.stage}: {update.status}"
         if update.error:
