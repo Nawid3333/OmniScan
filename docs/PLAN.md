@@ -49,7 +49,7 @@ Changes to the plan:
    encodes. Glyph rasterisation (FreeType) runs on the CPU into small patches; compositing is on the GPU (question F9).
 7. **Judge economics:** the judge only sees lines where candidates disagree (agreement below 0.9) or a locked term is violated,
    with one repair round for violations (question D5).
-8. **Portability (P1+P2 done 2026-09-23, reverted 2026-09-24):** `pyproject.toml` briefly selected the
+8. **Portability (P1+P2 done 2026-09-23, reverted 2026-09-24, restored 2026-09-27 with an `xpu` extra added; see `docs/ROADMAP.md` X1):** `pyproject.toml` briefly selected the
    torch backend per machine via `[project.optional-dependencies]` (`rocm-gfx1201` / `cuda` / `cpu` /
    `mps`) with `[tool.uv.conflicts]` refusing more than one at a time, and `.github/workflows/ci.yml` ran
    a real `ubuntu-latest`/`windows-latest`/`macos-latest` matrix on the `cpu` extra (5 iterative CI rounds

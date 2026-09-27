@@ -14,9 +14,10 @@ from typing import Any
 import torch
 
 from omniscan.core.config import Config
-from omniscan.gpu.device import resolve_device
+from omniscan.gpu.device import accelerator, resolve_device
 from omniscan.gpu.vram import VramManager
 from omniscan.gpu.warmup import GpuWarmup, start_warmup
+from omniscan.hw.usage import usage_limits, vram_budget_gib
 
 VISION_GROUP = "vision"
 INPAINT_GROUP = "inpaint"
@@ -67,7 +68,10 @@ def build_vram_manager(cfg: Config) -> WarmupVramManager:
         return {"lama": LamaInpainter.load(cfg.inpaint, cfg.paths.models_dir, device)}
 
     device = resolve_device(cfg.gpu.device)
-    manager = WarmupVramManager(device, cfg.gpu.vram_budget_gib, ollama_url=cfg.ollama.local_url)
+    accel = accelerator(device)
+    total_gib = accel.get_device_properties(device).total_memory / 2**30 if accel is not None else None
+    budget = vram_budget_gib(usage_limits(cfg.gpu.usage), cfg.gpu.vram_budget_gib, total_gib)
+    manager = WarmupVramManager(device, budget, ollama_url=cfg.ollama.local_url)
     # 3.0 GiB comic detector + line OCR; paddleocr_vl's 0.9 B VLM (3.4 GiB fp32) on top makes 6.6; the
     # sound-effect sweep's CRAFT adds ~1 GiB (fp32 VGG16 activations of a 1280 px tile)
     est_gib = (6.6 if cfg.ocr.engine == "paddleocr_vl" else 3.0) + (

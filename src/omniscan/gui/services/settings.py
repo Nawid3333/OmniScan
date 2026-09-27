@@ -46,22 +46,72 @@ class SettingField:
     low: float = 0.0  # "float": spin range
     high: float = 1.0
     decimals: int = 2
+    label: str = ""  # the plain name the Settings page shows ("" = section.key)
+    help: str = ""  # one short line under the editor; also what the Settings search matches
 
 
 GLOBAL_FIELDS: tuple[SettingField, ...] = (
-    SettingField("paths", "library_root", "path"),
-    SettingField("paths", "work_root", "path"),
-    SettingField("paths", "output_root", "path"),
-    SettingField("paths", "models_dir", "path"),
-    SettingField("gpu", "device", "choice", choices=("auto", "cpu", "mps", "cuda"), editable=True),
-    SettingField("gpu", "warmup", "bool"),
-    SettingField("ocr", "engine", "choice", choices=("ppocr", "manga_ocr", "paddleocr_vl")),
-    SettingField("ocr", "det_model", "model"),  # catalog id; empty means the default (None)
-    SettingField("ocr", "rec_model", "model"),
-    SettingField("slicer", "strategy", "choice", choices=("smart", "page", "fixed", "simple_gutter")),
-    SettingField("filter", "enabled", "bool"),
-    SettingField("filter", "threshold", "float", low=0.0, high=1.0),
+    SettingField("paths", "library_root", "path", label="Library folder", help="Where your raw series live"),
+    SettingField("paths", "work_root", "path", label="Work folder", help="Stage files, caches and logs"),
+    SettingField("paths", "output_root", "path", label="Output folder", help="Finished, translated chapters"),
+    SettingField("paths", "models_dir", "path", label="Models folder", help="Downloaded AI models"),
+    SettingField(
+        "gpu",
+        "device",
+        "choice",
+        choices=("auto", "cpu", "cuda", "xpu", "mps"),
+        editable=True,
+        label="Graphics card",
+        help="auto picks the fastest GPU; cuda = NVIDIA or AMD, xpu = Intel, mps = Apple",
+    ),
+    SettingField(
+        "gpu",
+        "usage",
+        "choice",
+        choices=("full", "balanced", "background"),
+        label="Hardware usage",
+        help="full = as fast as possible; balanced leaves room for other apps; background stays out of the way",
+    ),
+    SettingField("gpu", "warmup", "bool", label="Warm up models", help="Load models before the first page"),
+    SettingField(
+        "ocr",
+        "engine",
+        "choice",
+        choices=("ppocr", "manga_ocr", "paddleocr_vl"),
+        label="Text reader (OCR)",
+        help="The model that reads the source text",
+    ),
+    SettingField("ocr", "det_model", "model", label="OCR line finder", help="Empty uses the default"),
+    SettingField("ocr", "rec_model", "model", label="OCR reader model", help="Empty uses the default"),
+    SettingField(
+        "slicer",
+        "strategy",
+        "choice",
+        choices=("smart", "page", "fixed", "simple_gutter"),
+        label="Page slicing",
+        help="How long strips are cut into pages",
+    ),
+    SettingField(
+        "filter", "enabled", "bool", label="Skip promo pages", help="Leave out ads and credits pages"
+    ),
+    SettingField(
+        "filter",
+        "threshold",
+        "float",
+        low=0.0,
+        high=1.0,
+        label="Promo match strictness",
+        help="Higher skips less",
+    ),
 )
+
+SECTION_TITLES = {
+    "paths": "Folders",
+    "gpu": "Hardware",
+    "ocr": "Text reading",
+    "slicer": "Pages",
+    "filter": "Promo filter",
+}
 
 
 def current_value(cfg: Config, section: str, key: str) -> Any:

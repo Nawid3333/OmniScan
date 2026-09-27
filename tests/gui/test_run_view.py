@@ -116,8 +116,9 @@ def test_full_run_reports_progress_and_finishes(qapp: QApplication, cfg: Config)
     assert runner.calls[0]["mode"] == "auto"  # type: ignore[index]
     assert len(runner.calls[0]["stages"]) == 10  # type: ignore[index]
     assert "Episode 01 — ingest: done" in view.log.toPlainText()
-    assert view.progress.maximum() == 4 * 10
+    assert view.progress.maximum() == 1000
     assert view.progress.value() == view.progress.maximum()
+    assert "left" in view.progress_label.text()  # the time-remaining estimate is shown
     assert "finished: ok" in view.log.toPlainText()
     assert view.start_button.isEnabled() and not view.cancel_button.isEnabled()
 

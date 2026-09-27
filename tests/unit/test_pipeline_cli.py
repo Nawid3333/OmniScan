@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -144,7 +145,8 @@ def test_run_prints_outcomes_and_summary(patched_cfg: Config, fake_pipeline: dic
     make_chapter(patched_cfg)
     result = runner.invoke(app, ["run", SERIES])
     assert result.exit_code == 0
-    assert f"{SERIES}/{CHAPTER} ingest: done (0.00s)" in result.output
+    # the duration is wall-clock time: a slow runner (macOS CI) can take 0.01s even for a fake stage
+    assert re.search(rf"^{SERIES}/{CHAPTER} ingest: done \(\d+\.\d\ds\)$", result.output, re.MULTILINE)
     assert "1 chapter(s) ok, 0 failed" in result.output
     assert len(fake_pipeline["calls"]) == 10
     assert len(fake_pipeline["clients"]) == 1  # one client for the text pass

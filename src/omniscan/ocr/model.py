@@ -15,6 +15,7 @@ from typing import Any
 import torch
 
 from omniscan.core.config import OcrConfig
+from omniscan.gpu.device import select_device
 from omniscan.models.resolve import local_model_source
 from omniscan.ocr.engines import load_kwargs, model_entry, model_source
 from omniscan.ocr.lines import LineBox, polygon_box
@@ -65,9 +66,7 @@ class LineDetector:
         """Download (first use) and load the line detector, fp32 everywhere (no `.half()` on this stack)."""
         from transformers import AutoImageProcessor, AutoModelForObjectDetection
 
-        if device.type == "cuda":
-            # MIOpen launches kernels against the current device (the iGPU here), not the tensors' device
-            torch.cuda.set_device(device)
+        select_device(device)  # MIOpen/oneDNN launch on the current device, not the tensors'
         if cfg.det_model is not None:
             _check_model_role(cfg.det_model, "text_line_detector")
             repo, extra = load_kwargs(model_source(cfg.det_model, models_dir), models_dir=models_dir)
@@ -155,9 +154,7 @@ class LineRecognizer:
         """Download (first use) and load the recognition model, fp32 everywhere (no `.half()` on this stack)."""
         from transformers import AutoImageProcessor, AutoModelForTextRecognition
 
-        if device.type == "cuda":
-            # MIOpen launches kernels against the current device (the iGPU here), not the tensors' device
-            torch.cuda.set_device(device)
+        select_device(device)  # MIOpen/oneDNN launch on the current device, not the tensors'
         if cfg.rec_model is not None:
             _check_model_role(cfg.rec_model, "recognizer")
             repo, extra = load_kwargs(model_source(cfg.rec_model, models_dir), models_dir=models_dir)

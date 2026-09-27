@@ -18,6 +18,7 @@ import torch.nn.functional as F  # noqa: N812 — torch's standard alias
 
 from omniscan.core.config import DetectConfig
 from omniscan.detect.postprocess import Box, DetClass
+from omniscan.gpu.device import select_device
 from omniscan.models.resolve import local_model_source
 
 log = logging.getLogger(__name__)
@@ -66,9 +67,7 @@ class Detector:
         """Download (first use) and load the model, fp32 everywhere (MIOpen fp16 conv fails at small batch sizes)."""
         from transformers import AutoImageProcessor, RTDetrV2ForObjectDetection
 
-        if device.type == "cuda":
-            # MIOpen launches kernels against the current device (the iGPU here), not the tensors' device
-            torch.cuda.set_device(device)
+        select_device(device)  # MIOpen/oneDNN launch on the current device, not the tensors'
         source = local_model_source(cfg.repo, models_dir) if models_dir is not None else None
         if source is not None:
             log.info("loading %s from %s", cfg.repo, source)

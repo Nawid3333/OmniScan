@@ -25,6 +25,8 @@ from omniscan.core.schemas import (
     LayoutArtifact,
     LayoutItem,
     Manifest,
+    ReaderChapter,
+    ReaderSeries,
     Region,
     Slice,
     SlicesArtifact,
@@ -179,7 +181,13 @@ def test_export_stage_writes_slices_and_export_json(cfg: Config) -> None:
     outcome = run_stage(ExportStage(), ctx)
     assert outcome.status == "done"
     out = output_dir(cfg)
-    assert sorted(p.name for p in out.iterdir()) == ["0001.jpg", "0002.jpg"]  # the filtered slice is skipped
+    # the filtered slice is skipped; the reader index lists what was written
+    assert sorted(p.name for p in out.iterdir()) == ["0001.jpg", "0002.jpg", "omniscan-chapter.json"]
+    reader = ReaderChapter.load(out / "omniscan-chapter.json")
+    assert [page.file for page in reader.pages] == ["0001.jpg", "0002.jpg"]
+    series = ReaderSeries.load(out.parent / "omniscan-series.json")
+    assert [chapter.folder for chapter in series.chapters] == [out.name]
+    assert series.chapters[0].pages == 2
     export = ExportArtifact.load(ctx.paths.artifact("export.json"))
     assert export.quality == 95 and export.subsampling == "444"
     assert [(f.name, f.slice_index, f.width, f.height) for f in export.files] == [
@@ -293,6 +301,7 @@ def test_hand_set_output_cuts_decide_the_images(cfg: Config) -> None:
         "0002.jpg",
         "0003.jpg",
         "0004.jpg",
+        "omniscan-chapter.json",  # the reader index beside the images
     ]
 
 
@@ -309,7 +318,12 @@ def test_reexport_deletes_only_stale_numbered_files(cfg: Config) -> None:
 
     write_slices(cfg, [(0, 1200)], filtered=set())  # fewer slices: a stale 0002.jpg must go
     assert run_stage(ExportStage(), make_context(cfg, SERIES, CHAPTER)).status == "done"
-    assert sorted(p.name for p in out.iterdir()) == ["0001.jpg", "cover.png", "notes.txt"]
+    assert sorted(p.name for p in out.iterdir()) == [
+        "0001.jpg",
+        "cover.png",
+        "notes.txt",
+        "omniscan-chapter.json",
+    ]
     assert run_stage(ExportStage(), make_context(cfg, SERIES, CHAPTER)).status == "skipped"
 
 

@@ -13,10 +13,10 @@ import pytest
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication, QPushButton
 
 from omniscan.gui.models_view import ModelsView
+from omniscan.gui.theme import TINTS
 from omniscan.hw.detect import HardwareInfo
 from omniscan.models.download import ModelDownloadError
 from omniscan.models.rows import ModelRow
@@ -282,18 +282,16 @@ def test_cell_texts_tooltips_and_backgrounds(qapp: QApplication) -> None:
     assert table.item(1, 0).toolTip() == "ok-missing"
     assert table.item(1, 3).text() == "4.0 GB"
     assert table.item(1, 5).font().bold() is False
-    # slow row: light yellow background, fit tooltip
+    # slow row: attention tint, fit tooltip
     assert table.item(2, 4).text() == "slow"
     assert table.item(2, 4).toolTip() == "runs on the CPU (slow)"
-    color = table.item(2, 4).background().color()
-    assert (color.red(), color.green(), color.blue()) == (255, 249, 196)
-    # warn row: light orange
-    color = table.item(3, 4).background().color()
-    assert (color.red(), color.green(), color.blue()) == (255, 224, 178)
-    # incompatible row: light red, its messages as tooltip
+    assert table.item(2, 4).background().color() == TINTS["attention"]
+    # warn row: warning tint
+    assert table.item(3, 4).background().color() == TINTS["warning"]
+    # incompatible row: negative tint, its messages as tooltip
     assert table.item(4, 4).text() == "incompatible"
     assert table.item(4, 4).toolTip() == "needs 24 GB of GPU memory, your GPU has 16 GB"
-    assert table.item(4, 4).background().color() == QColor(255, 205, 210)
+    assert table.item(4, 4).background().color() == TINTS["negative"]
     # a clean ok row has an empty fit tooltip
     assert table.item(0, 4).toolTip() == ""
 
@@ -452,7 +450,7 @@ def test_download_failure_shows_red_error(qapp: QApplication) -> None:
     fake.download_release.set()
     pump(qapp, lambda: "ModelDownloadError" in view.status_label.text())
     assert view.status_label.text() == "Ok Missing: ModelDownloadError: mirror down, upstream down"
-    assert "red" in view.status_label.styleSheet()
+    assert view.status_label.property("role") == "error"
     assert all(button.isEnabled() for button in buttons(qapp, view))
 
 
@@ -549,7 +547,7 @@ def test_required_failure_listed_in_details(qapp: QApplication) -> None:
     view.required_button.click()
     fake.required_release.set()
     pump(qapp, lambda: view.status_label.text() == "0 installed, 1 failed")
-    assert "red" in view.status_label.styleSheet()
+    assert view.status_label.property("role") == "error"
     text = view.details.toPlainText()
     assert "Failed downloads:" in text and "req: req: mirror down" in text
 
@@ -585,5 +583,5 @@ def test_exception_in_rows_shows_in_status_label(qapp: QApplication) -> None:
     fake.rows_error = RuntimeError("boom")
     view = view_of(qapp, fake)
     assert view.status_label.text() == "RuntimeError: boom"
-    assert "red" in view.status_label.styleSheet()
+    assert view.status_label.property("role") == "error"
     assert view.table.rowCount() == 0

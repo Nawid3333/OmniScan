@@ -56,8 +56,9 @@ Every key in `config/default.toml`:
 | `paths.output_root` | where final English chapters live | yes |
 | `paths.promo_examples` | where promo-filter example images live | yes (`filter run`) |
 | `paths.models_dir` | local cache for model weights (managed by `omniscan models`; catalog in `config/models.toml`) | yes (LaMa weights for `omniscan inpaint --lama`; the vision models land there too, card U2b) |
-| `gpu.device` | torch device: `auto` (default: strongest discrete GPU, else Apple MPS, else CPU), `cpu`, `mps`, `cuda:N` | yes (a named GPU that is unreachable falls back to CPU) |
+| `gpu.device` | torch device: `auto` (default: strongest discrete GPU, else Intel XPU, else Apple MPS, else CPU), `cpu`, `mps`, `cuda:N`, `xpu:N` | yes (a named GPU that is unreachable falls back to CPU) |
 | `gpu.vram_budget_gib` | VRAM budget in GiB | yes (the comic detector loads inside this budget) |
+| `gpu.usage` | how hard OmniScan may use the machine: `full` (default), `balanced` (a quarter of the CPU and GPU memory stays free for other apps), `background` (a quarter of the CPU threads, half the GPU memory, lower process priority) | yes (Settings page in the desktop app) |
 | `gpu.codec` | `auto` / `rocjpeg` / `hybrid` / `turbo` | only `auto`/`turbo` work — both run the CPU `turbo` codec; `rocjpeg`/`hybrid` are not implemented yet |
 | `slicer.band_min_px` | smallest strip band kept, in px | yes |
 | `slicer.target_height` | preferred slice height, in px | yes |
@@ -157,7 +158,8 @@ Check this machine is ready for OmniScan.
 |---|---|
 | `--json` | emit a JSON array instead of a table |
 
-Checks Python 3.14, the ROCm torch build and GPU, `rocminfo`/gfx1201, the rocJPEG decoder, the local
+Checks Python 3.14, the torch build and the GPU it reaches (NVIDIA, AMD, Intel or Apple; `WARN` when only
+the CPU is left), `rocminfo` (ROCm builds on Linux only), the rocJPEG decoder, the local
 Ollama server, the required Ollama models, the Ollama cloud key (only when one is set), the secrets
 file, the pipeline roots, the required model-catalog downloads and the configured codec. Any `FAIL`
 row makes the command exit 1; `WARN` rows do not. The `models` row warns with the total size to
@@ -1501,7 +1503,7 @@ uv run omniscan gui          # or: uv run python -m omniscan.gui
 
 Without the extra installed the command prints one line naming the extra and exits 2.
 
-The window has six pages in the left sidebar (also `Ctrl+1`…`Ctrl+6`). The status bar shows the
+The window has seven pages in the left sidebar (also `Ctrl+1`…`Ctrl+7`; Quick mode hides Models and Studio). The status bar shows the
 configured GPU device and the job state; window size and the last open page are remembered across
 restarts.
 
@@ -1517,6 +1519,13 @@ switcher, zoom −/+ (`Fit width` resets), a `Sides` selector (`Both` / `Raw onl
 `Jump to slice…` to scroll both panes to one output slice, and `Linked scrolling` so the two panes
 follow each other while comparing. A chapter with no output yet shows the caption
 `Output (not translated yet)` and an empty right pane.
+
+`Read` (top right) switches to reading mode: only the translated pages (the raw ones before a chapter is
+translated), in a centred column, full screen. `Space` / `Page Down` turn to the next screen (at the end of a
+chapter, to the next chapter), `Page Up` goes back, the arrow keys scroll a little, `N` / `P` open the next /
+previous chapter, `Home` / `End` jump to the start / end, and `Esc` leaves. The Reader remembers how far you got in
+each chapter. Each exported chapter also carries `omniscan-chapter.json` (and each series `omniscan-series.json`)
+so other reader apps can open the output folder; see `docs/READER_FORMAT.md`.
 
 **Run** starts pipeline runs. Pick the series and chapters (or `All chapters`), then a mode:
 
@@ -1538,7 +1547,9 @@ exclusive GPU lock for real-GPU work, so a GUI run and a CLI run queue up instea
 on this machine, download/remove buttons and `Download required models`. Hardware detection runs in
 the background (it imports torch); the header shows the same snapshot `omniscan hardware` prints.
 
-**Settings** edits the config in place, with validation:
+**Settings** edits the config in place, with validation. The search box at the top filters every tab at once
+(plain names, help lines, config keys and choices all match; tabs with no match are hidden). Each setting shows a
+plain name and one help line; hover the name for its config key (e.g. `gpu.device`).
 
 - **Global** — paths, GPU device (`auto`, `cpu`, `mps`, `cuda[:N]`; editable), warm-up, codec, OCR
   engine and models, translation settings, slicer strategy, the filter switch and threshold. Every
@@ -1550,6 +1561,7 @@ the background (it imports torch); the header shows the same snapshot `omniscan 
 - **Translation** — the translation profiles from `config/translation_profiles.toml` plus the user's
   `translation_profiles.toml`; ticking a profile enables it (written to the user file), and a
   translate run runs exactly the enabled profiles.
+- **Appearance** — OLED black (default) or light theme, the accent colour, and Quick / Standard / Pro mode.
 - **Hardware** — the machine snapshot from `hw detect` plus one row per catalog model that does not
   fit (level, device, why). Detection runs when you open the tab (it imports torch) or on
   `Re-detect`.
@@ -1564,6 +1576,21 @@ detected chapter grouping — move pages between chapters, reorder, rename, merg
 before committing. Non-JPEG pages are flagged for conversion (quality 95, on the CPU) in the
 preview. `Move instead of copy` deletes the source pages as they're imported (disabled for
 archives, since there both extraction and the archive itself would need separate handling).
+
+**Studio** is the translator's workbench for one chapter (after detection and OCR have run). The raw strip is on
+the left with every text region outlined; the table on the right has one row per region: page, kind, source
+text, English and issues. Click a box to jump to its row, or a row to jump to its box.
+
+- Double-click a **Source** cell to fix the OCR text, or an **English** cell to write your own line (the
+  machine's line stays in the tooltip). `Remove box` deletes a false detection.
+- `Check` runs the automatic quality check: lines with no English, Korean/Chinese/Japanese left in the English,
+  lettering that does not fit its balloon, lines the judge was unsure about or that miss a locked glossary term,
+  and English far longer than the source. `Only lines with issues` hides the rest.
+- `Save` records your changes in the chapter's `edits.json`, the same edits the web Studio and `omniscan edit`
+  make (see "Studio: editing by hand" below): they are applied to `ocr.json` / `final.json` at once, kept by
+  every re-run, learned from, and one `Save` is one undo step. Nothing leaves your computer.
+- `Re-letter` saves, then re-runs `typeset` and `export` for the chapter, so the Reader shows the new output. A
+  changed source line needs a translate/judge run (Run page) before the machine's English follows it.
 
 ## Studio: editing by hand
 

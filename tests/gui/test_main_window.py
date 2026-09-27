@@ -72,13 +72,13 @@ def _window(
     )
 
 
-def test_six_pages_in_sidebar_order(qapp: QApplication, cfg: Config, tmp_path: Path) -> None:
-    """The sidebar holds the six pages and the stack follows the selection."""
+def test_pages_in_sidebar_order(qapp: QApplication, cfg: Config, tmp_path: Path) -> None:
+    """The sidebar holds every page and the stack follows the selection."""
     qsettings = QSettings(str(tmp_path / "gui.ini"), QSettings.Format.IniFormat)
     window = _window(cfg, qsettings)
 
-    assert window.sidebar.count() == 6
-    for index, name in enumerate(("Library", "Reader", "Run", "Models", "Settings", "Import")):
+    assert window.sidebar.count() == 7
+    for index, name in enumerate(("Library", "Reader", "Run", "Models", "Settings", "Import", "Studio")):
         window.show_page(index)
         assert window.stack.currentIndex() == index
         assert window.sidebar.item(index).text() == name

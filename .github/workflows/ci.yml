@@ -1,6 +1,8 @@
-# ci: lint, type-check and run the non-GPU test suite on every push, on this project's own backend
-# (rocm-gfx1201). No OS/GPU matrix — the project targets one machine (Windows + AMD ROCm gfx1201) only;
-# this runner has no AMD GPU either, so @pytest.mark.gpu tests are still deselected, same as always.
+# ci: lint, type-check and run the non-GPU test suite on every push, on every OS the app ships for.
+# GitHub-hosted runners have no GPU of any kind, so each OS installs the `cpu` torch backend and every
+# @pytest.mark.gpu test is deselected. The owner's own backend (rocm-gfx1201) gets its own Windows job so a
+# broken ROCm pin shows up here, not on the owner's PC. NVIDIA (cuda), Intel (xpu) and Apple (mps) builds are
+# covered by the same device-agnostic code paths and by tests that fake torch's device queries.
 
 name: ci
 
@@ -26,18 +28,33 @@ permissions:
 
 jobs:
   test:
-    runs-on: ${{ inputs.windows-runner || 'windows-latest' }}
+    strategy:
+      # compare all three independently: a failure on one OS must not cancel the others
+      fail-fast: false
+      matrix:
+        include:
+          - os: ${{ inputs.linux-runner || 'ubuntu-latest' }}
+          - os: ${{ inputs.windows-runner || 'windows-latest' }}
+          - os: macos-latest
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30 # a normal run takes ~5 min; a hung one would otherwise hold the runner 6 h
+    # bash everywhere (Git Bash on Windows) so quoting and `&&` mean the same on all three
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v7
 
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0 (no floating major tags since v8: pinned)
 
-      - name: Sync (rocm-gfx1201 + gui)
-        run: uv sync --extra rocm-gfx1201 --extra gui
+      # Qt's offscreen platform still links libEGL/libxkbcommon/fontconfig on Linux
+      - name: Qt runtime libraries (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q libegl1 libxkbcommon0 libfontconfig1 libgl1
 
-      # no GPU hardware on this runner: every @pytest.mark.gpu test is deselected (they assume real
-      # accelerated kernels, not a CPU-tensor substitution).
+      - name: Sync (cpu + gui)
+        run: uv sync --extra cpu --extra gui
+
       - name: Test (non-GPU suite)
         run: uv run pytest -m "not gpu"
 
@@ -46,6 +63,34 @@ jobs:
 
       - name: Type check
         run: uv run pyright
+
+  rocm-gfx1201:
+    # the owner's PC: Windows + AMD RX 9070 XT. The runner has no AMD GPU; this proves the pinned ROCm
+    # wheels still install and the suite passes against that build.
+    runs-on: ${{ inputs.windows-runner || 'windows-latest' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0 (no floating major tags since v8: pinned)
+
+      - name: Sync (rocm-gfx1201 + gui)
+        run: uv sync --extra rocm-gfx1201 --extra gui
+
+      - name: Test (non-GPU suite)
+        run: uv run pytest -m "not gpu"
+
+  lock:
+    # uv.lock must cover every backend extra; a pyproject.toml change without `uv lock` fails here
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0 (no floating major tags since v8: pinned)
+
+      - name: uv.lock is up to date
+        run: uv lock --check
 
   # The web UI (the Studio editor and the debug views): unit tests, type check and production build.
   webui:

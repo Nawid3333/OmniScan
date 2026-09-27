@@ -328,7 +328,7 @@ def test_split_at_the_first_page_is_refused(qapp: QApplication) -> None:
     view.split_button.click()
 
     assert "cannot split" in view.status_label.text()
-    assert "red" in view.status_label.styleSheet()
+    assert view.status_label.property("role") == "error"
     assert [p.name for p in view._plan.items[0].files] == ["a.jpg", "b.jpg"]  # plan untouched
 
 
@@ -357,7 +357,7 @@ def test_duplicate_chapter_names_block_the_import(qapp: QApplication) -> None:
 
     assert service.executed == []
     assert "Two chapters would write to the same folder: Chapter 10" in view.status_label.text()
-    assert "red" in view.status_label.styleSheet()
+    assert view.status_label.property("role") == "error"
 
 
 # ---------------------------------------------------------------- commit
@@ -409,7 +409,7 @@ def test_import_failure_surfaces_red_instead_of_crashing(qapp: QApplication) -> 
     pump(qapp, lambda: "ImportPlanError" in view.status_label.text())
 
     assert view.status_label.text() == "ImportPlanError: destination exists with different content: p1.jpg"
-    assert "red" in view.status_label.styleSheet()
+    assert view.status_label.property("role") == "error"
     assert view.import_button.isEnabled()  # the view survives and stays usable
 
 
@@ -422,7 +422,7 @@ def test_plan_failure_surfaces_red_and_clears_the_preview(qapp: QApplication) ->
     pump(qapp, lambda: "ImportPlanError" in view.status_label.text())
 
     assert view.status_label.text() == "ImportPlanError: can't read archive C:/raws.zip: bad magic"
-    assert "red" in view.status_label.styleSheet()
+    assert view.status_label.property("role") == "error"
     assert view.tree.topLevelItemCount() == 0
     assert not view.import_button.isEnabled()
     assert view.conversion_label.isHidden()

@@ -28,6 +28,7 @@ from omniscan.core.stage import (
 )
 from omniscan.gpu.timeline import mark
 from omniscan.gpu.vram import OLLAMA_GROUP
+from omniscan.hw.usage import apply_process_limits, usage_limits
 from omniscan.pipeline.stages import PASS_OF, STAGE_ORDER, build_stage
 
 if TYPE_CHECKING:
@@ -287,6 +288,7 @@ def run_pipeline(
     """
     if merge_series_config:
         cfg = series_config(cfg, SeriesPaths.from_config(cfg, series).library_dir)
+    apply_process_limits(usage_limits(cfg.gpu.usage))  # "full" is a no-op; background also lowers priority
     names = list(stages) if stages is not None else list(STAGE_ORDER)
     if not lama:
         names = [name for name in names if name != "inpaint_lama"]

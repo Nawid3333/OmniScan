@@ -121,3 +121,67 @@ def test_sides_combo_hides_a_pane(qapp: QApplication, cfg: Config) -> None:
     view.sides_combo.setCurrentIndex(0)  # Both
     assert _pane(view, 0).isVisible()
     assert _pane(view, 1).isVisible()
+
+
+# ---------------------------------------------------------------------- reading mode
+
+
+def test_reading_mode_shows_the_output_column_and_hides_the_chrome(
+    qapp: QApplication, cfg: Config, tmp_path: Path
+) -> None:
+    """Read: output pane only, toolbars hidden, a capped column; Esc leaves and restores the view."""
+    from PySide6.QtCore import QSettings, Qt
+    from PySide6.QtTest import QTest
+
+    from omniscan.gui.reader_view import READING_WIDTH_PX
+
+    qsettings = QSettings(str(tmp_path / "gui.ini"), QSettings.Format.IniFormat)
+    view = ReaderView(cfg, qsettings=qsettings)
+    view.resize(1400, 500)
+    view.show()
+    changes: list[bool] = []
+    view.reading_changed.connect(changes.append)
+    view.set_reading(True)  # nothing open yet: stays off
+    assert not view.is_reading()
+    assert view.open_chapter(SERIES, "Episode 01")
+    qapp.processEvents()
+
+    view.read_button.click()
+    qapp.processEvents()
+    assert view.is_reading() and changes == [True]
+    assert view.toolbar.isHidden() and view.compare.sync_checkbox.isHidden()
+    assert _pane(view, 0).isHidden() and not _pane(view, 1).isHidden()
+    strip = view.reading_strip()
+    assert strip is view.compare.right
+    assert strip.zoom() * 40 <= READING_WIDTH_PX + 0.5  # 40 px wide fixture strip: the column is capped
+
+    QTest.keyClick(view, Qt.Key.Key_Escape)
+    assert not view.is_reading() and changes == [True, False]
+    assert not view.toolbar.isHidden() and not _pane(view, 0).isHidden()
+
+
+def test_reading_keys_page_through_and_the_position_is_remembered(
+    qapp: QApplication, cfg: Config, tmp_path: Path
+) -> None:
+    """Page Down scrolls, N opens the next chapter, and reopening a chapter resumes where it was left."""
+    from PySide6.QtCore import QSettings, Qt
+    from PySide6.QtTest import QTest
+
+    qsettings = QSettings(str(tmp_path / "gui.ini"), QSettings.Format.IniFormat)
+    view = ReaderView(cfg, qsettings=qsettings)
+    view.resize(300, 200)  # a small window so the strip scrolls
+    view.show()
+    assert view.open_chapter(SERIES, "Episode 01")
+    view.set_reading(True)
+    qapp.processEvents()
+    strip = view.reading_strip()
+    assert strip.max_strip_y() > 0
+
+    QTest.keyClick(view, Qt.Key.Key_PageDown)
+    left_at = strip.strip_y()
+    assert left_at > 0
+    QTest.keyClick(view, Qt.Key.Key_N)
+    assert view.current() == (SERIES, "Episode 02")
+    QTest.keyClick(view, Qt.Key.Key_P)
+    assert view.current() == (SERIES, "Episode 01")
+    assert abs(view.reading_strip().strip_y() - left_at) <= 1.0
