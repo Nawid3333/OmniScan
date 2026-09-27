@@ -20,6 +20,7 @@ from omniscan.core.schemas import (
 )
 from omniscan.core.stage import ChapterContext
 from omniscan.export.composite import apply_patches, blend_rgba
+from omniscan.export.reader_index import write_chapter_index, write_series_index
 from omniscan.gpu.codec.base import JpegCodec
 from omniscan.gpu.codec.select import get_codec
 from omniscan.ingest.strip import load_strip
@@ -110,6 +111,8 @@ class ExportStage:
             subsampling=ctx.cfg.export.subsampling,
             files=files,
         ).save(ctx.paths.artifact("export.json"))
+        write_chapter_index(ctx.paths.output_dir, ctx.paths.series, ctx.paths.chapter, files)
+        write_series_index(ctx.paths.output_dir.parent, ctx.paths.series)
         return {
             "slices": float(len(files)),
             "bytes": float(sum(f.bytes for f in files)),

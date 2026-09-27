@@ -119,20 +119,32 @@ inpaint patches, layout), so every manual change is just a better version of a s
 - Look (owner's design language): OLED black by default, a user-chosen accent colour, an optional light theme, and
   quick / standard / pro modes that show more of the app step by step (Settings → Appearance; `omniscan.gui.theme`).
 
-### X4 — Shared data that improves the program (opt-in)
-- **Nothing leaves the machine unless the user turns it on**, per series or globally, and every upload shows what
-  is in it first. Default is off.
-- What can be shared: corrected OCR lines with their crop, source → final translation pairs with context,
-  glossary entries, region boxes the user fixed, lettering choices. Raw pages are never uploaded by default (they
-  are usually someone else's copyright); crops only where the user allows it.
+### X4 — Shared data that improves the program (on by default, with an opt-out)
+- **Owner's decision (2026-09-27):** full page images plus the corrections are shared **by default**, with a clear
+  opt-out (first run and Settings, per series or globally). Users are told plainly what is sent and that it stays
+  private. Safeguards: uploads are never published as a public dataset; file names, folder paths and image metadata
+  (EXIF etc.) are stripped before upload; takedown and deletion requests are honoured; the consent text is exact;
+  upload IP addresses count as personal data under the GDPR (privacy notice, retention limit).
+- What is shared: the page images, corrected OCR lines, source → final translation pairs with context, glossary
+  entries, region boxes the user fixed, lettering choices (the Studio's `corrections.jsonl` is the local source).
 - A local "contribution" format first (JSON + crops, versioned schema in `core/`), exportable as a file; an upload
   service and its database come after, with accounts, licence terms for contributed data (e.g. CC BY or a
   contributor agreement), deletion on request, and moderation.
 - How it feeds back: OCR fine-tuning and qualification sets (`eval/`), translation-model evaluation and prompt
   tuning, shared series glossaries, better defaults for detection and lettering. Improvements ship as model or
   config updates through the existing `models-v1`-style mirror and `omniscan update`.
-- Needs the owner's decisions before building: hosting, licence of contributed data, whether uploads need an
-  account. Tracked in `docs/OPEN_QUESTIONS.md` (section X).
+- Still needs the owner's decisions before the upload service is built: hosting, licence of contributed data,
+  whether uploads need an account. Tracked in `docs/OPEN_QUESTIONS.md` (X1-X3).
+
+### X6 — A separate reader app (phone, tablet, desktop; later)
+- Owner's decision (2026-09-27, "Both"): OmniScan keeps a basic reading mode (the Reader page's `Read` button:
+  output only, full screen, keyboard paging, resume where you left off); a separate reader app for phones and
+  tablets comes later and opens OmniScan's output as it is.
+- The format it reads exists now: every exported chapter folder holds its images plus `omniscan-chapter.json`,
+  and each series output folder an `omniscan-series.json` index (`docs/READER_FORMAT.md`). CBZ with
+  `ComicInfo.xml` (`omniscan pack`) stays the format for other readers (Tachiyomi/Mihon, Komga, Kavita).
+- Not started: the app itself (candidates: Qt for Android/iOS from this code base, or Flutter), sync of reading
+  progress, and serving the library over the LAN.
 
 ### X5 — Sources and languages
 - Use the downloader being built in the `manhwa-manga-downloader` repository as an optional source for

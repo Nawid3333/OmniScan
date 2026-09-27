@@ -1304,6 +1304,13 @@ switcher, zoom −/+ (`Fit width` resets), a `Sides` selector (`Both` / `Raw onl
 follow each other while comparing. A chapter with no output yet shows the caption
 `Output (not translated yet)` and an empty right pane.
 
+`Read` (top right) switches to reading mode: only the translated pages (the raw ones before a chapter is
+translated), in a centred column, full screen. `Space` / `Page Down` turn to the next screen (at the end of a
+chapter, to the next chapter), `Page Up` goes back, the arrow keys scroll a little, `N` / `P` open the next /
+previous chapter, `Home` / `End` jump to the start / end, and `Esc` leaves. The Reader remembers how far you got in
+each chapter. Each exported chapter also carries `omniscan-chapter.json` (and each series `omniscan-series.json`)
+so other reader apps can open the output folder; see `docs/READER_FORMAT.md`.
+
 **Run** starts pipeline runs. Pick the series and chapters (or `All chapters`), then a mode:
 
 - **Full** — every stage over every selected chapter (the CLI `run` without `--stages`).

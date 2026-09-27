@@ -60,6 +60,9 @@ class StripView(QAbstractScrollArea):
         self._sync_guard = False  # True while this view itself moves the bars (no strip_y_changed)
         self._image_cache: OrderedDict[Path, QImage] = OrderedDict()  # LRU: path -> image
         self._max_cached_images = max(1, max_cached_images)
+        self._max_fit_width: int | None = (
+            None  # fit_width never makes the strip wider than this (reading mode)
+        )
         self._overlays: tuple[Overlay, ...] = ()
         self._selected: str | None = None
         self.verticalScrollBar().valueChanged.connect(self._on_value_changed)
@@ -154,10 +157,26 @@ class StripView(QAbstractScrollArea):
             self.zoom_changed.emit(new_zoom)
 
     def fit_width(self, *, emit: bool = True) -> None:
-        """Zoom so the strip exactly fills the viewport width; refits on resize until a manual zoom."""
-        if self._strip_width > 0 and self.viewport().width() > 0:
-            self.set_zoom(self.viewport().width() / self._strip_width, emit=emit)
+        """Zoom so the strip fills the viewport width (capped by `set_max_fit_width`); refits on resize."""
+        width = self.viewport().width()
+        if self._max_fit_width is not None:
+            width = min(width, self._max_fit_width)
+        if self._strip_width > 0 and width > 0:
+            self.set_zoom(width / self._strip_width, emit=emit)
         self._fit_active = True
+
+    def set_max_fit_width(self, pixels: int | None) -> None:
+        """Cap the width `fit_width` fills (a readable column on a wide screen); None fills the viewport."""
+        self._max_fit_width = pixels
+        self.fit_width()
+
+    def scroll_screens(self, screens: float) -> None:
+        """Scroll by a fraction of the viewport height (negative scrolls up)."""
+        self.set_strip_y(self.strip_y() + screens * self.viewport().height() / self._zoom)
+
+    def at_end(self) -> bool:
+        """Whether the viewport shows the bottom of the strip."""
+        return self.strip_y() >= self.max_strip_y() - 0.5
 
     # ------------------------------------------------------------------ scrolling
 

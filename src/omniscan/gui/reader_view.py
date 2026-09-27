@@ -9,7 +9,10 @@ on the CompareView's own toolbar.
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import cast
 
+from PySide6.QtCore import QSettings, Qt, Signal
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -22,22 +25,36 @@ from PySide6.QtWidgets import (
 from omniscan.core.config import Config
 from omniscan.gui.compare_view import CompareView
 from omniscan.gui.services import library
+from omniscan.gui.strip_view import StripView
+from omniscan.gui.theme import set_role
 
 ChaptersFn = Callable[[Config, str], list[str]]
+READING_WIDTH_PX = 900  # the reading column never gets wider than this, however wide the screen
+_PAGE_STEP = 0.9  # Space / Page Down scroll this share of the screen, so a line of context stays
 
 
 class ReaderView(QWidget):
-    """One chapter at a time, raw left and output right, with prev/next over the series' chapters."""
+    """One chapter at a time, raw left and output right, with prev/next over the series' chapters.
+
+    `Read` switches to reading mode: the translated pages only, in a centred column, full screen, paged with the
+    keyboard (Space / Page Down, Page Up, arrows, N / P for the next / previous chapter, Esc to leave); the
+    position in each chapter is remembered when `qsettings` is given.
+    """
+
+    reading_changed = Signal(bool)  # the window hides its chrome and goes full screen while reading
 
     def __init__(
         self,
         cfg: Config,
         *,
         chapters_fn: ChaptersFn | None = None,
+        qsettings: QSettings | None = None,
         parent: QWidget | None = None,
     ) -> None:
         """Build the page; `chapters_fn` overrides the chapter-list source (tests inject it)."""
         super().__init__(parent)
+        self._qsettings = qsettings
+        self._reading = False
         self._cfg = cfg
         self._chapters_fn = chapters_fn or library.list_chapter_names
         self._series: str | None = None
@@ -63,6 +80,9 @@ class ReaderView(QWidget):
         self.sides_combo.setToolTip("Which side(s) to show")
         self.jump_combo = QComboBox(self)
         self.jump_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self.read_button = QPushButton("Read", self)
+        self.read_button.setToolTip("Reading mode: translated pages only, full screen (Esc to leave)")
+        set_role(self.read_button, "primary")
 
         bar_layout = QHBoxLayout()
         for widget in (
@@ -78,11 +98,12 @@ class ReaderView(QWidget):
         ):
             bar_layout.addWidget(widget)
         bar_layout.addStretch(1)
-        bar = QWidget()
-        bar.setLayout(bar_layout)
+        bar_layout.addWidget(self.read_button)
+        self.toolbar = QWidget()
+        self.toolbar.setLayout(bar_layout)
 
         root = QVBoxLayout(self)
-        root.addWidget(bar)
+        root.addWidget(self.toolbar)
         root.addWidget(self.compare, 1)
         root.addWidget(self.status_label)
 
@@ -93,6 +114,7 @@ class ReaderView(QWidget):
         self.zoom_in_button.clicked.connect(lambda: self.compare.zoom_by(1.25))
         self.sides_combo.currentIndexChanged.connect(self._on_sides_changed)
         self.jump_combo.activated.connect(self._on_jump_activated)
+        self.read_button.clicked.connect(lambda: self.set_reading(True))
         self._update_nav()
 
     # ------------------------------------------------------------------ state
@@ -125,6 +147,98 @@ class ReaderView(QWidget):
         """Swap the config source (a settings change); the next open uses the new paths."""
         self._cfg = cfg
 
+    # ------------------------------------------------------------------ reading mode
+
+    def is_reading(self) -> bool:
+        """Whether reading mode is on."""
+        return self._reading
+
+    def reading_strip(self) -> StripView:
+        """The pane reading mode shows: the output, or the raw pages before a chapter is translated."""
+        return self.compare.right if self.compare.right.tiles() else self.compare.left
+
+    def set_reading(self, on: bool) -> None:
+        """Enter or leave reading mode."""
+        if on == self._reading or (on and self.current() is None):
+            return
+        self._reading = on
+        compare = self.compare
+        for widget in (
+            self.toolbar,
+            self.status_label,
+            compare.sync_checkbox,
+            compare.fit_button,
+            compare.chapter_label,
+            compare.left_caption,
+            compare.right_caption,
+        ):
+            widget.setVisible(not on)
+        if on:
+            compare.set_visible_sides("output" if self.reading_strip() is compare.right else "raw")
+        else:
+            self._on_sides_changed(self.sides_combo.currentIndex())
+        for strip in (compare.left, compare.right):
+            strip.set_max_fit_width(READING_WIDTH_PX if on else None)
+        self._restore_position()
+        if on:
+            self.setFocus(Qt.FocusReason.OtherFocusReason)
+        self.reading_changed.emit(on)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        """Reading-mode keys; everything else goes to the default handler."""
+        if not self._reading:
+            super().keyPressEvent(event)
+            return
+        key = Qt.Key(event.key())
+        strip = self.reading_strip()
+        if key == Qt.Key.Key_Escape:
+            self.set_reading(False)
+        elif key in (Qt.Key.Key_Space, Qt.Key.Key_PageDown):
+            if strip.at_end():
+                self._open_at(self._index + 1)
+            else:
+                strip.scroll_screens(_PAGE_STEP)
+        elif key == Qt.Key.Key_PageUp:
+            strip.scroll_screens(-_PAGE_STEP)
+        elif key == Qt.Key.Key_Down:
+            strip.scroll_screens(0.15)
+        elif key == Qt.Key.Key_Up:
+            strip.scroll_screens(-0.15)
+        elif key in (Qt.Key.Key_N, Qt.Key.Key_Right):
+            self._open_at(self._index + 1)
+        elif key in (Qt.Key.Key_P, Qt.Key.Key_Left):
+            self._open_at(self._index - 1)
+        elif key == Qt.Key.Key_Home:
+            strip.set_strip_y(0.0)
+        elif key == Qt.Key.Key_End:
+            strip.set_strip_y(strip.max_strip_y())
+        else:
+            super().keyPressEvent(event)
+            return
+        self._save_position()
+
+    def _position_key(self) -> str | None:
+        """QSettings key of the open chapter's reading position."""
+        current = self.current()
+        return None if current is None else f"reader/position/{current[0]}/{current[1]}"
+
+    def _save_position(self) -> None:
+        """Remember how far the open chapter was read (share of the strip, so zoom does not matter)."""
+        key = self._position_key()
+        strip = self.reading_strip()
+        if self._qsettings is None or key is None or strip.max_strip_y() <= 0:
+            return
+        self._qsettings.setValue(key, strip.strip_y() / strip.max_strip_y())
+
+    def _restore_position(self) -> None:
+        """Scroll reading mode back to where the open chapter was left."""
+        key = self._position_key()
+        if not self._reading or self._qsettings is None or key is None:
+            return
+        share = cast(float, self._qsettings.value(key, 0.0, type=float))
+        strip = self.reading_strip()
+        strip.set_strip_y(min(max(share, 0.0), 1.0) * strip.max_strip_y())
+
     # ------------------------------------------------------------------ internals
 
     def _open_at(self, index: int) -> None:
@@ -137,6 +251,7 @@ class ReaderView(QWidget):
         except (OSError, ValueError) as error:
             self.status_label.setText(f"cannot open {chapter}: {error}")
             return
+        self._save_position()
         self.compare.set_chapter(view)
         self._index = index
         self.chapter_combo.blockSignals(True)
@@ -146,6 +261,11 @@ class ReaderView(QWidget):
             self.chapter_combo.blockSignals(False)
         self._rebuild_jump()
         self._update_nav()
+        if self._reading:
+            compare = self.compare
+            compare.set_visible_sides("output" if self.reading_strip() is compare.right else "raw")
+            self.reading_strip().set_max_fit_width(READING_WIDTH_PX)
+            self._restore_position()
         self.status_label.setText(
             f"{view.series} — {view.chapter}: {len(view.raw)} raw page(s), "
             f"{len(view.output)} output tile(s), strip {view.strip_width}x{view.strip_height}"

@@ -327,6 +327,41 @@ class ExportArtifact(Artifact):
     files: list[ExportFile]
 
 
+class ReaderPage(Model):
+    file: str  # image file name inside the chapter folder
+    width: int
+    height: int
+
+
+class ReaderChapter(Artifact):
+    """omniscan-chapter.json next to a chapter's exported images: what a reader app needs (docs/READER_FORMAT.md)."""
+
+    format: Literal["omniscan-chapter"] = "omniscan-chapter"
+    series: str
+    chapter: str  # the chapter folder name
+    number: float | None = None  # parsed from the folder name ("Episode 12" -> 12.0), None if it has none
+    language: str = "en"
+    reading: Literal["vertical", "rtl", "ltr"] = "vertical"  # webtoon scroll, or paged manga direction
+    pages: list[ReaderPage]
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class ReaderSeriesChapter(Model):
+    folder: str
+    number: float | None = None
+    pages: int
+    updated_at: datetime
+
+
+class ReaderSeries(Artifact):
+    """omniscan-series.json in a series' output folder: the chapters a reader app can open, in reading order."""
+
+    format: Literal["omniscan-series"] = "omniscan-series"
+    series: str
+    chapters: list[ReaderSeriesChapter]
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
 # ---------------------------------------------------------------- manifest
 
 

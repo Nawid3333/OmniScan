@@ -50,6 +50,7 @@ _ICONS = {
     "Studio": QIcon.ThemeIcon.InsertText,
 }
 _SIDEBAR_WIDTH = 190
+_CONTENT_MARGINS = (24, 16, 24, 12)
 
 
 class MainWindow(QMainWindow):
@@ -73,7 +74,7 @@ class MainWindow(QMainWindow):
         self._qsettings = qsettings or QSettings("OmniScan", "gui")
 
         self.library_view = LibraryView(self._cfg)
-        self.reader_view = ReaderView(self._cfg)
+        self.reader_view = ReaderView(self._cfg, qsettings=self._qsettings)
         self.run_view = RunView(self._cfg)
         self.models_view = ModelsView(models_service or ModelsService(self._cfg))
         self.settings_view = SettingsView(self._cfg, hardware=hardware_service, qsettings=self._qsettings)
@@ -102,6 +103,7 @@ class MainWindow(QMainWindow):
         set_role(self.title_label, "title")
 
         nav = QWidget()
+        self._nav = nav
         nav.setObjectName("nav")
         nav.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)  # draw the stylesheet's border
         nav.setFixedWidth(_SIDEBAR_WIDTH)
@@ -112,7 +114,8 @@ class MainWindow(QMainWindow):
         nav_layout.addWidget(self.sidebar, 1)
         content = QWidget()
         content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(24, 16, 24, 12)
+        self._content_layout = content_layout
+        content_layout.setContentsMargins(*_CONTENT_MARGINS)
         content_layout.addWidget(self.title_label)
         content_layout.addWidget(self.stack, 1)
         central = QWidget()
@@ -139,6 +142,8 @@ class MainWindow(QMainWindow):
         self.studio_view.busy_changed.connect(self._on_busy_changed)
         self.settings_view.settings_changed.connect(self._reload_config)
         self.settings_view.appearance_changed.connect(self.apply_mode)
+        self.reader_view.reading_changed.connect(self._on_reading_changed)
+        self._was_maximized = False
 
         self._show_device()
         self._restore()
@@ -163,6 +168,8 @@ class MainWindow(QMainWindow):
     def _on_sidebar(self, row: int) -> None:
         """Show the page matching the sidebar row."""
         if row >= 0:
+            if row != PAGES.index("Reader"):
+                self.reader_view.set_reading(False)
             self.stack.setCurrentIndex(row)
             self.title_label.setText(PAGES[row])
 
@@ -172,6 +179,19 @@ class MainWindow(QMainWindow):
             self.show_page(PAGES.index("Reader"))
         else:
             self.statusBar().showMessage(f"cannot open {series} — {chapter}", 5000)
+
+    def _on_reading_changed(self, reading: bool) -> None:
+        """Reading mode: only the pages, full screen; leaving it restores the window as it was."""
+        for widget in (self._nav, self.title_label, self.statusBar()):
+            widget.setVisible(not reading)
+        self._content_layout.setContentsMargins(*((0, 0, 0, 0) if reading else _CONTENT_MARGINS))
+        if reading:
+            self._was_maximized = self.isMaximized()
+            self.showFullScreen()
+        elif self._was_maximized:
+            self.showMaximized()
+        else:
+            self.showNormal()
 
     def _on_busy_changed(self, running: bool) -> None:
         """Reflect the run page's state in the status bar."""
