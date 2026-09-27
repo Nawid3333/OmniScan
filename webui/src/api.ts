@@ -728,3 +728,34 @@ export async function rebuildMemory(series: string): Promise<SeriesMemory> {
 export async function setRuleEnabled(series: string, ruleId: string, enabled: boolean): Promise<LearnedRule> {
   return putJson<LearnedRule>(`${memoryBase(series)}/rules/${encodeURIComponent(ruleId)}`, { enabled });
 }
+
+/** One way a repeated source line was translated, and where ([chapter, region id] pairs). */
+export interface Rendering {
+  english: string;
+  places: [string, string][];
+}
+
+/** A source line said more than once with different English, most used rendering first. */
+export interface Divergence {
+  source: string;
+  renderings: Rendering[];
+}
+
+/** A translated region whose source has a locked glossary term but whose English lacks its target. */
+export interface TermMiss {
+  chapter: string;
+  region_id: string;
+  term: string;
+  target: string;
+  english: string;
+}
+
+/** GET /api/series/{series}/consistency: the series' proofreading report. */
+export interface ConsistencyReport {
+  divergences: Divergence[];
+  term_misses: TermMiss[];
+}
+
+export async function getConsistency(series: string): Promise<ConsistencyReport> {
+  return getJson<ConsistencyReport>(`${BASE}/series/${encodeURIComponent(series)}/consistency`);
+}

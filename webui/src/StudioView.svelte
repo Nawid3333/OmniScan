@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import RunButton from "./RunButton.svelte";
   import ReplacePanel from "./ReplacePanel.svelte";
   import {
@@ -69,7 +70,7 @@
   } from "./studio";
   import type { Handle } from "./studio";
 
-  let { series, chapter }: { series: string; chapter: string } = $props();
+  let { series, chapter, focus = null }: { series: string; chapter: string; focus?: string | null } = $props();
 
   const KINDS: RegionKind[] = ["bubble_text", "free_text", "sfx", "watermark"];
   const NUDGE_COMMIT_MS = 400;
@@ -175,6 +176,19 @@
     patches = [];
     void load(s, c);
   });
+
+  $effect(() => {
+    const target = focus;
+    if (loaded && target !== null) untrack(() => focusOn(target));
+  });
+
+  /** Show the page of region `id` and select it (a region the Consistency view opened). */
+  function focusOn(id: string): void {
+    const region = regions.find((r) => r.id === id);
+    if (region === undefined) return;
+    pageIndex = pageOf(files, region.bbox);
+    select(id);
+  }
 
   async function load(s: string, c: string): Promise<void> {
     try {

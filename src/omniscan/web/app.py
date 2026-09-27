@@ -53,6 +53,7 @@ from omniscan.inpaint.patches import load_patches
 from omniscan.learn.memory import current_memory, is_active, set_rule_enabled
 from omniscan.llm.ollama import OllamaClient, OllamaError, OllamaRateLimitError
 from omniscan.pipeline.stages import STAGE_ORDER
+from omniscan.qa.consistency import divergences, series_lines, term_misses
 from omniscan.queue.store import QueueStore, queue_db_path
 from omniscan.queue.worker import run_queue
 from omniscan.translate.on_demand import translate_now
@@ -922,6 +923,17 @@ def create_app(
         except LookupError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return {**rule.model_dump(mode="json"), "active": is_active(rule, learn)}
+
+    @app.get("/api/series/{series}/consistency")
+    def get_consistency(series: str) -> dict[str, object]:
+        """Lines of the series said again but translated differently (most repeated first), and translated
+        lines missing a locked glossary term's English (qa/consistency.py)."""
+        paths = series_paths(series)
+        lines = series_lines(paths)
+        return {
+            "divergences": [asdict(item) for item in divergences(lines)],
+            "term_misses": [asdict(item) for item in term_misses(lines, glossary_entries(paths))],
+        }
 
     @app.get("/api/series/{series}/glossary")
     def get_glossary(series: str) -> list[dict[str, object]]:
