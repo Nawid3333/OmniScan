@@ -31,6 +31,7 @@ from omniscan.gui.services.hardware import HardwareService
 from omniscan.gui.services.importer import ImporterService
 from omniscan.gui.services.models import ModelsService
 from omniscan.gui.settings_view import SettingsView
+from omniscan.gui.theme import MODE_PAGES, Appearance
 
 # "Import" is last so the other four keep their existing indices (scripts/gui_screenshots.py hard-codes them).
 PAGES = ("Library", "Reader", "Run", "Models", "Settings", "Import")
@@ -60,7 +61,7 @@ class MainWindow(QMainWindow):
         self.reader_view = ReaderView(self._cfg)
         self.run_view = RunView(self._cfg)
         self.models_view = ModelsView(models_service or ModelsService(self._cfg))
-        self.settings_view = SettingsView(self._cfg, hardware=hardware_service)
+        self.settings_view = SettingsView(self._cfg, hardware=hardware_service, qsettings=self._qsettings)
         self.import_view = ImportView(importer_service or ImporterService(self._cfg))
 
         self.stack = QStackedWidget()
@@ -97,15 +98,25 @@ class MainWindow(QMainWindow):
         self.library_view.chapter_opened.connect(self._on_chapter_opened)
         self.run_view.busy_changed.connect(self._on_busy_changed)
         self.settings_view.settings_changed.connect(self._reload_config)
+        self.settings_view.appearance_changed.connect(self.apply_mode)
 
         self._show_device()
         self._restore()
+        self.apply_mode(self.settings_view.appearance)  # after restore: a hidden last page falls back
 
     # ------------------------------------------------------------------ state
 
     def show_page(self, index: int) -> None:
         """Switch to page `index` (0..4); the sidebar selection drives the stack."""
         self.sidebar.setCurrentRow(index)
+
+    def apply_mode(self, appearance: Appearance) -> None:
+        """Show only the pages the quick / standard / pro mode includes (indices stay stable)."""
+        visible = MODE_PAGES[appearance.mode]
+        for index, name in enumerate(PAGES):
+            self.sidebar.setRowHidden(index, name not in visible)
+        if PAGES[max(self.sidebar.currentRow(), 0)] not in visible:
+            self.show_page(PAGES.index("Library"))
 
     # ------------------------------------------------------------------ slots
 

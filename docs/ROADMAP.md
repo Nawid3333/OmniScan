@@ -109,7 +109,11 @@ inpaint patches, layout), so every manual change is just a better version of a s
   clipped lettering, untranslated lines and typos; flagged pages open straight in the Studio.
 - Context for the translator model: the page image and the speaker with it, plus per-character voice profiles
   (how each character talks) kept with the series glossary.
-- Interchange with the tools groups already use: PSD export (layers: raw, clean, text) and LabelPlus import/export.
+- Interchange with the tools groups already use: PSD export (layers: raw, clean, text) and LabelPlus import/export,
+  plus opening other translation tools' project files (e.g. BallonsTranslator, manga-image-translator output) so
+  their users switch in one click.
+- Look (owner's design language): OLED black by default, a user-chosen accent colour, an optional light theme, and
+  quick / standard / pro modes that show more of the app step by step (Settings → Appearance; `omniscan.gui.theme`).
 
 ### X4 — Shared data that improves the program (opt-in)
 - **Nothing leaves the machine unless the user turns it on**, per series or globally, and every upload shows what

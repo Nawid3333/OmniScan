@@ -11,9 +11,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QSettings, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
+    QColorDialog,
     QComboBox,
     QDoubleSpinBox,
     QFileDialog,
@@ -36,15 +39,23 @@ from omniscan.gui.models_view import hardware_header
 from omniscan.gui.services import library, settings
 from omniscan.gui.services.hardware import HardwareReport, HardwareService
 from omniscan.gui.services.settings import GLOBAL_FIELDS, SettingField
+from omniscan.gui.theme import THEMES, UI_MODES, Appearance, apply_theme, load_appearance, save_appearance
 from omniscan.gui.workers import run_task
 
-_PAGE_TITLES = {"global": "Global", "series": "Per-series", "profiles": "Translation", "hardware": "Hardware"}
+_PAGE_TITLES = {
+    "global": "Global",
+    "series": "Per-series",
+    "profiles": "Translation",
+    "hardware": "Hardware",
+    "appearance": "Appearance",
+}
 
 
 class SettingsView(QWidget):
     """Tabbed settings editor; every successful write emits `settings_changed` once."""
 
     settings_changed = Signal()
+    appearance_changed = Signal(object)  # the new Appearance, after it was saved and applied
 
     def __init__(
         self,
@@ -53,6 +64,7 @@ class SettingsView(QWidget):
         hardware: HardwareService | None = None,
         config_path: Path | None = None,
         profiles_path: Path | None = None,
+        qsettings: QSettings | None = None,
         parent: QWidget | None = None,
     ) -> None:
         """Build the page; services and write paths are injectable (tests never touch user files)."""
@@ -66,6 +78,8 @@ class SettingsView(QWidget):
         self._editors: dict[tuple[str, str], QWidget] = {}
         self._pages: dict[str, QWidget] = {}
         self._hardware_loaded = False
+        self._qsettings = qsettings or QSettings("OmniScan", "gui")
+        self.appearance = load_appearance(self._qsettings)
 
         self.tabs = QTabWidget(self)
         for name, title in _PAGE_TITLES.items():
@@ -106,6 +120,8 @@ class SettingsView(QWidget):
             return self._build_series()
         if name == "profiles":
             return self._build_profiles()
+        if name == "appearance":
+            return self._build_appearance()
         return self._build_hardware()
 
     # ------------------------------------------------------------------ global tab
@@ -455,8 +471,58 @@ class SettingsView(QWidget):
         """Detection failed (e.g. torch import broken): show it on the tab."""
         self.hardware_header_label.setText(f"hardware detection failed: {text}")
 
+    # --------------------------------------------------------------------- module-level helpers
 
-# --------------------------------------------------------------------- module-level helpers
+    # ------------------------------------------------------------------ appearance tab
+
+    def _build_appearance(self) -> QWidget:
+        """Theme (OLED black / light), accent colour and quick / standard / pro mode, applied live."""
+        page = QWidget()
+        grid = QGridLayout(page)
+        self.theme_combo = QComboBox(page)
+        self.theme_combo.addItems(THEMES)
+        self.theme_combo.setCurrentText(self.appearance.theme)
+        self.accent_button = QPushButton(self.appearance.accent, page)
+        self.mode_combo = QComboBox(page)
+        self.mode_combo.addItems(UI_MODES)
+        self.mode_combo.setCurrentText(self.appearance.mode)
+        for row, (label, widget) in enumerate(
+            (("Theme", self.theme_combo), ("Accent colour", self.accent_button), ("Mode", self.mode_combo))
+        ):
+            grid.addWidget(QLabel(label, page), row, 0)
+            grid.addWidget(widget, row, 1)
+        grid.setRowStretch(3, 1)
+        self.theme_combo.currentTextChanged.connect(lambda _text: self._commit_appearance())
+        self.mode_combo.currentTextChanged.connect(lambda _text: self._commit_appearance())
+        self.accent_button.clicked.connect(self._pick_accent)
+        return page
+
+    def _pick_accent(self) -> None:
+        """Ask for an accent colour and apply it."""
+        color = QColorDialog.getColor(QColor(self.appearance.accent), self, "Accent colour")
+        if color.isValid():
+            self.set_accent(color.name())
+
+    def set_accent(self, accent: str) -> None:
+        """Use `accent` (#rrggbb) as the accent colour."""
+        self.accent_button.setText(accent)
+        self._commit_appearance()
+
+    def _commit_appearance(self) -> None:
+        """Save the tab's choices, restyle the app and tell the window (mode changes its pages)."""
+        appearance = Appearance(
+            theme=THEMES[self.theme_combo.currentIndex()],
+            accent=self.accent_button.text(),
+            mode=UI_MODES[self.mode_combo.currentIndex()],
+        )
+        if appearance == self.appearance:
+            return
+        self.appearance = appearance
+        save_appearance(self._qsettings, appearance)
+        app = QApplication.instance()
+        if isinstance(app, QApplication):
+            apply_theme(app, appearance)
+        self.appearance_changed.emit(appearance)
 
 
 def _flatten(overrides: dict[str, dict[str, Any]]) -> list[tuple[tuple[str, str], Any]]:
