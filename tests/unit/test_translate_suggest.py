@@ -10,8 +10,8 @@ import pytest
 from omniscan.core.schemas import BBox, GlossaryEntry, Region, RegionKind
 from omniscan.llm.ollama import ChatResponse, OllamaRateLimitError
 from omniscan.translate.profiles import TranslationProfile
-from omniscan.translate.prompts import ContextLine, chat_json_messages
-from omniscan.translate.suggest import context_lines, suggest
+from omniscan.translate.prompts import ContextLine, chat_json_messages, context_lines
+from omniscan.translate.suggest import suggest
 
 
 def region(rid: str, text: str, order: int, *, kind: RegionKind = "bubble_text") -> Region:

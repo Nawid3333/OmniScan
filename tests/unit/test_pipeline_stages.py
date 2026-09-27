@@ -426,6 +426,7 @@ def test_judge_stage_run_writes_final_metrics_and_is_resumable(cfg: Config) -> N
         "violations_left": 0.0,
         "requests": 1.0,
         "rate_limited": 0.0,
+        "reused": 0.0,
     }
     assert "seconds" in outcome.metrics
     manifest = load_manifest(ctx.paths.manifest, SERIES, CHAPTER)

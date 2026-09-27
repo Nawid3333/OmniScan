@@ -282,6 +282,7 @@ def test_judge_chapter_records_usage(paths: ChapterPaths) -> None:
         "regions",
         "seconds",
         "rate_limited",
+        "reused",  # lines kept from the previous run (judge_chapter reuse=True); summed by `omniscan usage`
     ]
     assert loaded.usage["prompt_tokens"] == 1.0  # FakeClient counts 1 prompt/completion token per call
     assert loaded.usage["completion_tokens"] == 1.0

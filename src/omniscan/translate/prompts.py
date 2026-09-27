@@ -10,7 +10,7 @@ renderings are the tuned originals.
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -106,6 +106,31 @@ class ContextLine:
     id: str
     text: str  # source text
     english: str  # its current English line ("" when it has none yet)
+
+
+CONTEXT_BEFORE = 6  # neighbouring lines shown before the first region translated on its own
+CONTEXT_AFTER = 3  # and after the last one
+
+
+def context_lines(
+    ordered: Sequence[Region],
+    target_ids: Collection[str],
+    english: Mapping[str, str],
+    *,
+    before: int = CONTEXT_BEFORE,
+    after: int = CONTEXT_AFTER,
+) -> list[ContextLine]:
+    """The lines around the targets in reading order (`ordered` = the chapter's translatable regions): up to
+    `before` lines before the first target and `after` after the last, targets themselves excluded."""
+    positions = [i for i, region in enumerate(ordered) if region.id in target_ids]
+    if not positions:
+        return []
+    window = ordered[max(0, positions[0] - before) : positions[-1] + after + 1]
+    return [
+        ContextLine(id=region.id, text=source_text(region), english=english.get(region.id, ""))
+        for region in window
+        if region.id not in target_ids
+    ]
 
 
 def chat_json_messages(
