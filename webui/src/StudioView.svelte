@@ -1,5 +1,6 @@
 <script lang="ts">
   import RunButton from "./RunButton.svelte";
+  import ReplacePanel from "./ReplacePanel.svelte";
   import {
     addCleanup,
     addRegion,
@@ -93,6 +94,7 @@
   let showClean = $state(false);
   let showPreview = $state(false);
   let showLettering = $state(true);
+  let showReplace = $state(false);
   let fonts = $state<string[]>([]);
   let liveItems = $state<LayoutItem[]>([]);
   let handSet = $state<string[]>([]);
@@ -718,6 +720,7 @@
       {/each}
     </select>
     <button onclick={() => void translatePage()} disabled={busy || translating} title="translate every untranslated region of this page and keep the first suggestion">Translate page</button>
+    <button class:active={showReplace} onclick={() => (showReplace = !showReplace)} title="find and replace in the English lines or source texts of this chapter or the whole series">Find &amp; replace</button>
     <span class="sep"></span>
     <RunButton {series} {chapter} through="export" startStage="inpaint" label="Render (inpaint → export)" onDone={refresh} />
     {#if translating}<span class="muted">translating…</span>{:else if busy}<span class="muted">saving…</span>{/if}
@@ -741,6 +744,16 @@
       <button onclick={() => void applyStrokes()} disabled={busy || !painted} title="Enter">Apply</button>
       <button onclick={discardStrokes} disabled={!painted} title="Esc">Discard strokes</button>
     </div>
+  {/if}
+  {#if showReplace}
+    <ReplacePanel
+      {series}
+      {chapter}
+      onApplied={async () => {
+        await refresh();
+        select(selectedId);
+      }}
+    />
   {/if}
   {#if actionError}
     <p class="error">{actionError}</p>

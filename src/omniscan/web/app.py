@@ -9,6 +9,7 @@ import mimetypes
 import threading
 from collections.abc import Callable, Sequence
 from contextlib import asynccontextmanager
+from dataclasses import asdict
 from pathlib import Path
 from typing import Literal
 
@@ -42,6 +43,8 @@ from omniscan.core.schemas import (
     SlicesArtifact,
 )
 from omniscan.edits import store as edit_store
+from omniscan.edits.replace import FindReplace, apply_changes
+from omniscan.edits.replace import plan as replace_plan
 from omniscan.export.segments import cut_crossings
 from omniscan.filter.decide import effective_decision, restore
 from omniscan.glossary.match import find_terms, term_present
@@ -153,6 +156,19 @@ def built_ui(folder: Path = UI_DIST) -> Path | None:
 def ollama_client(cfg: Config) -> ChatClient:
     """The chat client for on-demand translation (the configured Ollama daemon)."""
     return OllamaClient(cfg.ollama, get_secrets())
+
+
+class ReplaceBody(Model):
+    """Body of the find & replace POST request (edits/replace.py): the rule, where, and whether to apply it."""
+
+    find: str
+    replace: str
+    target: Literal["english", "source"] = "english"
+    chapters: list[str] | None = None  # None: every chapter of the series
+    regex: bool = False
+    whole_word: bool = False
+    case_sensitive: bool = True
+    dry_run: bool = True
 
 
 class EmptyBody(Model):
@@ -561,6 +577,44 @@ def create_app(
             "edited_region_ids": edited,
             "manual_translation_ids": translated,
             "history": {"undo": back, "redo": forward},
+        }
+
+    @app.post("/api/series/{series}/replace")
+    async def replace_text(series: str, request: Request) -> dict[str, object]:
+        """Find and replace in the English lines or source texts of some or all chapters of a series; with
+        `dry_run` (the default) only lists the changes. Each chapter's changes are hand edits and one undo step."""
+        body = await json_body(request, ReplaceBody)
+        known = series_paths(series).chapters()
+        names = known if body.chapters is None else body.chapters
+        chapters = [chapter_paths(series, name) for name in names]
+        missing = [paths.chapter for paths in chapters if paths.chapter not in known]
+        if missing:
+            raise HTTPException(
+                status_code=404, detail=f"unknown chapter {missing[0]!r} of series {series!r}"
+            )
+        rule = FindReplace(
+            find=body.find,
+            replace=body.replace,
+            regex=body.regex,
+            whole_word=body.whole_word,
+            case_sensitive=body.case_sensitive,
+        )
+        planned = [
+            (paths, run_edit(lambda paths=paths: replace_plan(paths, rule, body.target)))
+            for paths in chapters
+        ]
+        if not body.dry_run:
+            direction, _lang = edit_settings(series)
+            for paths, changes in planned:
+                if changes:
+                    run_edit(
+                        lambda paths=paths, changes=changes: apply_changes(
+                            paths, changes, body.target, direction=direction
+                        )
+                    )
+        return {
+            "changes": [asdict(change) for _paths, changes in planned for change in changes],
+            "applied": not body.dry_run,
         }
 
     @app.post("/api/series/{series}/chapters/{chapter}/edits/{step}")
