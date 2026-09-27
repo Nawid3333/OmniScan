@@ -26,6 +26,7 @@ import torch.nn.functional as F  # noqa: N812 — torch's standard alias
 from torch import nn
 
 from omniscan.detect.postprocess import Box
+from omniscan.gpu.device import select_device
 from omniscan.models.catalog import ModelEntry, load_catalog
 from omniscan.models.download import download_model
 from omniscan.models.store import install_path, model_status
@@ -209,9 +210,7 @@ class CraftDetector:
         cls, device: torch.device, models_dir: Path, catalog: Sequence[ModelEntry] | None = None
     ) -> CraftDetector:
         """Download (first use) and load the weights, fp32 (no `.half()` on this stack)."""
-        if device.type == "cuda":
-            # MIOpen launches kernels against the current device (the iGPU here), not the tensors' device
-            torch.cuda.set_device(device)
+        select_device(device)  # MIOpen/oneDNN launch on the current device, not the tensors'
         model = Craft()
         model.load_state_dict(_weights(Path(models_dir), catalog))
         return cls(model.to(device).eval(), device)

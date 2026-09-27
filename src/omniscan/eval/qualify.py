@@ -21,14 +21,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 
-import torch
-
 from omniscan.core.config import Config, series_config
 from omniscan.core.paths import SeriesPaths
 from omniscan.core.schemas import IngestArtifact, RegionsArtifact
 from omniscan.eval.score import score_chapter
 from omniscan.eval.truth import load_english_pages, load_truth
-from omniscan.gpu.device import resolve_device
+from omniscan.gpu.device import accelerator, resolve_device
 from omniscan.gpu.groups import build_vram_manager
 from omniscan.models.catalog import load_catalog
 from omniscan.models.store import model_status
@@ -363,9 +361,9 @@ def default_run_candidate(
     owns_gpu = gpu is None
     try:
         device = resolve_device(cfg.gpu.device)
-        track_vram = device.type == "cuda"
-        if track_vram:
-            torch.cuda.reset_peak_memory_stats(device)
+        accel = accelerator(device)
+        if accel is not None:
+            accel.reset_peak_memory_stats(device)
         if owns_gpu:
             gpu = build_vram_manager(cfg)
         started = time.perf_counter()
@@ -379,7 +377,7 @@ def default_run_candidate(
             merge_series_config=False,
         )
         seconds = time.perf_counter() - started
-        peak = torch.cuda.max_memory_allocated(device) / 2**30 if track_vram else None
+        peak = accel.max_memory_allocated(device) / 2**30 if accel is not None else None
         if chapter in result.failed:
             raise RuntimeError(f"pipeline failed: {result.failed[chapter]}")
         work = SeriesPaths.from_config(cfg, dataset.series).chapter(chapter).work_dir

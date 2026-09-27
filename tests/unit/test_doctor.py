@@ -267,10 +267,23 @@ def test_rocm_not_applicable_on_windows(monkeypatch: pytest.MonkeyPatch) -> None
     assert "Windows" in result.detail
 
 
+def test_rocm_not_applicable_without_a_rocm_torch(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_run(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("rocminfo must not run for a non-ROCm torch build")
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(doctor, "torch_build", lambda: "cuda")
+    monkeypatch.setattr(subprocess, "run", fail_run)
+    result = doctor.check_rocm()
+    assert result.status == "OK"
+    assert "cuda" in result.detail
+
+
 def test_rocm_missing_binary(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_run(*args: Any, **kwargs: Any) -> None:
         raise FileNotFoundError("rocminfo")
 
+    monkeypatch.setattr(doctor, "torch_build", lambda: "rocm")
     monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(subprocess, "run", fake_run)
     result = doctor.check_rocm()
@@ -283,6 +296,7 @@ def test_rocm_found(monkeypatch: pytest.MonkeyPatch) -> None:
             ["rocminfo"], 0, stdout="Name:                    gfx1201\n", stderr=""
         )
 
+    monkeypatch.setattr(doctor, "torch_build", lambda: "rocm")
     monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(subprocess, "run", fake_run)
     result = doctor.check_rocm()
@@ -366,6 +380,30 @@ def test_run_all_checks_never_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     rocm = results[REQUIRED_NAMES.index("rocm")]
     assert rocm.status == "FAIL"
     assert rocm.detail == "RuntimeError: boom"
+
+
+def test_torch_gpu_warns_on_a_cpu_only_machine(monkeypatch: pytest.MonkeyPatch) -> None:
+    import torch
+
+    from omniscan.gpu import device as device_module
+
+    monkeypatch.setattr(device_module, "resolve_device", lambda spec: torch.device("cpu"))
+    result = doctor.check_torch_gpu()
+    assert result.status == "WARN"
+    assert "CPU" in result.detail
+
+
+def test_torch_build_names_the_installed_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    import torch
+
+    monkeypatch.setattr(torch.version, "hip", None, raising=False)
+    monkeypatch.setattr(torch.version, "cuda", "12.9", raising=False)
+    assert doctor.torch_build() == "cuda"
+    monkeypatch.setattr(torch.version, "cuda", None, raising=False)
+    monkeypatch.setattr(torch.version, "xpu", "20250201", raising=False)
+    assert doctor.torch_build() == "xpu"
+    monkeypatch.setattr(torch.version, "hip", "7.0", raising=False)
+    assert doctor.torch_build() == "rocm"
 
 
 @pytest.mark.gpu

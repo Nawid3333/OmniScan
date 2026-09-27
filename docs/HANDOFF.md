@@ -5,7 +5,14 @@ original conversation. It says what OmniScan is, what to read, how the owner lik
 time. Written 2026-09-19 after roughly two days of building. Keep it current: when something important is learned,
 add it here (working agreement, lessons) or in `docs/DECISIONS.md` (design choices and why).
 
-## Development paused on 2026-09-25 — read this before anything else
+## Restarted on 2026-09-27 with a bigger goal — read `docs/ROADMAP.md` first
+The owner restarted the project: OmniScan should run on Windows, macOS and Linux with NVIDIA, AMD, Intel and Apple
+GPUs, be the default tool for automatic translation *and* a workbench for manual translators and groups, and let
+users opt in to sharing corrections so the program improves. The "one machine, one GPU" decision of 2026-09-24 is
+reversed (backend extras and the three-OS CI are back); the PySide6 desktop app is the product UI. Parts of the
+sections below that say "one machine only" describe the state before 2026-09-27.
+
+## Development paused on 2026-09-25
 The owner paused the project on 2026-09-25 and will come back "in some years, or when I need this program again".
 Nothing was left half-done: every change is merged into `main` (the only branch), CI (Windows: `pytest -m "not gpu"`,
 ruff, pyright) and CodeQL were green, and there were no open issues, pull requests or security alerts.

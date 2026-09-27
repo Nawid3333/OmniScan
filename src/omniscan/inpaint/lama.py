@@ -9,6 +9,7 @@ from typing import Any
 import torch
 
 from omniscan.core.config import InpaintConfig
+from omniscan.gpu.device import select_device
 from omniscan.gpu.timeline import mark
 from omniscan.inpaint.lama_weights import ensure_lama_weights
 
@@ -33,9 +34,7 @@ class LamaInpainter:
         """Download (first use) + load the fp32 weights and warm up the fixed window shape."""
         path = ensure_lama_weights(models_dir, cfg)
         mark("lama weights verified")
-        if device.type == "cuda":
-            # MIOpen launches kernels against the current device (the iGPU here), not the tensors' device
-            torch.cuda.set_device(device)
+        select_device(device)  # MIOpen/oneDNN launch on the current device, not the tensors'
         model = torch.jit.load(
             str(path), map_location=device
         ).eval()  # fp32 only: fp16 fails in the interpreter

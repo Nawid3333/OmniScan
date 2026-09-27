@@ -1,7 +1,7 @@
 # OmniScan — rules for every agent working in this repo
 
-OmniScan turns raw Korean/Chinese/Japanese manhwa/manga chapters into English releases, GPU end-to-end. It targets one machine: Windows 11 + AMD ROCm (RX 9070 XT, gfx1201) — not a cross-platform/any-GPU app.
-Full plan: `docs/PLAN.md`. Architecture/contracts: `docs/ARCHITECTURE.md`.
+OmniScan turns raw Korean/Chinese/Japanese manhwa/manga chapters into English releases, GPU end-to-end. It runs on Windows, macOS and Linux with NVIDIA (cuda), AMD (ROCm), Intel (xpu), Apple (mps) or CPU torch builds; the owner's Windows 11 + AMD RX 9070 XT (gfx1201) PC is the reference machine where real-hardware numbers are measured.
+Direction since 2026-09-27: `docs/ROADMAP.md` (cross-platform, the desktop app as the product UI, Translator Studio, opt-in shared data). Full plan: `docs/PLAN.md`. Architecture/contracts: `docs/ARCHITECTURE.md`.
 **If you are the director (an interactive session continuing the project) read `docs/HANDOFF.md` first**, then `docs/CHECKPOINT.md`.
 If you are a builder running a task card, this file plus the card are your contract.
 
@@ -10,15 +10,17 @@ If you are a builder running a task card, this file plus the card are your contr
   Your Bash tool is Git Bash (bash syntax works, paths like `V:/OmniScan/...`). Never rely on Linux-only behaviour (symlinks, `chmod`,
   `fcntl`, `/dev/...`, `/mnt/c`) — the Windows dev shell still needs care even though the shipped app targets Windows only.
   Files use LF line endings (`.gitattributes`).
-- Python **3.14**, managed by **uv**. Torch is the `rocm-gfx1201` `[project.optional-dependencies]` extra (see `pyproject.toml`) — the
-  project's only supported backend; `uv sync` never installs it on its own. Never `pip install torch` from PyPI.
+- Python **3.14**, managed by **uv**. Torch comes from exactly one backend extra in `[project.optional-dependencies]` (`rocm-gfx1201`,
+  `cuda`, `xpu`, `mps`, `cpu`; see `pyproject.toml`); `uv sync` never installs it on its own. Never `pip install torch` by hand.
+- Device code must work on every backend: select devices with `omniscan.gpu.device` (`resolve_device`, `select_device`, `accelerator`),
+  never call `torch.cuda.*` directly for memory/sync, and never assume `device.type == "cuda"` means "a GPU" (Intel is `xpu`, Apple `mps`).
 - GPU choice: use `omniscan.gpu.device.resolve_device(cfg.gpu.device)`; never hard-code `cuda:0` (on this PC `cuda:0` is the integrated GPU and crashes).
 - Ollama runs natively on Windows at `http://localhost:11434`.
 - **Never** install or import `paddlepaddle` / `paddleocr`: Paddle has no ROCm support. Paddle *models* are used through HF `transformers` (PyTorch).
 
 ## Commands
 ```bash
-uv sync --extra rocm-gfx1201 --extra gui   # this machine's torch backend + the gui extra (PySide6)
+uv sync --extra rocm-gfx1201 --extra gui   # the owner's PC; elsewhere --extra cuda | xpu | mps | cpu, plus the gui extra (PySide6)
 uv run pytest                # all tests (GPU tests are marked `gpu`)
 uv run pytest -m "not gpu"   # CPU-only tests
 uv run ruff format . && uv run ruff check --fix .
@@ -38,7 +40,7 @@ uv run omniscan --help
 5. Commit on the card branch with message `<ID>: <summary>`. Never push, never touch `main`.
 
 ## Hard rules
-- **Never run `uv sync --extra rocm-gfx1201` in a builder worktree.** A worktree's `.venv` is a junction to the main checkout's — syncing there re-installs/replaces the real, working torch install for the whole project (every worktree, the director's own session, a live `omniscan serve`), silently. Use `uv run --no-sync ...` for a worktree's own test/lint/type-check runs (only the worktree's source differs; the shared environment is already correct).
+- **Never run `uv sync --extra <backend>` (e.g. `rocm-gfx1201`) in a builder worktree.** A worktree's `.venv` is a junction to the main checkout's — syncing there re-installs/replaces the real, working torch install for the whole project (every worktree, the director's own session, a live `omniscan serve`), silently. Use `uv run --no-sync ...` for a worktree's own test/lint/type-check runs (only the worktree's source differs; the shared environment is already correct).
 - **If the spec is ambiguous or seems wrong: STOP, write the question in `docs/reports/<ID>.md`, commit, and end.** Do not guess.
 - GPU code: tensors stay on the GPU between steps; no `.cpu()` / `.numpy()` inside hot loops; never loop in Python over image rows or pixels.
 - Never write intermediate images to disk unless the card says so (JSON/`.npz` artifacts only).

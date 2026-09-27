@@ -154,7 +154,8 @@ Check this machine is ready for OmniScan.
 |---|---|
 | `--json` | emit a JSON array instead of a table |
 
-Checks Python 3.14, the ROCm torch build and GPU, `rocminfo`/gfx1201, the rocJPEG decoder, the local
+Checks Python 3.14, the torch build and the GPU it reaches (NVIDIA, AMD, Intel or Apple; `WARN` when only
+the CPU is left), `rocminfo` (ROCm builds on Linux only), the rocJPEG decoder, the local
 Ollama server, the required Ollama models, the Ollama cloud key (only when one is set), the secrets
 file, the pipeline roots, the required model-catalog downloads and the configured codec. Any `FAIL`
 row makes the command exit 1; `WARN` rows do not. The `models` row warns with the total size to

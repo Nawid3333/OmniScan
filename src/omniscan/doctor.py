@@ -1,4 +1,4 @@
-"""`omniscan doctor` — machine checks: Python, GPU/torch, ROCm, rocJPEG, Ollama, secrets, paths, models."""
+"""`omniscan doctor` — machine checks: Python, GPU/torch (any vendor), ROCm, rocJPEG, Ollama, secrets, paths, models."""
 
 from __future__ import annotations
 
@@ -81,35 +81,59 @@ def check_python() -> CheckResult:
 
 
 def check_torch_gpu() -> CheckResult:
-    """Check ROCm torch sees the GPU."""
+    """Check torch reaches a GPU (NVIDIA/AMD as cuda, Intel as xpu, Apple as mps); WARN when only the CPU is left."""
     try:
         import torch
     except Exception as exc:
         return CheckResult("torch_gpu", "FAIL", f"{type(exc).__name__}: {exc}")
-    if "rocm" not in torch.__version__:
-        return CheckResult("torch_gpu", "FAIL", f"torch {torch.__version__} is not a ROCm build")
-    if not torch.cuda.is_available():
-        return CheckResult("torch_gpu", "FAIL", f"torch {torch.__version__} but cuda is not available")
     from omniscan.core.config import get_config
-    from omniscan.gpu.device import resolve_device
+    from omniscan.gpu.device import accelerator, resolve_device
 
+    build = torch_build()
     device = resolve_device(get_config().gpu.device)
-    if device.type != "cuda":
-        return CheckResult("torch_gpu", "FAIL", f"no usable discrete GPU (device resolves to {device})")
-    index = device.index if device.index is not None else torch.cuda.current_device()
-    props = torch.cuda.get_device_properties(index)
-    name = props.name
-    arch = getattr(props, "gcnArchName", "?")
-    free, total = torch.cuda.mem_get_info(index)
-    free_gib, total_gib = free / 2**30, total / 2**30
-    detail = f"{torch.__version__} | {name} | {arch} | {free_gib:.1f}/{total_gib:.1f} GiB free | cuda:{index}"
-    return CheckResult("torch_gpu", "OK", detail)
+    if device.type == "cpu":
+        detail = (
+            f"torch {torch.__version__} ({build} build) reaches no discrete GPU; running on the CPU (slow)"
+        )
+        return CheckResult("torch_gpu", "WARN", detail)
+    module = accelerator(device)
+    if module is None:  # mps: unified memory, no per-device properties
+        return CheckResult("torch_gpu", "OK", f"{torch.__version__} | Apple GPU | {device}")
+    index = device.index if device.index is not None else module.current_device()
+    props = module.get_device_properties(index)
+    free, total = module.mem_get_info(index)
+    parts = [torch.__version__, str(props.name)]
+    arch = getattr(props, "gcnArchName", None)
+    if arch:
+        parts.append(str(arch))
+    parts += [f"{free / 2**30:.1f}/{total / 2**30:.1f} GiB free", f"{device.type}:{index}"]
+    return CheckResult("torch_gpu", "OK", " | ".join(parts))
+
+
+def torch_build() -> str:
+    """What the installed torch was built for: "rocm", "cuda", "xpu", "mps" (macOS), "cpu", or "missing"."""
+    try:
+        import torch
+    except Exception:
+        return "missing"
+    if getattr(torch.version, "hip", None):
+        return "rocm"
+    if getattr(torch.version, "cuda", None):
+        return "cuda"
+    if getattr(torch.version, "xpu", None):
+        return "xpu"
+    return "mps" if sys.platform == "darwin" else "cpu"
 
 
 def check_rocm() -> CheckResult:
-    """Check `rocminfo` reports a gfx1201 agent (Linux/WSL only; on Windows torch_gpu covers the GPU)."""
+    """Check `rocminfo` reports a gfx agent (ROCm torch on Linux only; elsewhere torch_gpu covers the GPU)."""
     if sys.platform == "win32":
         return CheckResult("rocm", "OK", "not applicable on Windows (torch_gpu covers the GPU)")
+    build = torch_build()
+    if build != "rocm":
+        return CheckResult(
+            "rocm", "OK", f"not applicable to a {build} torch build (torch_gpu covers the GPU)"
+        )
     try:
         proc = subprocess.run(["rocminfo"], capture_output=True, text=True, timeout=30)
     except FileNotFoundError:

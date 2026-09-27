@@ -25,7 +25,7 @@ from typing import Any
 import httpx
 import torch
 
-from omniscan.gpu.device import resolve_device
+from omniscan.gpu.device import accelerator, resolve_device
 from omniscan.gpu.timeline import mark
 
 log = logging.getLogger(__name__)
@@ -64,6 +64,9 @@ class VramManager:
         http: httpx.Client | None = None,
     ) -> None:
         self.device = resolve_device(device)
+        self._accel = accelerator(
+            self.device
+        )  # torch.cuda (NVIDIA/AMD) or torch.xpu (Intel); None on CPU/MPS
         self._groups: dict[str, GroupSpec] = {}
         self._resident: str | None = None
         self._models: Mapping[str, Any] = {}
@@ -75,13 +78,15 @@ class VramManager:
         self._ollama_url = ollama_url
         self._http = http
         self.budget_gib = budget_gib
-        if self.is_gpu and budget_gib is not None:
-            total = torch.cuda.get_device_properties(self.device).total_memory
-            torch.cuda.set_per_process_memory_fraction(min(1.0, budget_gib * GIB / total), self.device)
+        if self._accel is not None and budget_gib is not None:
+            set_fraction = getattr(self._accel, "set_per_process_memory_fraction", None)
+            if set_fraction is not None:
+                total = self._accel.get_device_properties(self.device).total_memory
+                set_fraction(min(1.0, budget_gib * GIB / total), self.device)
 
     @property
     def is_gpu(self) -> bool:
-        return self.device.type == "cuda"
+        return self._accel is not None
 
     @property
     def resident(self) -> str | None:
@@ -219,9 +224,9 @@ class VramManager:
         self._models = {}
         self._resident = None
         gc.collect()
-        if self.is_gpu:
-            torch.cuda.synchronize(self.device)
-            torch.cuda.empty_cache()
+        if self._accel is not None:
+            self._accel.synchronize(self.device)
+            self._accel.empty_cache()
         mark("release done")
 
     def evict_ollama(self, keep: str | None = None) -> list[str]:
@@ -248,14 +253,14 @@ class VramManager:
         return unloaded
 
     def free_gib(self) -> float | None:
-        if not self.is_gpu:
+        if self._accel is None:
             return None
-        free, _total = torch.cuda.mem_get_info(self.device)
+        free, _total = self._accel.mem_get_info(self.device)
         return free / GIB
 
     def reset_peak(self) -> None:
-        if self.is_gpu:
-            torch.cuda.reset_peak_memory_stats(self.device)
+        if self._accel is not None:
+            self._accel.reset_peak_memory_stats(self.device)
 
     def peak_gib(self) -> float:
-        return torch.cuda.max_memory_allocated(self.device) / GIB if self.is_gpu else 0.0
+        return self._accel.max_memory_allocated(self.device) / GIB if self._accel is not None else 0.0

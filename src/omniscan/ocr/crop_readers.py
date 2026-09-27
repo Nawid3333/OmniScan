@@ -24,6 +24,7 @@ import torch
 from PIL import Image
 
 from omniscan.core.config import OcrConfig
+from omniscan.gpu.device import select_device
 from omniscan.ocr.engines import engine_rec_model, load_kwargs, model_source
 from omniscan.ocr.model import _check_model_role, _to_device
 
@@ -99,9 +100,7 @@ class MangaOcrReader:
             raise ValueError("manga_ocr needs ocr.rec_model")
         source = model_source(rec_model, models_dir)
         path_or_repo, kwargs = load_kwargs(source, models_dir=models_dir)
-        if device.type == "cuda":
-            # MIOpen launches kernels against the current device (the iGPU here), not the tensors' device
-            torch.cuda.set_device(device)
+        select_device(device)  # MIOpen/oneDNN launch on the current device, not the tensors'
         from transformers import AutoImageProcessor, VisionEncoderDecoderModel
 
         model = _to_device(VisionEncoderDecoderModel.from_pretrained(path_or_repo, **kwargs), device).eval()
@@ -225,9 +224,7 @@ class PaddleOcrVlReader:
         _check_model_role(rec_model, "vlm_ocr")
         source = model_source(rec_model, models_dir)
         path_or_repo, kwargs = load_kwargs(source, models_dir=models_dir)
-        if device.type == "cuda":
-            # MIOpen launches kernels against the current device (the iGPU here), not the tensors' device
-            torch.cuda.set_device(device)
+        select_device(device)  # MIOpen/oneDNN launch on the current device, not the tensors'
         from transformers import AutoModelForImageTextToText, AutoProcessor
 
         model = _to_device(

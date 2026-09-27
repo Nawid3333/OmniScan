@@ -1,9 +1,10 @@
 # OmniScan
 
-> **Development is paused** (since 2026-09-25). Everything is merged and CI is green; to resume, start with the
-> "Development paused" section in [`docs/HANDOFF.md`](docs/HANDOFF.md).
+> **Restarted on 2026-09-27** with a bigger goal: every OS and GPU vendor, a manual Translator Studio and opt-in
+> shared data. See [`docs/ROADMAP.md`](docs/ROADMAP.md); how to pick up the work: [`docs/HANDOFF.md`](docs/HANDOFF.md).
 
-GPU end-to-end manhwa/manga translator (Korean / Chinese / Japanese → English). Windows 11 native, AMD ROCm — one machine, one GPU.
+GPU end-to-end manhwa/manga translator (Korean / Chinese / Japanese → English), with a native desktop app.
+Runs on Windows, macOS and Linux, on NVIDIA, AMD, Intel and Apple GPUs (or the CPU). Where it is going: [`docs/ROADMAP.md`](docs/ROADMAP.md).
 Chapters are imported from a local folder, normalised and cut into reading slices on the GPU, and — as
 the remaining stages land — detected, OCR'd, translated through Ollama, judged, inpainted, typeset and
 packaged into CBZ/PDF.
@@ -42,18 +43,28 @@ pipeline stage consumes it yet.
 
 ## Requirements
 
-This project targets one machine: Windows 11 native, AMD RX 9070 XT (gfx1201, 16 GB) with AMD's ROCm 10
-wheels. It is not built or tested for any other OS or GPU vendor.
+Windows, macOS or Linux. Real-hardware numbers are measured on the reference machine (Windows 11, AMD RX 9070 XT,
+ROCm 10); CI runs the test suite on all three OSes.
 
-- Windows 11. Ollama installed and running at `localhost:11434`.
-- Python 3.14, managed by [uv](https://docs.astral.sh/uv/). PyTorch comes from the `rocm-gfx1201` extra —
-  never `pip install torch` from PyPI.
+- Ollama installed and running at `localhost:11434`.
+- Python 3.14, managed by [uv](https://docs.astral.sh/uv/). PyTorch comes from exactly one backend extra — never
+  `pip install torch` by hand:
+
+  | Your GPU | Extra |
+  |---|---|
+  | AMD RX 9070 series (gfx1201), Windows | `rocm-gfx1201` |
+  | NVIDIA (Windows, Linux) | `cuda` |
+  | Intel Arc / Core Ultra graphics (Windows, Linux) | `xpu` |
+  | Apple Silicon (macOS) | `mps` |
+  | none of these | `cpu` (works, slowly) |
+
+  `gpu.device = "auto"` then picks the strongest discrete GPU the installed build can reach.
 - Node 24 for the web UI only (`npm run dev` in `webui/`).
 
 ## Quickstart
 
 ```bash
-uv sync --extra rocm-gfx1201 --extra gui
+uv sync --extra cuda --extra gui   # or rocm-gfx1201 / xpu / mps / cpu, see the table above
 uv run omniscan doctor
 uv run python scripts/make_demo_chapter.py
 uv run omniscan slice DemoSeries
