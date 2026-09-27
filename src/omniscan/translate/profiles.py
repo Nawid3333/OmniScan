@@ -11,9 +11,9 @@ import re
 import tomllib
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from omniscan.core.config import DEFAULT_TOML, USER_TOML
 
@@ -36,6 +36,18 @@ class TranslationProfile(BaseModel):
     # Name of the profile that translates instead when this one hits the Ollama rate limit (cloud
     # tokens exhausted). It may be disabled: it then only ever runs as this fallback.
     fallback: str | None = None
+    # chat_json only: also send the page images the regions sit on, so a vision model sees who speaks and what
+    # a line points at (translate/images.py). Each image's long side is scaled down to `image_side` px, and a
+    # request covers at most `images_per_request` images (its regions are chunked to fit).
+    images: bool = False
+    image_side: int = Field(default=1280, ge=256, le=4096)
+    images_per_request: int = Field(default=3, ge=1, le=16)
+
+    @model_validator(mode="after")
+    def _images_need_chat_json(self) -> Self:
+        if self.images and self.style != "chat_json":
+            raise ValueError(f'profile {self.name!r}: images need style = "chat_json"')
+        return self
 
     @field_validator("name")
     @classmethod

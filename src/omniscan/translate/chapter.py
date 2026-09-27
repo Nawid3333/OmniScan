@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Literal
 
 from omniscan.core.paths import ChapterPaths
 from omniscan.core.schemas import Candidate, CandidateRun, GlossaryEntry, RegionsArtifact
+from omniscan.translate.images import PageImages
 from omniscan.translate.incremental import translation_key
 from omniscan.translate.profiles import TranslationProfile
 from omniscan.translate.prompts import translatable
@@ -67,6 +68,7 @@ def translate_chapter(
         reused=reused,
         hints=hints,
         characters=characters,
+        images=PageImages(paths) if profile.images else None,
     )
     run = run.model_copy(
         update={"candidates": [c.model_copy(update={"key": keys.get(c.region_id)}) for c in run.candidates]}

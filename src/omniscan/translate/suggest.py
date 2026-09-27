@@ -19,6 +19,7 @@ from omniscan.translate.run import ChatClient, run_profile
 
 if TYPE_CHECKING:
     from omniscan.learn.apply import TranslationHints
+    from omniscan.translate.images import PageImages
     from omniscan.translate.voices import Character
 
 
@@ -44,11 +45,13 @@ def suggest(
     story_summary: str | None = None,
     hints: TranslationHints | None = None,
     characters: Sequence[Character] = (),
+    images: PageImages | None = None,
 ) -> list[Suggestion]:
     """Translate the target regions with every profile; a profile that hits the Ollama rate limit is
     replaced by its fallback. `hints` (the series' learned memory) shows the models similar lines the editor
-    translated and their preferred wording, never an old line as the answer. ValueError names a target that
-    is unknown or has nothing to translate."""
+    translated and their preferred wording, never an old line as the answer. `images` (the chapter's pages)
+    go to the profiles that ask for them. ValueError names a target that is unknown or has nothing to
+    translate."""
     ordered = translatable(regions)
     known = {region.id for region in regions}
     translatable_ids = {region.id for region in ordered}
@@ -73,6 +76,7 @@ def suggest(
                 context=context,
                 hints=hints,
                 characters=characters,
+                images=images,
             )
         except OllamaRateLimitError:
             fallback = (fallbacks or {}).get(profile.name)
@@ -88,6 +92,7 @@ def suggest(
                 context=context,
                 hints=hints,
                 characters=characters,
+                images=images,
             )
         suggestions.extend(
             Suggestion(region_id=c.region_id, profile=used.name, model=used.model, text=c.text)

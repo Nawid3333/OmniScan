@@ -74,6 +74,13 @@ from it through the optional `input_extra(ctx)` hook (`core/stage.py`, hashed wi
 this chapter's lines (`remembered_lines`). A switched-off rule re-runs the OCR; a new hand translation re-runs
 only the chapters holding that line, and an exact memory line wins over a reused candidate.
 
+**Page images** (`translate/images.py`): a `chat_json` profile with `images = true` attaches the slices its
+request's regions sit on (`PageImages`: read from the raw pages with Pillow, scaled to `image_side`, base64
+JPEG in the Ollama message's `images`); each region carries `image` and `box` in that image's pixels, and
+`run.py::_chunks` cuts requests at `images_per_request` slices. `translation_key` hashes the image settings
+only when they are on (`image_key`), so profiles without images keep their keys; local models get
+`_IMAGE_TOKENS` per image added to `num_ctx`. Unreadable pages degrade to a text-only request (logged once).
+
 **Speakers and voices** (`translate/voices.py`): `Region.speaker` is set by hand (a `RegionEdit.speaker`, applied
 like every region edit); a series' hand-written `voices.toml` (library dir, next to `series.toml`) describes how
 each character talks. The chat_json prompt carries each region's speaker and the voices of the characters who

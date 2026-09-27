@@ -15,6 +15,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from omniscan.core.schemas import GlossaryEntry, Region
+from omniscan.translate.images import IMAGE_FIELDS, image_key
 from omniscan.translate.judge_config import JudgeConfig
 from omniscan.translate.profiles import TranslationProfile
 from omniscan.translate.prompts import glossary_subset, source_text
@@ -41,15 +42,17 @@ def translation_key(
     characters: Sequence[Character] = (),
 ) -> str:
     """Key of one region's translation by `profile`; a region with a speaker also depends on the speaker and
-    their voice (an unassigned region's key is the same as before speakers existed)."""
+    their voice (an unassigned region's key is the same as before speakers existed), and a profile that sends
+    page images on their settings (a profile without them keys as before images existed)."""
     return _digest(
         {
             "text": source_text(region),
             "kind": region.kind,
             "lang": region.lang,
             "glossary": _terms(region, entries),
-            "profile": profile.model_dump(exclude={"enabled", "fallback", "chunk_regions"}),
+            "profile": profile.model_dump(exclude={"enabled", "fallback", "chunk_regions", *IMAGE_FIELDS}),
             **voice_key(region, characters),
+            **image_key(profile),
         }
     )
 

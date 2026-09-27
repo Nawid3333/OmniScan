@@ -26,6 +26,7 @@ _JITTER_FRACTION = 0.25
 _BODY_TRUNC_CHARS = 2000
 _PS_RETRIES = 5
 _REPLY_TOKENS = 4096  # room left for the answer when sizing num_ctx to a prompt
+_IMAGE_TOKENS = 2048  # an upper bound of what one attached page image costs a vision model
 
 
 @dataclass(slots=True)
@@ -137,8 +138,8 @@ class OllamaClient:
     ) -> dict[str, Any] | None:
         """`options` plus a `num_ctx` for a local model: the configured floor, or more for a long prompt.
 
-        Two tokens per prompt character (an upper bound for CJK and English alike) plus room for the reply,
-        rounded up to 4096, so a whole-chapter prompt is never truncated. Every other request gets the same
+        Two tokens per prompt character (an upper bound for CJK and English alike), _IMAGE_TOKENS per attached
+        image, plus room for the reply, rounded up to 4096, so a whole-chapter prompt is never truncated. Every other request gets the same
         floor, which keeps the loaded model (Ollama reloads it when num_ctx changes)."""
         floor = self._cfg.num_ctx
         if floor == 0 or cloud or model.endswith((":cloud", "-cloud")):
@@ -146,7 +147,8 @@ class OllamaClient:
         if options is not None and "num_ctx" in options:
             return options
         chars = sum(len(str(message.get("content", ""))) for message in messages)
-        needed = -(-(2 * chars + _REPLY_TOKENS) // 4096) * 4096
+        images = sum(len(message.get("images", ())) for message in messages)
+        needed = -(-(2 * chars + _IMAGE_TOKENS * images + _REPLY_TOKENS) // 4096) * 4096
         return {**(options or {}), "num_ctx": max(floor, needed)}
 
     def _endpoint(self, cloud: bool) -> tuple[str, dict[str, str]]:
