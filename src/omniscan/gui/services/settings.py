@@ -54,6 +54,7 @@ GLOBAL_FIELDS: tuple[SettingField, ...] = (
     SettingField("paths", "output_root", "path"),
     SettingField("paths", "models_dir", "path"),
     SettingField("gpu", "device", "choice", choices=("auto", "cpu", "cuda", "xpu", "mps"), editable=True),
+    SettingField("gpu", "usage", "choice", choices=("full", "balanced", "background")),
     SettingField("gpu", "warmup", "bool"),
     SettingField("ocr", "engine", "choice", choices=("ppocr", "manga_ocr", "paddleocr_vl")),
     SettingField("ocr", "det_model", "model"),  # catalog id; empty means the default (None)

@@ -61,6 +61,11 @@ Each one ends in something a user can run. Card IDs follow the existing scheme (
   VRAM manager work for `cuda` and `xpu` alike; `omniscan doctor` reports any vendor and warns (not fails) on CPU.
 - CI on Ubuntu, Windows and macOS (`cpu` + `gui`), plus the owner's `rocm-gfx1201` build on Windows, plus a
   `uv lock --check` job.
+- Hardware recognition (`omniscan hardware`, the Models page) plus a usage level the user picks on the Settings page:
+  `gpu.usage = full | balanced | background` (`omniscan.hw.usage`). `balanced` leaves a quarter of the CPU and GPU
+  memory to other apps; `background` uses a quarter of the CPU threads, half the GPU memory and a lower process
+  priority. Next: a GPU duty cycle for `background` (short pauses between pages so games and video stay smooth),
+  lower Ollama thread/GPU-layer settings per level, and a tray icon to switch levels while a run is going.
 - Next inside X1: other AMD cards (RDNA2/RDNA3 on Linux through PyTorch's ROCm index, other `device-gfx*` extras
   from AMD's index on Windows), and real-hardware smoke runs on NVIDIA/Intel/Apple machines when someone has one
   (the `gpu`-marked tests still assume a `cuda` device).

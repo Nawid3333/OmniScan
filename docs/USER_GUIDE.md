@@ -56,8 +56,9 @@ Every key in `config/default.toml`:
 | `paths.output_root` | where final English chapters live | yes |
 | `paths.promo_examples` | where promo-filter example images live | yes (`filter run`) |
 | `paths.models_dir` | local cache for model weights (managed by `omniscan models`; catalog in `config/models.toml`) | yes (LaMa weights for `omniscan inpaint --lama`; the vision models land there too, card U2b) |
-| `gpu.device` | torch device: `auto` (default: strongest discrete GPU, else Apple MPS, else CPU), `cpu`, `mps`, `cuda:N` | yes (a named GPU that is unreachable falls back to CPU) |
+| `gpu.device` | torch device: `auto` (default: strongest discrete GPU, else Intel XPU, else Apple MPS, else CPU), `cpu`, `mps`, `cuda:N`, `xpu:N` | yes (a named GPU that is unreachable falls back to CPU) |
 | `gpu.vram_budget_gib` | VRAM budget in GiB | yes (the comic detector loads inside this budget) |
+| `gpu.usage` | how hard OmniScan may use the machine: `full` (default), `balanced` (a quarter of the CPU and GPU memory stays free for other apps), `background` (a quarter of the CPU threads, half the GPU memory, lower process priority) | yes (Settings page in the desktop app) |
 | `gpu.codec` | `auto` / `rocjpeg` / `hybrid` / `turbo` | only `auto`/`turbo` work — both run the CPU `turbo` codec; `rocjpeg`/`hybrid` are not implemented yet |
 | `slicer.band_min_px` | smallest strip band kept, in px | yes |
 | `slicer.target_height` | preferred slice height, in px | yes |
