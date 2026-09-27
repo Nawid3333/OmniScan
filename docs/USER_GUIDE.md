@@ -131,6 +131,9 @@ Every key in `config/default.toml`:
 | `inpaint.lama_window` | one fixed window side in px (every new window shape costs a 10–25 s warm-up) | yes (`omniscan inpaint --lama`) |
 | `inpaint.lama_dilate_px` | extra growth of the flat-fill mask for LaMa, in px | yes (`omniscan inpaint --lama`) |
 | `inpaint.lama_context_px` | a region needs at least this much context inside the window on every side, else it is skipped | yes (`omniscan inpaint --lama`) |
+| `learn.enabled` | apply what the series' hand corrections taught to its later chapters (see "Learning from your corrections") | yes (`omniscan ocr`, `translate`, Studio *Translate*) |
+| `learn.min_count` | a word fix, a preferred wording or a deletion acts after this many matching corrections | yes |
+| `learn.examples` | how many similar lines of the translation memory each translation request shows the model | yes |
 | `ollama.local_url` | local Ollama base URL | yes (`doctor`) |
 | `ollama.cloud_url` | Ollama cloud base URL | yes (`doctor`) |
 | `ollama.request_timeout_s` | per-request timeout | used by the LLM client module (no pipeline stage yet) |
@@ -777,6 +780,15 @@ invocation resumes; a finished run deletes it. Exit 2 for unknown profiles or ch
 `ocr.json`-less series; a chapter without `ocr.json` fails that chapter but the rest still run (exit
 1). An Ollama rate limit stops everything immediately with exit 3 and keeps the partial results.
 
+**Only what changed is translated again** when the pipeline (`omniscan run`, the web run buttons) re-runs
+the translate and judge stages: every candidate and every judged line carries a key — a hash of the
+region's source text, kind and language, the glossary entries that match it, and the model settings —
+and a region whose key is unchanged keeps its candidate and its judged line word for word. So fixing one
+bubble's OCR text re-translates and re-judges that bubble alone (the model sees its neighbours, source and
+English, as context), and locking a glossary term re-translates only the regions that contain it. The
+stages report the kept ones as `reused`. `omniscan translate --force` is the way to get a completely
+fresh translation of a chapter; a judge line flagged `judge_failed` (rate limit) is always judged again.
+
 ```bash
 uv run omniscan translate DemoSeries
 uv run omniscan translate DemoSeries --profile gemma4-12b-local --chapter "Chapter 1" --force
@@ -1061,6 +1073,196 @@ inside a stored watermark zone is excluded from translation, scoring and evaluat
 (text-pattern) and tier 2 (image-hash) matches are. Existing chapters re-detect automatically, because the detect stage now depends on
 `watermarks.json`.
 
+### `omniscan edit`
+
+The Studio's hand edits from the command line — for scripts and batch fixes. Every command records its
+edit in the chapter's `edits.json` and applies it to `ocr.json` / `final.json` at once, exactly like the
+Studio, so it survives every re-run (see "Studio: editing by hand"). Boxes and cuts are strip pixels.
+
+```bash
+uv run omniscan edit show "Solo Leveling" "Chapter 1"            # regions: id, kind, source, English, edited
+uv run omniscan edit show "Solo Leveling" "Chapter 1" --json
+uv run omniscan edit text "Solo Leveling" "Chapter 1" r0003 "진우야, 도망쳐!"
+uv run omniscan edit kind "Solo Leveling" "Chapter 1" r0007 watermark
+uv run omniscan edit speaker "Solo Leveling" "Chapter 1" r0003 Jinwoo
+uv run omniscan edit box "Solo Leveling" "Chapter 1" r0003 120 840 460 910
+uv run omniscan edit add "Solo Leveling" "Chapter 1" 300 1200 420 1260 --kind sfx --text 쾅
+uv run omniscan edit delete "Solo Leveling" "Chapter 1" r0009
+uv run omniscan edit english "Solo Leveling" "Chapter 1" r0003 "Jinwoo, run!"
+uv run omniscan edit translate "Solo Leveling" "Chapter 1" r0003 r0004 --apply
+uv run omniscan edit revert "Solo Leveling" "Chapter 1" r0003 --english
+uv run omniscan edit cuts "Solo Leveling" "Chapter 1" 2400 4800
+uv run omniscan edit cuts "Solo Leveling" "Chapter 1" --reset
+uv run omniscan edit replace "Solo Leveling" "Jinwoo" "Jin-Woo" --word --ignore-case --dry-run
+uv run omniscan edit replace "Solo Leveling" "Jinwoo" "Jin-Woo" --word --ignore-case --chapter "Chapter 1"
+uv run omniscan edit undo "Solo Leveling" "Chapter 1"
+uv run omniscan edit redo "Solo Leveling" "Chapter 1"
+```
+
+| Command | What it does |
+|---|---|
+| `show` | list the regions (`--json` for scripts), and the ones deleted by hand |
+| `text`, `kind`, `box` | correct a region's source text, kind (`bubble_text`, `free_text`, `sfx`, `watermark`) or text box |
+| `add` | add a region the detector missed (`--kind`, `--text`); prints its id (`m0001`, …) |
+| `speaker` | say who speaks a region's line (`""` for nobody); see "Speakers and character voices" |
+| `delete` | remove a region (a false detection); `revert` brings it back |
+| `english` | write a region's English line |
+| `translate` | translate regions now with every enabled profile (`--profile` for one, a disabled one too) and print the suggestions; `--apply` keeps each first suggestion |
+| `revert` | drop a region's hand edits (a drawn region is removed), or with `--english` its hand-written line |
+| `cuts` | show or set where the exported images split; `--reset` goes back to one image per slice |
+| `replace` | find and replace across the English lines of the whole series (`--chapter` for some chapters; `--source` for the source texts); `--word` whole words, `--ignore-case` any case (the replacement takes each match's case: JINWOO → JIN-WOO), `--regex` a regular expression (`\1` … in the replacement), `--dry-run` lists the changes only; every change is a hand edit, one undo step per chapter |
+| `undo`, `redo` | take back the last hand edit of the chapter, or make the last undone one again (see "Undo and redo" in the Studio section) |
+
+A missing chapter artifact or region, a box outside the strip or a cut outside it exits 2 with the reason;
+an Ollama failure in `translate` exits 1. `omniscan run SERIES --chapter CHAPTER` (or the Studio's
+*Render*) then brings the output up to date: stages whose inputs no edit changed are skipped, and the
+translation redoes only the edited regions.
+
+### `omniscan labelplus`
+
+Move a chapter's text in and out of [LabelPlus](https://github.com/LabelPlus/LabelPlus), the labelling tool many
+scanlation groups translate and proofread in. A LabelPlus file (`.txt`) lists, per page image, numbered labels:
+a point on the page, a group (`框内` inside a balloon, `框外` outside) and the label's text.
+
+```bash
+uv run omniscan labelplus export "Solo Leveling" "Chapter 1"                  # English lines
+uv run omniscan labelplus export "Solo Leveling" "Chapter 1" --text source    # OCR text, to translate in LabelPlus
+uv run omniscan labelplus import "Solo Leveling" "Chapter 1" proofread.txt --dry-run
+uv run omniscan labelplus import "Solo Leveling" "Chapter 1" proofread.txt
+```
+
+**Export** writes one label per region (watermarks never) at the centre of its text box, on the raw page it sits
+on, with the English line (`--text english`, the default) or the OCR text (`--text source`); balloon text goes in
+group 1, everything else in group 2. Default file: `<output_root>/<series>/_labelplus/<chapter>.txt` (`--out` to
+choose), UTF-8 with a BOM as LabelPlus writes it. Label the raw pages in LabelPlus.
+
+**Import** reads a LabelPlus file and takes each label's text (on one line) as the English line of the region it
+points into: the smallest text box holding the label, else the smallest balloon. Several labels in one region are
+joined. Lines are recorded as hand-written (`edits.json`), so every re-run keeps them and learning remembers them;
+a label whose text already is the region's line changes nothing. Labels outside every region and pages the chapter
+does not have are listed (draw the missing boxes in the Studio or with `omniscan edit add`, then import again).
+A page renamed by the group (`001.png` for `001.jpg`) is matched by its name without the extension. Needs the
+chapter's `ingest.json` (page positions); a file that is not LabelPlus exits 2.
+
+### `omniscan psd`
+
+Layered Photoshop files of a chapter's pages, for groups who finish a release in Photoshop (or GIMP, Krita,
+Photopea).
+
+```bash
+uv run omniscan psd export "Solo Leveling" "Chapter 1"               # every page
+uv run omniscan psd export "Solo Leveling" "Chapter 1" --page 0 --page 3 --out ./psd
+```
+
+Each page becomes one `.psd` (named like the raw page) at strip resolution with three layers, bottom to top:
+`raw` (the page as scanned), `clean` (the automatic cleaning plus your hand cleanup) and `text` (the lettering,
+from `layout.json`, on a transparent layer). The file's composite image is the finished page, so viewers without
+layer support show the release. Hide `text` to letter by hand, or paint on `clean`. Default folder:
+`<output_root>/<series>/_psd/<chapter>/`. Pages are built on the CPU with the Studio preview's code; without a
+`layout.json` (typeset not run yet) the `text` layers are empty.
+
+### `omniscan ballons` and `omniscan mit`
+
+Bring work done in [BallonsTranslator](https://github.com/dmMaze/BallonsTranslator) or
+[manga-image-translator](https://github.com/zyddnys/manga-image-translator) into a chapter, and send a chapter to
+BallonsTranslator to finish there.
+
+```bash
+uv run omniscan ballons export "Solo Leveling" "Chapter 1"                  # a project folder BallonsTranslator opens
+uv run omniscan ballons import "Solo Leveling" "Chapter 1" ./bt/ch1 --dry-run
+uv run omniscan ballons import "Solo Leveling" "Chapter 1" ./bt/ch1/imgtrans_ch1.json --source --add
+uv run omniscan mit import "Solo Leveling" "Chapter 1" out/001_translations.txt out/002_translations.txt
+```
+
+**`ballons export`** writes a BallonsTranslator project folder (default `<output_root>/<series>/_ballons/<chapter>/`,
+`--out` to choose): copies of the raw pages, the cleaned pages in `inpainted/` (once the chapter was cleaned, so
+BallonsTranslator shows OmniScan's cleaning), and `imgtrans_<folder>.json` with one text block per region
+(watermarks never) holding its source text, its English line and the lettering's size, colour and outline from
+`layout.json`. Open the folder in BallonsTranslator to re-letter or retouch. A raw page BallonsTranslator cannot
+open (GIF, AVIF, …) is exported as the JPEG ingest made of it.
+
+**`ballons import`** reads a project (its `imgtrans_*.json`, or the folder holding it); **`mit import`** reads
+the `<image>_translations.txt` files manga-image-translator writes with `--save-text` (several at once, or one
+file from `--save-text-file`). Each text block goes to the region its box overlaps most (at least half of the
+smaller box), else to the region whose text box or balloon holds its centre; watermarks never take one. Its
+translation becomes the region's English line, recorded as hand-written (`edits.json`), so every re-run keeps it
+and learning remembers it; blocks in one region are joined. Options:
+
+| Option | Effect |
+|---|---|
+| `--source` | also take the block's source text as the region's OCR text (Japanese and Chinese lines are joined without spaces) |
+| `--add` | add a region for every block over no region, with its text and translation |
+| `--dry-run` | only report what would change |
+
+Blocks over no region and pages the chapter does not have are listed; a page renamed by the tool (`001.png` for
+`001.jpg`) is matched by its name without the extension. Needs the chapter's `ingest.json` (page positions), and
+`slices.json` for `--add`; a file of the wrong kind exits 2.
+
+### `omniscan learn`
+
+What a series' hand corrections taught (see "Learning from your corrections").
+
+```bash
+uv run omniscan learn show "Solo Leveling"            # rules (id, kind, wrong → right, count, state) + memory size
+uv run omniscan learn show "Solo Leveling" --json     # memory.json plus an `active` flag per rule
+uv run omniscan learn show "Solo Leveling" --rebuild  # rebuild from every edits.json first
+uv run omniscan learn disable "Solo Leveling" 3f2a9c1e0b7d   # switch a wrong rule off (kept across rebuilds)
+uv run omniscan learn enable "Solo Leveling" 3f2a9c1e0b7d
+```
+
+A rule's state is `active`, `off` (switched off) or `needs more` (fewer than `learn.min_count`
+corrections so far). An unknown rule id exits 2.
+
+### `omniscan qa`
+
+Check the finished pages: every region that should have been cleaned is re-read on the exported (lettered)
+page with the chapter's OCR engine, and a region is listed when its **original text is still readable** there,
+for example leftover Korean that inpainting missed, or a watermark that was supposed to be erased.
+
+```bash
+uv run omniscan qa "Solo Leveling"                      # every exported chapter
+uv run omniscan qa "Solo Leveling" -c "Chapter 1" --json
+```
+
+| Argument/option | Meaning |
+|---|---|
+| `series` | required |
+| `--chapter`, `-c <str>` | chapter folder name; repeatable. Default: all |
+| `--force` | re-read even if nothing changed since the last check |
+| `--json` | print every chapter's issues as JSON |
+
+Checked are text regions, sound effects in `sfx.mode = "replace"`, and watermarks while
+`inpaint.remove_watermarks` is on. A region is flagged only when what the OCR reads there is recognisably its
+original text (source-script characters similar to its OCR text, at OCR confidence 0.5 or more), so English
+lettering misread as stray characters is never reported. Issues are `source_left` or `watermark_left`, written to
+the chapter's `qa.json` (the desktop Studio's Check shows them too). Needs the chapter exported; not part of
+`omniscan run`. Uses the GPU like `omniscan ocr` (the OCR models are loaded once per command).
+
+### `omniscan consistency`
+
+A proofreading report of a whole series: lines said again but translated differently (a catchphrase rendered
+two ways, a name spelled two ways in the same sentence), and translated lines where a **locked** glossary term
+appears in the source but its agreed English is missing.
+
+```bash
+uv run omniscan consistency "Solo Leveling"                    # every chapter
+uv run omniscan consistency "Solo Leveling" -c "Chapter 3" -c "Chapter 4" --json
+```
+
+| Argument/option | Meaning |
+|---|---|
+| `series` | required |
+| `--chapter`, `-c <str>` | chapter folder name; repeatable. Default: all |
+| `--json` | print the report as JSON |
+
+Repeated lines are compared by their source text (spacing aside); two English lines count as the same rendering
+when they differ only in case, spacing or surrounding punctuation. Sound effects, one-character lines,
+watermarks and untranslated lines are left out; the most repeated lines come first, each rendering with its
+places (chapter, region). Glossary terms are matched with the glossary's own matcher (particles attached), and
+the English must contain the term's target as written. Nothing is changed: fix the lines in the Studio, or
+many at once with `omniscan edit replace`. CPU only; the web UI's **Consistency** view shows the same report
+with a link from every place into the Studio.
+
 ### `omniscan pack`
 
 Package finished chapters (`output_root/<series>/<chapter>/*.jpg`) into CBZ and/or PDF files.
@@ -1082,13 +1284,16 @@ uv run omniscan pack DemoSeries --chapter "Chapter 1" --format cbz --format pdf
 
 ### `omniscan serve`
 
-Run the web debug tool's API (pair with `npm run dev` in `webui/` for the UI).
+Run the web app: the API and, once built (`npm run build` in `webui/`), the Studio at the same address
+(see "Web viewer").
 
 | Option | Meaning |
 |---|---|
 | `--host <str>` | bind address. Default: 127.0.0.1 |
 | `--port <int>` | port. Default: 8000 |
 | `--reload` | auto-reload on code changes |
+| `--ui` / `--no-ui` | serve the built web UI at `/` too. Default: on (API only while `webui/dist` is not built) |
+| `--open` | open the Studio in the browser |
 
 Serves existing artifacts read-only: `/api/series`, `/api/series/{s}/chapters`,
 `/api/series/{s}/chapters/{c}/ingest`, `/api/series/{s}/chapters/{c}/slices`,
@@ -1104,11 +1309,22 @@ Serves existing artifacts read-only: `/api/series`, `/api/series/{s}/chapters`,
 `/api/series/{s}/chapters/{c}/output` (finished output image names) and
 `/api/series/{s}/chapters/{c}/output/{name}` (finished output image bytes).
 
-The one write endpoint is `/api/series/{s}/chapters/{c}/filter/restore` (POST): it appends a
-`restored` decision to the chapter's `filter.json`, exactly what `omniscan filter restore` does —
-metadata only, it never touches files under `_filtered/`. There is also
-`/api/series/{s}/filtered`, the read-only listing behind the Filtered view. Everything else is
-GET-only and never writes.
+Write endpoints: `/api/series/{s}/chapters/{c}/filter/restore` (POST) appends a `restored` decision to the
+chapter's `filter.json`, exactly what `omniscan filter restore` does — metadata only, it never touches files
+under `_filtered/` (`/api/series/{s}/filtered` is the listing behind the Filtered view);
+`/api/series/{s}/chapters/{c}/run` (POST `{"through": "<stage>"}`, optionally `"start": "<stage>"`) queues
+pipeline stages for the chapter; and the editing endpoints behind the Studio (see "Studio: editing by hand"):
+`GET …/edits`, `POST …/regions`, `PATCH …/regions/{id}`, `DELETE …/regions/{id}`, `POST …/regions/{id}/revert`,
+`PUT …/final/{id}` (optional `suggested_by`) and `POST …/final/{id}/revert`; plus on-demand translation:
+`GET /api/translation-profiles` and `POST …/translate` (`{"region_ids": [...], "profile": null, "apply": false}`,
+returns every profile's suggestion); hand cleanup: `GET …/cleanup`, `POST …/cleanup` (one brush stroke:
+`{"page", "box", "mask" (base64 PNG), "method", "color"?, "offset"?}`), `DELETE …/cleanup/{id}` and
+`GET …/cleanup/{id}.png`; lettering: `GET /api/fonts`, `GET …/layout/live`, `PUT …/layout/{id}` (the
+region's whole hand lettering: `font`, `size_px`, `color`, `stroke_px`, `stroke_color`, `align`, `angle`,
+`box`, `lines`, `hidden`), `DELETE …/layout/{id}` and `GET …/preview/{page}.png` (the rendered page). Every
+write takes `Content-Type: application/json`. Output cuts: `GET …/cuts` and `PUT …/cuts` (`{"cuts": [rows] | null}`).
+Learning: `GET /api/series/{s}/memory` (rules with their `active` state, the translation memory, `min_count`),
+`POST /api/series/{s}/memory/rebuild` and `PUT /api/series/{s}/memory/rules/{id}` (`{"enabled": false}`).
 
 ```bash
 uv run omniscan serve
@@ -1370,33 +1586,181 @@ text, English and issues. Click a box to jump to its row, or a row to jump to it
 - `Check` runs the automatic quality check: lines with no English, Korean/Chinese/Japanese left in the English,
   lettering that does not fit its balloon, lines the judge was unsure about or that miss a locked glossary term,
   and English far longer than the source. `Only lines with issues` hides the rest.
-- `Save` writes your changes: source fixes and removed boxes go into `ocr.json` (so a new translate, inpaint or
-  typeset run uses them), your English lines into `studio.json` (lettering uses them over the judge's pick, even
-  after a re-translation; a re-run OCR keeps your source fixes too). Every change is also appended to
-  `corrections.jsonl` in the chapter's work folder, with before, after and the source line. It stays on your
-  computer.
+- `Save` records your changes in the chapter's `edits.json`, the same edits the web Studio and `omniscan edit`
+  make (see "Studio: editing by hand" below): they are applied to `ocr.json` / `final.json` at once, kept by
+  every re-run, learned from, and one `Save` is one undo step. Nothing leaves your computer.
 - `Re-letter` saves, then re-runs `typeset` and `export` for the chapter, so the Reader shows the new output. A
   changed source line needs a translate/judge run (Run page) before the machine's English follows it.
 
+## Studio: editing by hand
+
+Every step of the pipeline can be checked and corrected by hand, and a chapter can also be done
+entirely by hand. The **Studio** (the first view of the web UI, see "Web viewer" for starting it)
+shows one raw page at a time with every text region as a box:
+
+- **Boxes.** Click a box to select it; drag it to move it, drag one of its eight handles to resize it,
+  or type exact coordinates in the side panel (strip pixels). Arrow keys nudge the selected box by 1 px
+  (Shift: 10 px). **B** (or *Draw box*) draws a new box of the kind picked next to the button — for text
+  the detector missed; **Del** removes the selected box (a false detection: its text stays on the page,
+  untranslated and uncleaned). Removed boxes are listed under *Deleted on this page* with a *restore*
+  link. The *kind* menu turns a box into bubble text, free text, a sound effect or a watermark (a
+  watermark is erased by inpaint and never translated).
+- **Source text.** The side panel shows the OCR reading; correct it and *Save source* (Ctrl+Enter). A
+  second-opinion reading, when the OCR had one, can be taken over with *use*.
+- **English.** Write or correct the region's English line and *Save English* (Ctrl+Enter). A region
+  with no English line yet is labelled *untranslated*; a hand-written line whose source text was fixed
+  afterwards is labelled *source changed* (and flagged `source_changed` in `final.json`).
+- **Translate.** *Translate* asks the translation model for the selected region — the enabled profiles,
+  or the one picked in the toolbar menu (a disabled profile such as the local `translategemma` can be
+  picked too). The model sees the neighbouring lines of the chapter (their source text and current
+  English), the series glossary and the story so far, so a single bubble reads like the dialogue around
+  it. Nothing is saved until you *keep* a suggestion (or *use* it, edit it and *Save English*).
+  *Translate page* translates every untranslated region of the page and keeps each first suggestion.
+  A kept suggestion is recorded with the profile that wrote it (`suggested_by` in `edits.json`); a line
+  you changed is recorded as typed by hand. The Ollama rate limit answers 429 (a profile with a
+  `fallback` switches to it automatically), an unreachable Ollama 502.
+- **Revert.** *Revert English* brings back the judge's line; *Revert box and text* brings back the
+  region as the OCR read it (a box you drew is removed instead).
+- **Clean by hand.** **C** (or *Clean*) turns the mouse into a brush (**[** / **]** change its size).
+  Paint over leftover lettering, a stray mark or a watermark — or over art the automatic cleaning
+  damaged — then *Apply* (Enter; Esc discards the strokes). What the painted pixels become:
+  *inpaint* rebuilds them from their surroundings (OpenCV), *fill* paints one colour (by default the
+  median colour just around the stroke), *clone* copies the page from the spot you Alt+clicked (the
+  offset stays fixed for the next strokes), *restore* brings back the raw page. Strokes are computed from
+  the page as it currently looks — raw page, automatic cleaning, your earlier patches — so inpainting next
+  to removed lettering never pulls it back. Patches are listed per page (delete, *Undo last cleanup*) and
+  shown with the *cleaned* layer; export applies them after the automatic cleaning (patches.npz, then
+  LaMa), in painting order. They are stored in the chapter's `cleanup.json` + `cleanup.npz`, written only
+  by the Studio; a chapter re-imported with pages of another size ignores them (export metric
+  `cleanup_stale`).
+- **Lettering.** With *lettering* on, every English line's lettering box is drawn as a teal dashed
+  rectangle (red when the typesetter could not fit it). The selected region's box can be dragged and
+  resized; the *Lettering* panel sets its font (any file in the fonts folder), size, colour, outline width
+  and colour, alignment and angle, explicit line breaks (one per row; empty = automatic) or *no
+  lettering*; *Apply lettering* keeps them, *Revert lettering* gives the region back to the typesetter.
+  A new font, size or box sets the line again (the text is re-fitted into the box at the given size, or
+  the largest that fits); colour, outline, alignment and angle only restyle it. Hand lettering is stored
+  in `edits.json` (`layout`) and applied by every `typeset` run (the typesetter recomputes its own items
+  each time); an edit whose region is gone counts as the stage's `edits_orphaned`.
+- **Preview.** *preview* shows the page as the release will look — raw page, automatic cleaning, your
+  hand cleanup and the lettering with your edits — rendered on the spot (CPU, no pipeline run). It is a
+  preview: the export decodes and composites the strip on the GPU, so single pixels may differ.
+- **Output cuts** (in the **Slicer** view). The processing slices stay the slicer's; where the finished
+  images split is yours to choose: *Edit output cuts* starts from the slicer's cuts; click to add a cut,
+  drag one to move it, × removes it, *Reset to one image per slice* goes back (so does removing
+  every cut). No image may be taller than `slicer.hard_max_height` (15000 rows by default): a cut that would
+  leave a taller one is refused. With *snap to calm rows* a
+  cut jumps into a uniform band within 60 rows (a clean place between panels). A cut that runs through a
+  region's text or bubble is drawn red ("cuts through r0003") so no balloon is split across two images.
+  Export writes one image per piece between the cuts; the rows of filtered (promo) slices stay out. Stored
+  as `cuts` in `edits.json`; changing them never re-runs detection or OCR.
+- **Find & replace.** *Find & replace* opens a bar to rename a character or fix a recurring word across the
+  English lines — or the source texts — of this chapter or the whole series: *word* matches whole words,
+  unticking *case* matches any case and gives the replacement each match's case (JINWOO → JIN-WOO, Jinwoo →
+  Jin-woo), *regex* takes a regular expression (`\1` … in the replacement are its groups). *Preview* lists
+  every change; *Replace all* (only after a preview of the same rule) records them as hand edits — kept by
+  every re-run and learned from — as one undo step per chapter. Watermarks are never touched. Same as
+  `omniscan edit replace`.
+- **Undo and redo.** *↶ Undo* (Ctrl+Z) takes back the last edit of the chapter — a box, a source text, an
+  English line, a kind, lettering, output cuts, a deletion or a restore — and *↷ Redo* (Ctrl+Shift+Z or
+  Ctrl+Y) makes it again; inside a text field the keys undo your typing instead. The same history is shared
+  by every editing tool: `omniscan edit undo` / `redo`, the desktop Studio (one *Save* is one step) and the
+  imports (one `omniscan labelplus import`, `ballons import` or `mit import` is one step, as is *Translate
+  page*). The last 50 steps are kept per chapter (`edits_history.json`); a new edit after an undo forgets
+  what could be redone. Hand cleanup has its own *Undo last cleanup*.
+- **Render.** *Render (inpaint → export)* re-runs only the render stages (inpaint, LaMa, typeset,
+  export) for the chapter, so the finished pages in the Reader view show your edits without
+  re-translating the chapter.
+
+**Edits are never lost to the pipeline.** Every edit is recorded in the chapter's `edits.json`
+(work dir) and applied at once to `ocr.json` / `final.json`. The `ocr` stage keeps its own reading in
+`ocr_auto.json` and the `judge` stage its own lines in `final_auto.json`; whenever either stage runs
+again (`omniscan run --force`, a changed model or glossary, a re-detected chapter) it re-applies
+`edits.json` to what it produced. An edit follows its region by box position, so it survives a re-run
+that renumbers the regions; an edit whose region no longer exists at all is counted in the stage's
+`edits_orphaned` metric. A chapter with no OCR yet can be done entirely by hand: draw the boxes, type
+their text and English, then render.
+
+## Learning from your corrections
+
+OmniScan learns from what you fix in the Studio, per series, and applies it to the series' later
+chapters. Nothing is sent anywhere and nothing is trained: every lesson is a plain rule or a remembered
+line in the series' `memory.json` (work dir), rebuilt from the chapters' `edits.json` whenever one of
+them changes. Each correction is compared with what the pipeline produced (the edit records it), so a
+lesson keeps its evidence even after a chapter is re-run with the lesson already applied.
+
+| You keep doing this in the Studio | Later chapters get |
+|---|---|
+| correct the same OCR misreading (`Jlnwoo` → `Jinwoo`) | the word fixed as soon as the OCR reads it (the raw reading stays as the region's second-opinion reading) |
+| delete regions reading the same text (a scan group's credit, a site name) | those regions dropped by the OCR |
+| mark a text as a watermark or a sound effect | regions reading that text marked the same way (one correction is enough) |
+| write or keep an English line | the translation memory: a line that comes up again is translated exactly this way, and similar lines are shown to the model as examples of your style |
+| rewrite a name or term the model keeps getting wrong (`Hunter Association` → `Hunters Guild`) | the model told to write your wording (capitalised words: names, titles) |
+
+A word fix, a preferred wording or a deletion acts only after `learn.min_count` (default 2) matching
+corrections, and never while you kept the "wrong" word just as often elsewhere — so a one-off change is
+not a rule. The **Learned** view of the web UI (series level, next to *Filtered*) lists every rule with
+how often it was seen and whether it acts; *Switch off* any rule that is wrong (it stays off when the
+memory is rebuilt) and search the translation memory. `omniscan learn show SERIES` prints the same.
+
+Lessons apply when a stage runs: the `ocr` stage (metrics `learned_fixes`, `learned_drops`,
+`learned_kinds`), the `translate` stage (metric `memory`: lines taken from the translation memory) and
+the Studio's *Translate* (similar lines and your wording only — it always asks the model for a fresh
+suggestion). The next `omniscan run` brings processed chapters up to date: an OCR lesson that becomes active
+or is switched off (or a changed `[learn]` setting) re-runs the `ocr` stage, so a region a rule dropped comes
+back once the rule is off; a line you translated by hand re-runs the `translate` stage only for the chapters
+that hold the same line, and the remembered English always wins over a line kept from an earlier run. Set
+`[learn] enabled = false` in a series' `series.toml` to switch learning off for that series.
+
+## Speakers and character voices
+
+A translation reads better when every character keeps one voice. Describe the characters of a series in a
+`voices.toml` next to its `series.toml` (in the library folder of the series):
+
+```toml
+[[character]]
+name = "Jinwoo"
+aliases = ["진우", "성진우"]           # other names, as they appear in the source text
+voice = "calm and terse; plain speech, no honorifics"
+
+[[character]]
+name = "Jinah"
+aliases = ["진아"]
+voice = "cheerful, teases her brother"
+```
+
+Then say who speaks a line — `omniscan edit speaker SERIES CHAPTER REGION NAME`, or the desktop Studio — and
+the translation request shows the model each region's speaker and the voices of the characters who speak or
+are named in it. Speakers are hand edits (`edits.json`), kept by every re-run; the pipeline never guesses
+them. A region without a speaker is translated exactly as before; changing a speaker, or a character's voice
+in `voices.toml`, re-translates only that character's lines on the next run (the rest are reused). An invalid
+`voices.toml` fails the translate stage with the reason.
+
 ## Web viewer
 
-Start the API and the UI in two terminals:
-
-```bash
-uv run omniscan serve
-```
+Build the web UI once (again after updating OmniScan), then start it:
 
 ```bash
 cd webui
 npm install
-npm run dev
+npm run build
 ```
 
-The Vite dev server proxies `/api` to `http://localhost:8000`, so the defaults of both commands work
+```bash
+uv run omniscan serve --open
+```
+
+`omniscan serve` serves the built UI (`webui/dist`) and the API at the same address,
+`http://127.0.0.1:8000/`; `--open` opens it in the browser. Until the UI is built it serves the API only
+and says so. For working on the UI itself, run `npm run dev` in `webui/` instead of building: the Vite dev
+server proxies `/api` to `http://localhost:8000`, so the defaults of both commands work
 together. Open the local URL Vite prints and pick a series and chapter.
 
-Six chapter views (Slicer, OCR, Translation, Reader, Inpaint, Layout) need a chapter; the **Filtered**
-view only needs a series and shows its every chapter that has filtered items.
+The chapter views (Studio, Slicer, OCR, Translation, Reader, Inpaint, Layout, Edit) need a chapter; the
+**Filtered** view only needs a series and shows its every chapter that has filtered items; the **Learned**
+view only needs a series too (see "Learning from your corrections"), and so does the **Consistency** view (the
+report of `omniscan consistency`; each place opens the Studio on that region). The **Studio**
+is the editor (see "Studio: editing by hand"); the other views are for checking one stage's output.
 
 The Slicer view stacks the raw pages and overlays:
 
@@ -1456,8 +1820,10 @@ filtered. Restore appends a `restored` decision to the chapter's `filter.json` �
 restored item can be re-filtered only by re-running `omniscan filter run`. The row turns green without
 a refetch when the restore succeeds; a failure shows the API's error next to the button.
 
-The whole tool is read-only except the Filtered view's Restore button: the API only answers GET
-requests plus that one POST, which appends to `filter.json` and never writes anything else.
+Only the Studio, the Edit view, the run buttons, the Filtered view's Restore button and the Learned view's
+rule switches write anything: edits go to `edits.json` (and are applied to `ocr.json`/`final.json`), a
+restore appends to `filter.json`, a rule switch to the series' `memory.json`, and a run button queues
+pipeline stages.
 
 ## Resuming and re-running
 

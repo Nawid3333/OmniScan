@@ -2,8 +2,9 @@
 
 Left: the raw strip with every text region outlined (click a box to select its row). Right: one row per region
 (page, kind, source, English, issues), editable in place. Save writes the edits through
-`omniscan.studio.session.StudioSession` (ocr.json, studio.json, corrections.jsonl); Check runs the automatic QA
-pass; Re-letter runs the typeset and export stages for this chapter so the output shows the edits.
+`omniscan.edits.session.StudioSession` (edits.json, applied to ocr.json / final.json at once, one undo step
+per save); Check runs the automatic QA pass; Re-letter runs the typeset and export stages for this chapter so
+the output shows the edits.
 """
 
 from __future__ import annotations
@@ -27,14 +28,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from omniscan.core.config import Config
+from omniscan.core.config import Config, series_config
 from omniscan.core.paths import SeriesPaths
 from omniscan.gui.run_worker import RunWorker
 from omniscan.gui.services import library
 from omniscan.gui.services.runs import RunController, RunOutcome, RunSpec
 from omniscan.gui.strip_view import StripView
 from omniscan.gui.theme import set_role
-from omniscan.studio.session import StudioRow, StudioSession
+from omniscan.edits.session import StudioRow, StudioSession
 
 COLUMNS = ("Page", "Kind", "Source", "English", "Issues")
 _SOURCE_COL, _ENGLISH_COL, _ISSUES_COL = 2, 3, 4
@@ -177,11 +178,11 @@ class StudioView(QWidget):
         self._refresh()
 
     def save(self) -> int:
-        """Save the edits; returns how many corrections were logged."""
+        """Save the edits (one undo step); returns how many changes were recorded."""
         if self._session is None:
             return 0
         count = self._session.save()
-        self.status_label.setText(f"saved {count} correction(s)" if count else "nothing to save")
+        self.status_label.setText(f"saved {count} change(s)" if count else "nothing to save")
         self._update_buttons()
         return count
 
@@ -275,7 +276,9 @@ class StudioView(QWidget):
     def _open(self, series: str, chapter: str) -> None:
         """Load a chapter's strip and its edit session."""
         paths = SeriesPaths.from_config(self._cfg, series).chapter(chapter)
-        session = StudioSession(paths)
+        # the page's own config (not the process-wide one), with the series' series.toml applied
+        direction = series_config(self._cfg, paths.raw_dir.parent).detect.reading_direction
+        session = StudioSession(paths, direction=direction)
         if not session.has_regions:
             self._close()
             self.status_label.setText(f"{chapter}: no text regions yet; run detection and OCR first")

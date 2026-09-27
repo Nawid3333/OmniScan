@@ -16,7 +16,7 @@ from omniscan.core.paths import SeriesPaths
 from omniscan.core.schemas import BBox, FinalArtifact, FinalLine, Region, RegionsArtifact
 from omniscan.gui.services.runs import RunOutcome, RunSpec
 from omniscan.gui.studio_view import RELETTER_STAGES, StudioView
-from omniscan.studio.edits import load_edits
+from omniscan.edits.store import load_edits
 from tests.fixtures.gui_library import CHAPTERS, SERIES, build_library
 
 CHAPTER = CHAPTERS[0]
@@ -81,7 +81,8 @@ def test_editing_a_cell_and_saving_writes_the_edits(qapp: QApplication, cfg: Con
     assert view.save() == 1
     session = view.session()
     assert session is not None
-    assert load_edits(session.paths).translations == {"r0002": "What?"}
+    written = {edit.region_id: edit.text for edit in load_edits(session.paths).translations}
+    assert written == {"r0002": "What?"}
     assert view.run_check() == 0
 
 

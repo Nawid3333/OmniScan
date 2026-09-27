@@ -19,6 +19,7 @@ from omniscan.core.config import Config, get_config, get_secrets, series_config
 from omniscan.core.paths import ChapterPaths, SeriesPaths, chapter_number, list_chapters, list_images
 from omniscan.core.schemas import GlossaryEntry, IngestArtifact, SlicesArtifact
 from omniscan.doctor import run_all_checks
+from omniscan.edits.cli import edit_app
 from omniscan.filter.apply import record_override
 from omniscan.filter.decide import EXAMPLE_SUFFIXES
 from omniscan.glossary.store import GlossaryStore
@@ -32,6 +33,8 @@ from omniscan.importer.plan import (
     files_to_convert,
     plan_import,
 )
+from omniscan.interchange.cli import ballons_app, labelplus_app, mit_app, psd_app
+from omniscan.learn.memory import current_memory, is_active, set_rule_enabled
 from omniscan.library.cli import library_app
 from omniscan.llm.ollama import OllamaClient, OllamaError, OllamaRateLimitError
 from omniscan.log import setup_logging
@@ -439,6 +442,85 @@ def cmd_ocr(
 
 
 app.command("ocr")(cmd_ocr)
+
+
+def cmd_qa(
+    series: Annotated[str, typer.Argument()],
+    chapter: Annotated[
+        list[str] | None,
+        typer.Option("--chapter", "-c", help="Chapter folder name; repeatable. Default: all."),
+    ] = None,
+    force: Annotated[bool, typer.Option("--force", help="Re-run even if up to date.")] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Print every chapter's issues as JSON.")] = False,
+) -> None:
+    """Re-read the exported pages with OCR and list the regions whose original text is still readable (qa.json).
+    Needs the chapter exported (`omniscan export` or `omniscan run`)."""
+    from omniscan.qa.leftover import load_issues
+    from omniscan.qa.stage import QaStage
+
+    _run_stages("qa", [QaStage()], series, chapter, force, progress=not as_json)
+    series_paths = _series_paths(series)
+    report: dict[str, list[dict[str, str]]] = {}
+    for name in chapter or series_paths.chapters():
+        issues = load_issues(series_paths.chapter(name))
+        report[name] = [issue.model_dump(mode="json") for issue in issues]
+        if not as_json:
+            for issue in issues:
+                _echo_text(f"qa: {name}: {issue.region_id} {issue.kind}: {issue.message}")
+    if as_json:
+        _echo_text(json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        typer.echo(f"qa: {sum(len(v) for v in report.values())} issue(s) in {len(report)} chapter(s)")
+
+
+app.command("qa")(cmd_qa)
+
+
+def _places(places: list[tuple[str, str]], shown: int = 4) -> str:
+    """'Chapter 1 r0001, Chapter 2 r0004 (+3 more)'."""
+    text = ", ".join(f"{chapter} {region_id}" for chapter, region_id in places[:shown])
+    return text + (f" (+{len(places) - shown} more)" if len(places) > shown else "")
+
+
+def cmd_consistency(
+    series: Annotated[str, typer.Argument()],
+    chapter: Annotated[
+        list[str] | None,
+        typer.Option("--chapter", "-c", help="Chapter folder name; repeatable. Default: all."),
+    ] = None,
+    as_json: Annotated[bool, typer.Option("--json", help="Print the report as JSON.")] = False,
+) -> None:
+    """List the lines of a series said again but translated differently, and the lines missing a locked
+    glossary term's English (a proofreading report; fix with the Studio or `omniscan edit replace`)."""
+    from dataclasses import asdict
+
+    from omniscan.qa.consistency import divergences, glossary, series_lines, term_misses
+
+    series_paths = _series_paths(series)
+    unknown = [name for name in chapter or [] if name not in series_paths.chapters()]
+    if unknown:
+        typer.echo(f"consistency: no chapter {unknown[0]!r} in {series}", err=True)
+        raise typer.Exit(2)
+    lines = series_lines(series_paths, chapter)
+    split, missing = divergences(lines), term_misses(lines, glossary(series_paths))
+    if as_json:
+        report = {"divergences": [asdict(d) for d in split], "term_misses": [asdict(m) for m in missing]}
+        _echo_text(json.dumps(report, ensure_ascii=False, indent=2))
+        return
+    for item in split:
+        _echo_text(f"consistency: {item.source!r} is translated {len(item.renderings)} ways:")
+        for rendering in item.renderings:
+            _echo_text(f"  {rendering.english!r} ×{len(rendering.places)}: {_places(rendering.places)}")
+    for miss in missing:
+        _echo_text(
+            f"consistency: {miss.chapter} {miss.region_id}: {miss.term} should read {miss.target!r}: {miss.english}"
+        )
+    typer.echo(
+        f"consistency: {len(split)} line(s) translated differently, {len(missing)} glossary term(s) missing"
+    )
+
+
+app.command("consistency")(cmd_consistency)
 
 
 def _echo_text(text: str) -> None:
@@ -959,16 +1041,35 @@ def cmd_serve(
     host: Annotated[str, typer.Option("--host")] = "127.0.0.1",
     port: Annotated[int, typer.Option("--port")] = 8000,
     reload: Annotated[bool, typer.Option("--reload")] = False,
+    ui: Annotated[
+        bool, typer.Option("--ui/--no-ui", help="Serve the built web UI (webui/dist) at / as well.")
+    ] = True,
+    open_browser: Annotated[bool, typer.Option("--open", help="Open the Studio in the browser.")] = False,
 ) -> None:
-    """Run the web debug tool's API (pair with `npm run dev` in webui/ for the UI).
+    """Run the web app: the API and, once built (`npm run build` in webui/), the Studio at the same address.
 
     Also drains the job queue in the background, so the UI's "run this" actions actually execute —
     do not also run `omniscan queue run` against the same library while this is up."""
+    import threading
+    import webbrowser
+
     import uvicorn
 
-    from omniscan.web.app import create_app
+    from omniscan.web.app import UI_DIST, built_ui, create_app
 
-    uvicorn.run(create_app(get_config(), run_worker=True), host=host, port=port, reload=reload)
+    ui_dir = built_ui() if ui else None
+    url = f"http://{host}:{port}/"
+    if ui_dir is not None:
+        typer.echo(f"serve: OmniScan Studio at {url}")
+        if open_browser:
+            threading.Timer(1.5, webbrowser.open, args=(url,)).start()
+    elif ui:
+        typer.echo(
+            f"serve: API only at {url}api — the web UI is not built ({UI_DIST} has no index.html): "
+            "run `npm install && npm run build` in webui/ once, or `npm run dev` there while developing"
+        )
+    web_app = create_app(get_config(), run_worker=True, ui_dir=ui_dir)
+    uvicorn.run(web_app, host=host, port=port, reload=reload)
 
 
 app.command("serve")(cmd_serve)
@@ -1472,6 +1573,75 @@ def watermark_remove(
 
 
 app.add_typer(watermark_app, name="watermark")
+
+learn_app = typer.Typer(no_args_is_help=True, help="What a series' hand corrections taught the pipeline.")
+
+_LEARN_LABELS = {
+    "ocr_fix": "OCR fix",
+    "preferred_term": "wording",
+    "drop_text": "delete",
+    "watermark_text": "watermark",
+    "sfx_text": "sound effect",
+}
+
+
+@learn_app.command("show")
+def learn_show(
+    series: Annotated[str, typer.Argument()],
+    rebuild: Annotated[bool, typer.Option("--rebuild", help="Rebuild from every edits.json first.")] = False,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Print memory.json with each rule's state.")
+    ] = False,
+) -> None:
+    """Print the rules and translation memory the series' hand edits add up to (rebuilt when stale)."""
+    paths = _series_paths(series)
+    learn = series_config(get_config(), paths.library_dir).learn
+    memory = current_memory(paths, rebuild=rebuild)
+    if as_json:
+        rules = [{**rule.model_dump(mode="json"), "active": is_active(rule, learn)} for rule in memory.rules]
+        translations = [entry.model_dump(mode="json") for entry in memory.translations]
+        typer.echo(json.dumps({"rules": rules, "translations": translations}, ensure_ascii=False, indent=2))
+        return
+    table = Table(title=f"learn: {series} ({len(memory.rules)} rule(s), min count {learn.min_count})")
+    for column in ("Id", "Kind", "Wrong", "Right", "Count", "State"):
+        table.add_column(column, justify="right" if column == "Count" else "left")
+    for rule in memory.rules:
+        state = "active" if is_active(rule, learn) else "off" if not rule.enabled else "needs more"
+        table.add_row(rule.id, _LEARN_LABELS[rule.kind], rule.wrong, rule.right, str(rule.count), state)
+    Console().print(table)
+    typer.echo(f"learn: {len(memory.translations)} line(s) in the translation memory")
+    if not learn.enabled:
+        typer.echo("learn: learning is switched off for this series ([learn] enabled = false)")
+
+
+def _switch_rule(series: str, rule: str, enabled: bool) -> None:
+    """Switch one learned rule, exiting 2 when the series has no such rule."""
+    try:
+        set_rule_enabled(_series_paths(series), rule, enabled)
+    except LookupError as exc:
+        typer.echo(f"learn: {exc.args[0]}", err=True)
+        raise typer.Exit(2) from exc
+    typer.echo(f"learn: rule {rule} {'on' if enabled else 'off'}")
+
+
+@learn_app.command("enable")
+def learn_enable(series: Annotated[str, typer.Argument()], rule: Annotated[str, typer.Argument()]) -> None:
+    """Switch a learned rule back on."""
+    _switch_rule(series, rule, True)
+
+
+@learn_app.command("disable")
+def learn_disable(series: Annotated[str, typer.Argument()], rule: Annotated[str, typer.Argument()]) -> None:
+    """Switch a learned rule off (it stays off when the memory is rebuilt)."""
+    _switch_rule(series, rule, False)
+
+
+app.add_typer(learn_app, name="learn")
+app.add_typer(edit_app, name="edit")
+app.add_typer(labelplus_app, name="labelplus")
+app.add_typer(psd_app, name="psd")
+app.add_typer(ballons_app, name="ballons")
+app.add_typer(mit_app, name="mit")
 
 queue_app = typer.Typer(no_args_is_help=True, help="Persistent job queue: run pipeline stages over series.")
 

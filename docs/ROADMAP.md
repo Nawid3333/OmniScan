@@ -93,8 +93,9 @@ Each one ends in something a user can run. Card IDs follow the existing scheme (
 
 ### X3 — Translator Studio (the manual workbench)
 Built so far (2026-09-27): the Studio page with region boxes over the raw strip, editable source and English,
-removing false boxes, the automatic QA check over the artifacts, `studio.json` edits that survive re-runs, the local
-`corrections.jsonl` log and a one-click re-letter (typeset + export). Everything else below is still to do.
+removing false boxes, the automatic QA check over the artifacts, edits saved through `edits.json` (the same layer as
+the web Studio and `omniscan edit`: they survive re-runs, undo/redo, and feed learning) and a one-click re-letter
+(typeset + export). Everything else below is still to do.
 
 A new "Studio" page in the desktop app, working on the pipeline's own artifacts (regions, OCR, translation,
 inpaint patches, layout), so every manual change is just a better version of a stage output:
@@ -126,7 +127,7 @@ inpaint patches, layout), so every manual change is just a better version of a s
   (EXIF etc.) are stripped before upload; takedown and deletion requests are honoured; the consent text is exact;
   upload IP addresses count as personal data under the GDPR (privacy notice, retention limit).
 - What is shared: the page images, corrected OCR lines, source → final translation pairs with context, glossary
-  entries, region boxes the user fixed, lettering choices (the Studio's `corrections.jsonl` is the local source).
+  entries, region boxes the user fixed, lettering choices (the chapters' `edits.json`, harvested by `learn/`, is the local source).
 - A local "contribution" format first (JSON + crops, versioned schema in `core/`), exportable as a file; an upload
   service and its database come after, with accounts, licence terms for contributed data (e.g. CC BY or a
   contributor agreement), deletion on request, and moderation.

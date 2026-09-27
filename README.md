@@ -23,7 +23,7 @@ packaged into CBZ/PDF.
 | chapter matching | working — `omniscan match chapters DIR_A DIR_B` (perceptual-hash alignment between two independently-sourced chapter sets) |
 | detect | working — `omniscan detect` (regions.json; no text yet) |
 | ocr | working — `omniscan ocr` (ocr.json; sound effects found by lexicon and a whole-page CRAFT sweep) |
-| translate | working — `omniscan translate` (candidate runs only; needs ocr.json from `omniscan ocr`) |
+| translate | working — `omniscan translate` (candidate runs only; needs ocr.json from `omniscan ocr`); pipeline re-runs translate and judge only the regions that changed |
 | judge | working — `omniscan judge` (final.json) |
 | eval | working — `omniscan eval` (scores ocr.json/final.json against ground-truth SVG text layers) |
 | inpaint | working — `omniscan inpaint` (flat fills, glyph-precise masks; `--lama` rebuilds the art under lettering) |
@@ -34,7 +34,9 @@ packaged into CBZ/PDF.
 | job queue | working — `omniscan queue add` / `list` / `run` / `pause` / `resume` / `cancel` / `retry` / `clear` |
 | models | working — `omniscan models list` / `download` / `remove` / `verify` |
 | hardware | working — `omniscan hardware [--json]` |
-| web viewer | working — `omniscan serve` + `npm run dev` (Slicer, OCR, Translation, Reader and Filtered views — read-only except the Filtered view's Restore button; the OCR/Translation views need an `ocr.json`) |
+| studio (manual editing) | working — the web UI's Studio view: draw/move/resize/delete text boxes, fix OCR text, write English lines, translate one region or a page on demand, clean by hand with a brush (inpaint, fill, clone, restore), hand-set the lettering (font, size, colours, outline, angle, box, line breaks) with a live preview of the finished page, choose where the output images split (Slicer view); edits survive every re-run (`edits.json`, `cleanup.json`); the same edits from the command line with `omniscan edit`; LabelPlus files in and out (`omniscan labelplus`), layered PSD pages (`omniscan psd export`), BallonsTranslator projects in and out (`omniscan ballons`), manga-image-translator text files in (`omniscan mit import`); undo/redo of every hand edit, find & replace across a series, and a consistency report (`omniscan consistency`) |
+| learning | working — each series learns from your Studio corrections: repeated OCR fixes, deletions and watermark/sound-effect labels apply to later chapters, your English lines become a translation memory and your rewritten names/terms the model's preferred wording (`memory.json`; Learned view, `omniscan learn`) |
+| web viewer | working — `omniscan serve` (the built UI at the API's address; Slicer, OCR, Translation, Reader and Filtered views — read-only except the Filtered view's Restore button; the OCR/Translation views need an `ocr.json`) |
 | desktop app | working — `omniscan gui` (PySide6: Library, Reader, Run, Models, Settings, Import) |
 | update | working — `omniscan update check` / `download` |
 
@@ -59,7 +61,7 @@ ROCm 10); CI runs the test suite on all three OSes.
   | none of these | `cpu` (works, slowly) |
 
   `gpu.device = "auto"` then picks the strongest discrete GPU the installed build can reach.
-- Node 24 for the web UI only (`npm run dev` in `webui/`).
+- Node 24 to build the web UI once (`npm install && npm run build` in `webui/`).
 
 ## Quickstart
 
@@ -68,19 +70,13 @@ uv sync --extra cuda --extra gui   # or rocm-gfx1201 / xpu / mps / cpu, see the 
 uv run omniscan doctor
 uv run python scripts/make_demo_chapter.py
 uv run omniscan slice DemoSeries
-uv run omniscan serve
-```
-
-Then in a second terminal, start the web UI and open the local URL it prints:
-
-```bash
-cd webui
-npm install
-npm run dev
+cd webui && npm install && npm run build && cd ..   # once, and after every web UI update
+uv run omniscan serve --open
 ```
 
 `make_demo_chapter.py` writes a synthetic `DemoSeries/Chapter 1` into the configured library root
-(`~/omniscan/library` by default), `slice` normalises and cuts it, and `serve` + the UI show the result.
+(`~/omniscan/library` by default), `slice` normalises and cuts it, and `serve` opens the Studio on it at
+`http://127.0.0.1:8000/` (API and UI at one address; `npm run dev` in `webui/` for UI development).
 
 ## Configuration
 

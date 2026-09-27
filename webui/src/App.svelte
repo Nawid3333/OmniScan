@@ -5,17 +5,21 @@
   import FilteredView from "./FilteredView.svelte";
   import InpaintView from "./InpaintView.svelte";
   import LayoutView from "./LayoutView.svelte";
+  import LearnedView from "./LearnedView.svelte";
   import OcrView from "./OcrView.svelte";
+  import ConsistencyView from "./ConsistencyView.svelte";
   import ReaderView from "./ReaderView.svelte";
   import SlicerView from "./SlicerView.svelte";
+  import StudioView from "./StudioView.svelte";
   import TranslationView from "./TranslationView.svelte";
   import { listChapters, listSeries } from "./api";
 
   let view = $state<
-    "slicer" | "ocr" | "translation" | "reader" | "inpaint" | "layout" | "edit" | "filtered"
-  >("slicer");
+    "studio" | "slicer" | "ocr" | "translation" | "reader" | "inpaint" | "layout" | "edit" | "filtered" | "learned" | "consistency"
+  >("studio");
   let series = $state("");
   let chapter = $state("");
+  let focus = $state<string | null>(null); // a region the Studio opens on (from the Consistency view)
   let seriesList = $state<string[]>([]);
   let chapterList = $state<string[]>([]);
   let loadError = $state("");
@@ -27,6 +31,14 @@
       loadError = `could not load series list: ${e instanceof Error ? e.message : String(e)}`;
     }
   });
+
+  /** Open the Studio on a region of a chapter. */
+  async function openRegion(target: string, regionId: string): Promise<void> {
+    if (chapterList.length === 0) chapterList = await listChapters(series);
+    chapter = target;
+    focus = regionId;
+    view = "studio";
+  }
 
   async function onSeriesChange(): Promise<void> {
     chapter = "";
@@ -42,7 +54,7 @@
 </script>
 
 <main>
-  <h1>OmniScan debug</h1>
+  <h1>OmniScan</h1>
   <p>
     <select bind:value={series} onchange={onSeriesChange}>
       <option value="">— series —</option>
@@ -50,7 +62,7 @@
         <option value={s}>{s}</option>
       {/each}
     </select>
-    <select bind:value={chapter}>
+    <select bind:value={chapter} onchange={() => (focus = null)}>
       <option value="">— chapter —</option>
       {#each chapterList as c (c)}
         <option value={c}>{c}</option>
@@ -63,6 +75,7 @@
   {#if series}
     <p>
       {#if chapter}
+        <button onclick={() => (view = "studio")} disabled={view === "studio"}>Studio</button>
         <button onclick={() => (view = "slicer")} disabled={view === "slicer"}>Slicer</button>
         <button onclick={() => (view = "ocr")} disabled={view === "ocr"}>OCR</button>
         <button onclick={() => (view = "translation")} disabled={view === "translation"}>Translation</button>
@@ -72,11 +85,19 @@
         <button onclick={() => (view = "edit")} disabled={view === "edit"}>Edit</button>
       {/if}
       <button onclick={() => (view = "filtered")} disabled={view === "filtered"}>Filtered</button>
+      <button onclick={() => (view = "learned")} disabled={view === "learned"}>Learned</button>
+      <button onclick={() => (view = "consistency")} disabled={view === "consistency"}>Consistency</button>
     </p>
     {#if view === "filtered"}
       <FilteredView {series} />
+    {:else if view === "learned"}
+      <LearnedView {series} />
+    {:else if view === "consistency"}
+      <ConsistencyView {series} onOpen={(c, id) => void openRegion(c, id)} />
     {:else if chapter}
-      {#if view === "slicer"}
+      {#if view === "studio"}
+        <StudioView {series} {chapter} {focus} />
+      {:else if view === "slicer"}
         <SlicerView {series} {chapter} />
       {:else if view === "ocr"}
         <OcrView {series} {chapter} />

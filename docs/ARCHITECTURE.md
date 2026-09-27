@@ -26,14 +26,71 @@ to the common strip width. Integers, half-open ranges `[x0, x1)`, `[y0, y1)`. A 
 | `slices.json` | `SlicesArtifact` (bands, slices, blank/forced/filtered flags) | slicer (+ promo filter flags) |
 | `filter.json` | `FilterArtifact` | promo filter |
 | `regions.json` | `RegionsArtifact` (text empty) | detect |
-| `ocr.json` | `RegionsArtifact` (text filled) | ocr |
+| `ocr.json` | `RegionsArtifact` (text filled, hand edits applied) | ocr (+ editing tools) |
+| `ocr_auto.json` | `RegionsArtifact` (the OCR's own reading, before hand edits) | ocr |
 | `translations/<run_id>.json` | `CandidateRun` | each translation run |
-| `final.json` | `FinalArtifact` | judge |
+| `final.json` | `FinalArtifact` (hand-written lines applied) | judge (+ editing tools) |
+| `final_auto.json` | `FinalArtifact` (the judge's own lines, before hand edits) | judge |
+| `edits.json` | `ChapterEdits` (hand edits: regions, English lines, lettering) | editing tools only (`edits/store.py`) |
+| `edits_history.json` | `EditsHistory` (earlier states of `edits.json`, for undo and redo) | editing tools only (`edits/store.py`) |
+| `cleanup.json` + `cleanup.npz` | `CleanupArtifact` + npz (hand-painted cleanup patches: masks, pixels) | editing tools only (`cleanup/store.py`); applied last by export |
 | `inpaint.json` + `patches.npz` | `InpaintArtifact` + npz (cleaned crops and masks per region) | inpaint |
-| `layout.json` | `LayoutArtifact` | typeset |
+| `layout.json` | `LayoutArtifact` (hand lettering applied) | typeset |
 | `export.json` | `ExportArtifact` (files written to `output_root/<Series>/<Chapter>/`) | export |
+| `qa.json` | `QaArtifact` (regions whose original text is still readable on the exported pages) | `qa` stage (`omniscan qa`, not part of `omniscan run`) |
 | `manifest.json` | `Manifest` of `StageRecord`s | stage runner |
+| `<series>/memory.json` | `SeriesMemory` (learned rules + translation memory of the whole series) | `learn/memory.py`, rebuilt from every `edits.json` when one changes; only rule switches are set by hand |
 Save/load only through `Artifact.save()` (atomic tmp+rename) and `Model.load(path)`.
+
+**Hand edits** (`edits/`): `edits.json` is user-owned — only the editing tools write it (web Studio, via
+`edits/store.py`). The `ocr` and `judge` stages write their own output to `ocr_auto.json`/`final_auto.json`
+and `ocr.json`/`final.json` as that output with `edits.json` applied (`edits/apply.py`, pure functions); an
+editing tool rebuilds the same two files from the `_auto` ones with the same functions. An edit is matched to
+its region by id and box overlap (IoU >= 0.5 with the box it was made on), so it survives a re-run that
+renumbers regions. `edits.json` is deliberately *not* an input of `ocr` (a text fix must not re-run the OCR
+models); the tools apply it themselves. It *is* an input of `typeset`, which is cheap: its hand lettering
+(`layout`) is applied there (`typeset/overrides.py`), and `typeset/chapter.py::chapter_layout` is the one
+function both the stage and the studio's live preview (`typeset/page_preview.py`) letter a chapter with.
+Every change of `edits.json` goes through `edits/store.py::save_edits`, which pushes the state it replaces
+onto `edits_history.json` (at most `HISTORY_DEPTH` steps); `edit_group` makes several operations one step (an
+import, a desktop save), and `undo`/`redo` swap states and rebuild `ocr.json`/`final.json` like any edit.
+`edits/replace.py` is find & replace over English lines or source texts: a pure rule (`FindReplace`), a
+per-chapter `plan`, and `apply_changes` through the same store operations (one `edit_group` per chapter).
+`edits/session.py::StudioSession` is the desktop Translator Studio's view of one chapter: it holds the page's
+changes in memory and saves them through the same `edits/store.py` operations (the web Studio and `omniscan edit`
+call those directly).
+
+**Learning** (`learn/`): `learn/harvest.py` compares every edit with the pipeline text it records
+(`RegionEdit.auto_text`, `TranslationEdit.auto_text`, set when the edit is first made) — OCR fixes,
+deletions, watermark/sfx labels, English lines, rewritten words. `learn/memory.py` turns a series'
+corrections into `memory.json`: word rules need `learn.min_count` matching corrections and none that kept
+the old word; the translation memory keeps the latest English per source line. `learn/apply.py` applies it:
+the `ocr` stage runs `apply_to_regions` on its reading (so `ocr_auto.json` holds the lessons), the
+`translate` stage and the studio's on-demand translation pass `TranslationHints` to `run_profile` (an exact
+memory line is used as the candidate; similar lines and preferred words go into the chat_json prompt).
+`memory.json` is not a stage input file (every edit rewrites it); instead the two stages declare what they take
+from it through the optional `input_extra(ctx)` hook (`core/stage.py`, hashed with the input files): the
+`ocr` stage its active lessons (`learn/apply.py::ocr_lessons`), the `translate` stage the remembered English of
+this chapter's lines (`remembered_lines`). A switched-off rule re-runs the OCR; a new hand translation re-runs
+only the chapters holding that line, and an exact memory line wins over a reused candidate.
+
+**Speakers and voices** (`translate/voices.py`): `Region.speaker` is set by hand (a `RegionEdit.speaker`, applied
+like every region edit); a series' hand-written `voices.toml` (library dir, next to `series.toml`) describes how
+each character talks. The chat_json prompt carries each region's speaker and the voices of the characters who
+speak or are named in the request; `translation_key` includes a region's speaker and voice only when it has a
+speaker, so unassigned lines keep their keys. `voices.toml` is an input of the translate stage.
+
+**Consistency** (`qa/consistency.py`): a series-wide proofreading report, never a stage and never written to
+disk: `series_lines` reads every chapter's current regions and English lines, `divergences` groups repeated
+source lines with different English, `term_misses` checks locked glossary terms with `glossary/match.py`
+(served by `omniscan consistency` and `GET /api/series/{series}/consistency`).
+
+**Interchange** (`interchange/`): other tools' files in and out of a chapter, never a stage. Out: LabelPlus
+files (`labelplus.py`), layered PSD pages (`psd.py`) and BallonsTranslator projects (`ballons.py`), built from
+the chapter's artifacts on the CPU. In: LabelPlus labels (a point each) go to the region they point into
+(`labelplus.py::match_labels`); BallonsTranslator and manga-image-translator text blocks (`ballons.py`, `mit.py`,
+a box each in page pixels) go to the region they overlap most (`blocks.py::match_blocks`). Everything imported
+is recorded through `edits/store.py`, like any hand edit.
 
 ## Stages (`core/stage.py`)
 A stage is a class with `name`, `version`, `gpu_group` class vars and four methods:
@@ -80,3 +137,14 @@ Stage outputs stay JSON / `.npz`; the pixels of the final chapter are produced o
 - **inpaint_lama** (later card, `gpu_group` "inpaint"): handles the `needs_lama` items; writes `inpaint_lama.json` (`InpaintArtifact`, method `"lama"`) and `patches_lama.npz` (same layout as `patches.npz`);
   export applies `patches.npz` first and `patches_lama.npz` after it, so a LaMa patch overrides the flat-fill placeholder of the same region.
 - Config sections: `[inpaint]`, `[typeset]`, `[export]` (see `config/default.toml`). `export.json` lists the written slices (name, size, bytes) and is the stage's manifest output.
+
+## Performance tests (`tests/perf`, `pytest --perf`)
+`tests/perf/test_pipeline_perf.py` runs the real pipeline (all ten stages) on the E1 golden test's synthetic
+pages, twice in one run, and measures the second chapter, so model loading and first-use warm-up do not count.
+Each stage's seconds are compared with this device's baseline in `tests/perf/baselines.json` (keyed by
+`cuda:<device name>`): a stage fails when it is slower than its baseline by more than 30 % plus 0.25 s
+(`tests/perf/budget.py`). A device without a baseline only prints its timings. `pytest --perf --perf-update`
+records the current timings as the device's baseline; commit the updated `baselines.json` with the change that
+explains the new numbers. The perf tests are skipped unless `--perf` is given (and need the GPU and the cached
+model weights, like E1), so the CI suite never runs them.
+
