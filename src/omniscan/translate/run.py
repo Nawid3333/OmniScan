@@ -109,20 +109,21 @@ def run_profile(
     start = clock()
     targets = translatable(regions)
     target_ids = {r.id for r in targets}
-    kept = {rid: c for rid, c in (reused or {}).items() if rid in target_ids}
-    by_id: dict[str, Candidate] = dict(kept)
-    for candidate in _restored_candidates(partial_path, profile):
-        if candidate.region_id in target_ids:
-            by_id.setdefault(candidate.region_id, candidate)
-    remembered = 0
-    for region in targets:
-        if region.id not in by_id and not _has_letters(source_text(region)):
-            by_id[region.id] = Candidate(region_id=region.id, text=source_text(region), notes=None)
-        elif region.id not in by_id and hints is not None and source_text(region) in hints.exact:
+    by_id: dict[str, Candidate] = {}
+    for region in targets:  # the editor's own English for a line wins over everything, reused lines included
+        if hints is not None and source_text(region) in hints.exact:
             by_id[region.id] = Candidate(
                 region_id=region.id, text=hints.exact[source_text(region)], notes=MEMORY_NOTE
             )
-            remembered += 1
+    remembered = len(by_id)
+    kept = {rid: c for rid, c in (reused or {}).items() if rid in target_ids and rid not in by_id}
+    by_id.update(kept)
+    for candidate in _restored_candidates(partial_path, profile):
+        if candidate.region_id in target_ids:
+            by_id.setdefault(candidate.region_id, candidate)
+    for region in targets:
+        if region.id not in by_id and not _has_letters(source_text(region)):
+            by_id[region.id] = Candidate(region_id=region.id, text=source_text(region), notes=None)
     remaining = [r for r in targets if r.id not in by_id]
     usage = _Usage()
 
