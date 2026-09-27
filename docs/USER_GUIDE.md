@@ -1149,6 +1149,31 @@ uv run omniscan learn enable "Solo Leveling" 3f2a9c1e0b7d
 A rule's state is `active`, `off` (switched off) or `needs more` (fewer than `learn.min_count`
 corrections so far). An unknown rule id exits 2.
 
+### `omniscan qa`
+
+Check the finished pages: every region that should have been cleaned is re-read on the exported (lettered)
+page with the chapter's OCR engine, and a region is listed when its **original text is still readable** there,
+for example leftover Korean that inpainting missed, or a watermark that was supposed to be erased.
+
+```bash
+uv run omniscan qa "Solo Leveling"                      # every exported chapter
+uv run omniscan qa "Solo Leveling" -c "Chapter 1" --json
+```
+
+| Argument/option | Meaning |
+|---|---|
+| `series` | required |
+| `--chapter`, `-c <str>` | chapter folder name; repeatable. Default: all |
+| `--force` | re-read even if nothing changed since the last check |
+| `--json` | print every chapter's issues as JSON |
+
+Checked are text regions, sound effects in `sfx.mode = "replace"`, and watermarks while
+`inpaint.remove_watermarks` is on. A region is flagged only when what the OCR reads there is recognisably its
+original text (source-script characters similar to its OCR text, at OCR confidence 0.5 or more), so English
+lettering misread as stray characters is never reported. Issues are `source_left` or `watermark_left`, written to
+the chapter's `qa.json` (the desktop Studio's Check shows them too). Needs the chapter exported; not part of
+`omniscan run`. Uses the GPU like `omniscan ocr` (the OCR models are loaded once per command).
+
 ### `omniscan pack`
 
 Package finished chapters (`output_root/<series>/<chapter>/*.jpg`) into CBZ and/or PDF files.
