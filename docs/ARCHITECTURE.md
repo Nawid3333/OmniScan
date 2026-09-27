@@ -49,6 +49,9 @@ renumbers regions. `edits.json` is deliberately *not* an input of `ocr` (a text 
 models); the tools apply it themselves. It *is* an input of `typeset`, which is cheap: its hand lettering
 (`layout`) is applied there (`typeset/overrides.py`), and `typeset/chapter.py::chapter_layout` is the one
 function both the stage and the studio's live preview (`typeset/page_preview.py`) letter a chapter with.
+`edits/session.py::StudioSession` is the desktop Translator Studio's view of one chapter: it holds the page's
+changes in memory and saves them through the same `edits/store.py` operations (the web Studio and `omniscan edit`
+call those directly).
 
 **Learning** (`learn/`): `learn/harvest.py` compares every edit with the pipeline text it records
 (`RegionEdit.auto_text`, `TranslationEdit.auto_text`, set when the edit is first made) — OCR fixes,
