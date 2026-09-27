@@ -64,7 +64,13 @@ def judge_chapter(
         for region in targets
         if region.id in kept or region.id in judged
     ]
-    stats = dataclasses.replace(stats, regions=stats.regions + len(kept), reused=len(kept))
+    stats = dataclasses.replace(  # what final.json holds counts the kept lines too; the work done does not
+        stats,
+        regions=stats.regions + len(kept),
+        reused=len(kept),
+        untranslated=sum(1 for line in lines if "untranslated" in line.flags),
+        violations_left=sum(1 for line in lines if "glossary_violation" in line.flags),
+    )
     result = FinalArtifact(
         judge_model=cfg.model,
         lines=lines,
