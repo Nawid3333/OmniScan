@@ -103,3 +103,9 @@ See the full key reference and per-command details in the user guide:
 - [docs/DECISIONS.md](docs/DECISIONS.md) — why the important choices were made, with the evidence
 - [docs/OPEN_QUESTIONS.md](docs/OPEN_QUESTIONS.md) — decisions still waiting on the owner
 - [CLAUDE.md](CLAUDE.md) — contributor/agent rules
+
+## Licence
+
+OmniScan is free software under the [GNU General Public License v3.0](LICENSE) (GPL-3.0-only, chosen by the owner on
+2026-09-27): every copy and fork stays open source. Code reused from other GPL-3.0 or permissively licensed
+translation tools keeps its original copyright notice and is credited in `THIRD_PARTY.md`.

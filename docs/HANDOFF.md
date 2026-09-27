@@ -92,7 +92,7 @@ Repo: `V:\OmniScan` (Windows 11 native) · GitHub `Nawid3333/OmniScan` (private)
 - **Destructive actions:** ask unless the owner explicitly asked (they explicitly asked for the WSL distro and a scratch folder to be deleted,
   and both were, after an inventory).
 - **Legal/safety scope:** no acquisition from paid DRM platforms (Naver Webtoon, Kakao, Lezhin, Ridibooks, Bomtoon, Kuaikan); never commit
-  raws; tests use synthetic images; CC-licensed comics (Pepper&Carrot) are fine as extra test material; avoid GPL/AGPL model dependencies.
+  raws; tests use synthetic images; CC-licensed comics (Pepper&Carrot) are fine as extra test material; the project is GPL-3.0-only since 2026-09-27 (`LICENSE`), so GPL-3.0 and permissive code may be reused with credit (`THIRD_PARTY.md`); avoid AGPL and GPL-incompatible dependencies.
 - **Language:** the owner writes English, sometimes German (Windows UI is German, so tool output such as robocopy is localised).
 
 ## The director loop in one paragraph
