@@ -1236,6 +1236,31 @@ lettering misread as stray characters is never reported. Issues are `source_left
 the chapter's `qa.json` (the desktop Studio's Check shows them too). Needs the chapter exported; not part of
 `omniscan run`. Uses the GPU like `omniscan ocr` (the OCR models are loaded once per command).
 
+### `omniscan consistency`
+
+A proofreading report of a whole series: lines said again but translated differently (a catchphrase rendered
+two ways, a name spelled two ways in the same sentence), and translated lines where a **locked** glossary term
+appears in the source but its agreed English is missing.
+
+```bash
+uv run omniscan consistency "Solo Leveling"                    # every chapter
+uv run omniscan consistency "Solo Leveling" -c "Chapter 3" -c "Chapter 4" --json
+```
+
+| Argument/option | Meaning |
+|---|---|
+| `series` | required |
+| `--chapter`, `-c <str>` | chapter folder name; repeatable. Default: all |
+| `--json` | print the report as JSON |
+
+Repeated lines are compared by their source text (spacing aside); two English lines count as the same rendering
+when they differ only in case, spacing or surrounding punctuation. Sound effects, one-character lines,
+watermarks and untranslated lines are left out; the most repeated lines come first, each rendering with its
+places (chapter, region). Glossary terms are matched with the glossary's own matcher (particles attached), and
+the English must contain the term's target as written. Nothing is changed: fix the lines in the Studio, or
+many at once with `omniscan edit replace`. CPU only; the web UI's **Consistency** view shows the same report
+with a link from every place into the Studio.
+
 ### `omniscan pack`
 
 Package finished chapters (`output_root/<series>/<chapter>/*.jpg`) into CBZ and/or PDF files.
@@ -1706,7 +1731,8 @@ together. Open the local URL Vite prints and pick a series and chapter.
 
 The chapter views (Studio, Slicer, OCR, Translation, Reader, Inpaint, Layout, Edit) need a chapter; the
 **Filtered** view only needs a series and shows its every chapter that has filtered items; the **Learned**
-view only needs a series too (see "Learning from your corrections"). The **Studio**
+view only needs a series too (see "Learning from your corrections"), and so does the **Consistency** view (the
+report of `omniscan consistency`; each place opens the Studio on that region). The **Studio**
 is the editor (see "Studio: editing by hand"); the other views are for checking one stage's output.
 
 The Slicer view stacks the raw pages and overlays:

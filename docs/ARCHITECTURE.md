@@ -80,6 +80,11 @@ each character talks. The chat_json prompt carries each region's speaker and the
 speak or are named in the request; `translation_key` includes a region's speaker and voice only when it has a
 speaker, so unassigned lines keep their keys. `voices.toml` is an input of the translate stage.
 
+**Consistency** (`qa/consistency.py`): a series-wide proofreading report, never a stage and never written to
+disk: `series_lines` reads every chapter's current regions and English lines, `divergences` groups repeated
+source lines with different English, `term_misses` checks locked glossary terms with `glossary/match.py`
+(served by `omniscan consistency` and `GET /api/series/{series}/consistency`).
+
 **Interchange** (`interchange/`): other tools' files in and out of a chapter, never a stage. Out: LabelPlus
 files (`labelplus.py`), layered PSD pages (`psd.py`) and BallonsTranslator projects (`ballons.py`), built from
 the chapter's artifacts on the CPU. In: LabelPlus labels (a point each) go to the region they point into

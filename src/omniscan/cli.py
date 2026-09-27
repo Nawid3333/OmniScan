@@ -476,6 +476,53 @@ def cmd_qa(
 app.command("qa")(cmd_qa)
 
 
+def _places(places: list[tuple[str, str]], shown: int = 4) -> str:
+    """'Chapter 1 r0001, Chapter 2 r0004 (+3 more)'."""
+    text = ", ".join(f"{chapter} {region_id}" for chapter, region_id in places[:shown])
+    return text + (f" (+{len(places) - shown} more)" if len(places) > shown else "")
+
+
+def cmd_consistency(
+    series: Annotated[str, typer.Argument()],
+    chapter: Annotated[
+        list[str] | None,
+        typer.Option("--chapter", "-c", help="Chapter folder name; repeatable. Default: all."),
+    ] = None,
+    as_json: Annotated[bool, typer.Option("--json", help="Print the report as JSON.")] = False,
+) -> None:
+    """List the lines of a series said again but translated differently, and the lines missing a locked
+    glossary term's English (a proofreading report; fix with the Studio or `omniscan edit replace`)."""
+    from dataclasses import asdict
+
+    from omniscan.qa.consistency import divergences, glossary, series_lines, term_misses
+
+    series_paths = _series_paths(series)
+    unknown = [name for name in chapter or [] if name not in series_paths.chapters()]
+    if unknown:
+        typer.echo(f"consistency: no chapter {unknown[0]!r} in {series}", err=True)
+        raise typer.Exit(2)
+    lines = series_lines(series_paths, chapter)
+    split, missing = divergences(lines), term_misses(lines, glossary(series_paths))
+    if as_json:
+        report = {"divergences": [asdict(d) for d in split], "term_misses": [asdict(m) for m in missing]}
+        _echo_text(json.dumps(report, ensure_ascii=False, indent=2))
+        return
+    for item in split:
+        _echo_text(f"consistency: {item.source!r} is translated {len(item.renderings)} ways:")
+        for rendering in item.renderings:
+            _echo_text(f"  {rendering.english!r} ×{len(rendering.places)}: {_places(rendering.places)}")
+    for miss in missing:
+        _echo_text(
+            f"consistency: {miss.chapter} {miss.region_id}: {miss.term} should read {miss.target!r}: {miss.english}"
+        )
+    typer.echo(
+        f"consistency: {len(split)} line(s) translated differently, {len(missing)} glossary term(s) missing"
+    )
+
+
+app.command("consistency")(cmd_consistency)
+
+
 def _echo_text(text: str) -> None:
     """Echo text that may hold Korean/Japanese; Windows pipes (cp1252) must not crash on it."""
     import sys
