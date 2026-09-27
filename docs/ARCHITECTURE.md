@@ -74,6 +74,13 @@ each character talks. The chat_json prompt carries each region's speaker and the
 speak or are named in the request; `translation_key` includes a region's speaker and voice only when it has a
 speaker, so unassigned lines keep their keys. `voices.toml` is an input of the translate stage.
 
+**Interchange** (`interchange/`): other tools' files in and out of a chapter, never a stage. Out: LabelPlus
+files (`labelplus.py`), layered PSD pages (`psd.py`) and BallonsTranslator projects (`ballons.py`), built from
+the chapter's artifacts on the CPU. In: LabelPlus labels (a point each) go to the region they point into
+(`labelplus.py::match_labels`); BallonsTranslator and manga-image-translator text blocks (`ballons.py`, `mit.py`,
+a box each in page pixels) go to the region they overlap most (`blocks.py::match_blocks`). Everything imported
+is recorded through `edits/store.py`, like any hand edit.
+
 ## Stages (`core/stage.py`)
 A stage is a class with `name`, `version`, `gpu_group` class vars and four methods:
 `inputs(ctx) -> list[Path]`, `outputs(ctx) -> list[str]`, `config_subset(cfg) -> Mapping`, `run(ctx, models) -> metrics`.

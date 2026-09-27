@@ -33,7 +33,7 @@ from omniscan.importer.plan import (
     files_to_convert,
     plan_import,
 )
-from omniscan.interchange.cli import labelplus_app, psd_app
+from omniscan.interchange.cli import ballons_app, labelplus_app, mit_app, psd_app
 from omniscan.learn.memory import current_memory, is_active, set_rule_enabled
 from omniscan.library.cli import library_app
 from omniscan.llm.ollama import OllamaClient, OllamaError, OllamaRateLimitError
@@ -1593,6 +1593,8 @@ app.add_typer(learn_app, name="learn")
 app.add_typer(edit_app, name="edit")
 app.add_typer(labelplus_app, name="labelplus")
 app.add_typer(psd_app, name="psd")
+app.add_typer(ballons_app, name="ballons")
+app.add_typer(mit_app, name="mit")
 
 queue_app = typer.Typer(no_args_is_help=True, help="Persistent job queue: run pipeline stages over series.")
 

@@ -101,12 +101,12 @@ def write(doc: LabelFile) -> str:
     return "\n".join(out)
 
 
-def _pages(ingest: IngestArtifact) -> list[SourceFile]:
+def strip_pages(ingest: IngestArtifact) -> list[SourceFile]:
     """The chapter's pages that are part of the strip, top to bottom."""
     return [f for f in ingest.files if not f.filtered and f.y1 > f.y0]
 
 
-def _page_at(pages: Sequence[SourceFile], y: float) -> SourceFile | None:
+def page_at(pages: Sequence[SourceFile], y: float) -> SourceFile | None:
     """The page holding strip row `y`."""
     return next((f for f in pages if f.y0 <= y < f.y1), pages[-1] if pages and y == pages[-1].y1 else None)
 
@@ -121,14 +121,14 @@ def export_labels(
 ) -> LabelFile:
     """One label per region with a text in `texts` (watermarks never), at the centre of its text box on the page
     that holds it; group 1 for balloon text, 2 for everything else. Every page is listed, labelled or not."""
-    pages = _pages(ingest)
+    pages = strip_pages(ingest)
     doc = LabelFile(comment=comment, pages={f.name: [] for f in pages})
     for region in regions:
         text = texts.get(region.id, "").strip()
         if region.kind == "watermark" or not text:
             continue
         cx, cy = _centre(region.bbox)
-        page = _page_at(pages, cy)
+        page = page_at(pages, cy)
         if page is None:
             continue
         labels = doc.pages[page.name]
@@ -154,7 +154,7 @@ class Matched:
     joined: int = 0  # labels added to a region another label already pointed into
 
 
-def _find_page(pages: Sequence[SourceFile], name: str) -> SourceFile | None:
+def find_page(pages: Sequence[SourceFile], name: str) -> SourceFile | None:
     """The page named `name`, else the one with the same file stem (a group may have renamed 001.jpg to .png)."""
     exact = next((f for f in pages if f.name == name), None)
     if exact is not None:
@@ -184,10 +184,10 @@ def region_at(regions: Sequence[Region], x: float, y: float) -> Region | None:
 
 def match_labels(doc: LabelFile, ingest: IngestArtifact, regions: Sequence[Region]) -> Matched:
     """Map every non-empty label of `doc` to the region it points into (its text on one line)."""
-    pages = _pages(ingest)
+    pages = strip_pages(ingest)
     found = Matched()
     for name, labels in doc.pages.items():
-        page = _find_page(pages, name)
+        page = find_page(pages, name)
         if page is None:
             if any(label.text.strip() for label in labels):
                 found.unknown_pages.append(name)

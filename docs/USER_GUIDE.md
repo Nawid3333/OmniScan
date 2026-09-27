@@ -1153,6 +1153,43 @@ layer support show the release. Hide `text` to letter by hand, or paint on `clea
 `<output_root>/<series>/_psd/<chapter>/`. Pages are built on the CPU with the Studio preview's code; without a
 `layout.json` (typeset not run yet) the `text` layers are empty.
 
+### `omniscan ballons` and `omniscan mit`
+
+Bring work done in [BallonsTranslator](https://github.com/dmMaze/BallonsTranslator) or
+[manga-image-translator](https://github.com/zyddnys/manga-image-translator) into a chapter, and send a chapter to
+BallonsTranslator to finish there.
+
+```bash
+uv run omniscan ballons export "Solo Leveling" "Chapter 1"                  # a project folder BallonsTranslator opens
+uv run omniscan ballons import "Solo Leveling" "Chapter 1" ./bt/ch1 --dry-run
+uv run omniscan ballons import "Solo Leveling" "Chapter 1" ./bt/ch1/imgtrans_ch1.json --source --add
+uv run omniscan mit import "Solo Leveling" "Chapter 1" out/001_translations.txt out/002_translations.txt
+```
+
+**`ballons export`** writes a BallonsTranslator project folder (default `<output_root>/<series>/_ballons/<chapter>/`,
+`--out` to choose): copies of the raw pages, the cleaned pages in `inpainted/` (once the chapter was cleaned, so
+BallonsTranslator shows OmniScan's cleaning), and `imgtrans_<folder>.json` with one text block per region
+(watermarks never) holding its source text, its English line and the lettering's size, colour and outline from
+`layout.json`. Open the folder in BallonsTranslator to re-letter or retouch. A raw page BallonsTranslator cannot
+open (GIF, AVIF, …) is exported as the JPEG ingest made of it.
+
+**`ballons import`** reads a project (its `imgtrans_*.json`, or the folder holding it); **`mit import`** reads
+the `<image>_translations.txt` files manga-image-translator writes with `--save-text` (several at once, or one
+file from `--save-text-file`). Each text block goes to the region its box overlaps most (at least half of the
+smaller box), else to the region whose text box or balloon holds its centre; watermarks never take one. Its
+translation becomes the region's English line, recorded as hand-written (`edits.json`), so every re-run keeps it
+and learning remembers it; blocks in one region are joined. Options:
+
+| Option | Effect |
+|---|---|
+| `--source` | also take the block's source text as the region's OCR text (Japanese and Chinese lines are joined without spaces) |
+| `--add` | add a region for every block over no region, with its text and translation |
+| `--dry-run` | only report what would change |
+
+Blocks over no region and pages the chapter does not have are listed; a page renamed by the tool (`001.png` for
+`001.jpg`) is matched by its name without the extension. Needs the chapter's `ingest.json` (page positions), and
+`slices.json` for `--add`; a file of the wrong kind exits 2.
+
 ### `omniscan learn`
 
 What a series' hand corrections taught (see "Learning from your corrections").
