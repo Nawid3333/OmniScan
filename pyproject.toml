@@ -80,6 +80,9 @@ xpu = [
     # Intel GPUs (Arc A/B series, Core Ultra iGPU) through PyTorch's native XPU backend ("pytorch-xpu" index)
     "torch>=2.13,<3",
     "torchvision>=0.28,<1",
+    # torch+xpu needs a triton-xpu build that only the xpu index carries (PyPI stops at 3.3.0b1); listed so
+    # the source pin below can route it there (the index is explicit, so uv would otherwise never look)
+    "triton-xpu; sys_platform == 'linux'",
 ]
 mps = [
     # Apple Silicon: the default PyPI wheel already includes MPS support, no special index needed
@@ -131,6 +134,7 @@ torch = [
     { index = "pytorch-cuda", extra = "cuda" },
     { index = "pytorch-xpu", extra = "xpu" },
 ]
+triton-xpu = [{ index = "pytorch-xpu", extra = "xpu" }]
 torchvision = [
     { index = "rocm10", extra = "rocm-gfx1201" },
     { index = "pytorch-cpu", extra = "cpu" },
