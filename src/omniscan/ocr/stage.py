@@ -24,8 +24,7 @@ from omniscan.core.paths import list_images
 from omniscan.core.schemas import IngestArtifact, RegionsArtifact, SlicesArtifact
 from omniscan.core.stage import ChapterContext
 from omniscan.detect.tiles import keep_tiles, plan_tiles
-from omniscan.edits.apply import apply_region_edits
-from omniscan.edits.store import OCR_AUTO_FILE, load_edits
+from omniscan.edits.store import OCR_AUTO_FILE, write_ocr
 from omniscan.gpu.groups import VISION_GROUP
 from omniscan.ingest.strip import load_strip
 from omniscan.learn.apply import apply_to_regions
@@ -165,11 +164,7 @@ class OcrStage:
         metrics["watermarked"] = float(sum(1 for r in kept if r.kind == "watermark"))
         kept = [measure_lettering_style(strip, r) if r.kind in ("sfx", "free_text") else r for r in kept]
         metrics["sfx"] = float(sum(1 for r in kept if r.kind == "sfx"))
-        RegionsArtifact(regions=kept).save(ctx.paths.artifact(OCR_AUTO_FILE))
-        edits = load_edits(ctx.paths)
-        if edits.regions:
-            slices = SlicesArtifact.load(ctx.paths.artifact("slices.json")).slices
-            kept, orphans = apply_region_edits(kept, edits, slices, direction=cfg.detect.reading_direction)
+        _regions, orphans = write_ocr(ctx.paths, kept, direction=cfg.detect.reading_direction)
+        if orphans is not None:
             metrics["edits_orphaned"] = float(orphans)
-        RegionsArtifact(regions=kept).save(ctx.paths.artifact("ocr.json"))
         return metrics
