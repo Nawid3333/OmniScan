@@ -54,6 +54,8 @@ function both the stage and the studio's live preview (`typeset/page_preview.py`
 Every change of `edits.json` goes through `edits/store.py::save_edits`, which pushes the state it replaces
 onto `edits_history.json` (at most `HISTORY_DEPTH` steps); `edit_group` makes several operations one step (an
 import, a desktop save), and `undo`/`redo` swap states and rebuild `ocr.json`/`final.json` like any edit.
+`edits/replace.py` is find & replace over English lines or source texts: a pure rule (`FindReplace`), a
+per-chapter `plan`, and `apply_changes` through the same store operations (one `edit_group` per chapter).
 `edits/session.py::StudioSession` is the desktop Translator Studio's view of one chapter: it holds the page's
 changes in memory and saves them through the same `edits/store.py` operations (the web Studio and `omniscan edit`
 call those directly).

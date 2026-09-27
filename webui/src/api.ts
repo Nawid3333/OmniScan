@@ -476,6 +476,33 @@ export async function getEdits(series: string, chapter: string): Promise<Chapter
   return getJson<ChapterEdits>(`${chapterBase(series, chapter)}/edits`);
 }
 
+export interface ReplaceRequest {
+  find: string;
+  replace: string;
+  target: "english" | "source";
+  chapters: string[] | null;
+  regex: boolean;
+  whole_word: boolean;
+  case_sensitive: boolean;
+  dry_run: boolean;
+}
+
+export interface ReplaceChange {
+  chapter: string;
+  region_id: string;
+  before: string;
+  after: string;
+}
+
+/** Find & replace in a series' English lines or source texts (every chapter, or `chapters`); a dry run only
+ * lists the changes, otherwise each becomes a hand edit (one undo step per chapter). */
+export async function replaceText(
+  series: string,
+  request: ReplaceRequest,
+): Promise<{ changes: ReplaceChange[]; applied: boolean }> {
+  return postJson(`${BASE}/series/${encodeURIComponent(series)}/replace`, request);
+}
+
 /** Undo the last hand edit (an import counts as one) or redo the last undone one; the edits afterwards. */
 export async function stepEdits(series: string, chapter: string, step: "undo" | "redo"): Promise<ChapterEdits> {
   return postJson<ChapterEdits>(`${chapterBase(series, chapter)}/edits/${step}`, {});

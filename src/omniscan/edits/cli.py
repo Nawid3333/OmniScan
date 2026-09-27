@@ -19,6 +19,7 @@ from omniscan.core.config import Config, SeriesConfigError, get_config, get_secr
 from omniscan.core.paths import ChapterPaths, SeriesPaths
 from omniscan.core.schemas import BBox, RegionKind
 from omniscan.edits import store
+from omniscan.edits.replace import FindReplace, apply_changes, plan
 from omniscan.llm.ollama import OllamaClient, OllamaError
 from omniscan.translate.on_demand import english_lines, translate_now
 from omniscan.translate.profiles import default_profile_paths, load_profiles
@@ -276,6 +277,60 @@ def edit_translate(
         typer.echo(f"{item.region_id} [{item.profile}] {item.text}")
     for line in result.applied:
         typer.echo(f"edit: {line.region_id} English kept")
+
+
+@edit_app.command("replace")
+def edit_replace(
+    series: Series,
+    find: Annotated[str, typer.Argument(help="The text to find (a regular expression with --regex).")],
+    replace: Annotated[str, typer.Argument(help="What to put instead (with --regex, \\1 … are its groups).")],
+    chapter: Annotated[
+        list[str] | None,
+        typer.Option("--chapter", "-c", help="Only this chapter; repeatable. Default: every chapter."),
+    ] = None,
+    source: Annotated[
+        bool, typer.Option("--source", help="Replace in the source (OCR) texts instead of the English lines.")
+    ] = False,
+    regex: Annotated[bool, typer.Option("--regex", help="FIND is a regular expression.")] = False,
+    word: Annotated[bool, typer.Option("--word", help="Whole words only.")] = False,
+    ignore_case: Annotated[
+        bool, typer.Option("--ignore-case", "-i", help="Any case; the replacement takes each match's case.")
+    ] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Only list what would change.")] = False,
+) -> None:
+    """Find and replace across the English lines (or with --source the source texts) of a series or some of
+    its chapters; every change is a hand edit, and each chapter's changes are one undo step."""
+    cfg = get_config()
+    series_paths = SeriesPaths.from_config(cfg, series)
+    try:
+        direction = series_config(cfg, series_paths.library_dir).detect.reading_direction
+    except SeriesConfigError as exc:
+        raise _fail(str(exc)) from exc
+    known = series_paths.chapters()
+    unknown = [name for name in chapter or [] if name not in known]
+    if unknown:
+        raise _fail(f"no chapter {unknown[0]!r} in {series}")
+    rule = FindReplace(
+        replace=replace, find=find, regex=regex, whole_word=word, case_sensitive=not ignore_case
+    )
+    target = "source" if source else "english"
+    total, touched = 0, 0
+    for name in chapter or known:
+        paths = series_paths.chapter(name)
+        changes = _run(lambda paths=paths: plan(paths, rule, target))
+        for change in changes:
+            typer.echo(f"{change.chapter} {change.region_id}: {change.before} → {change.after}")
+        if changes and not dry_run:
+            _run(
+                lambda paths=paths, changes=changes: apply_changes(
+                    paths, changes, target, direction=direction
+                )
+            )
+        total, touched = total + len(changes), touched + bool(changes)
+    verb = "would replace" if dry_run else "replaced"
+    typer.echo(
+        f"replace: {verb} {total} {'source text' if source else 'English line'}(s) in {touched} chapter(s)"
+    )
 
 
 def _history(paths: ChapterPaths) -> str:
