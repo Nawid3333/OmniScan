@@ -1077,7 +1077,7 @@ What a series' hand corrections taught (see "Learning from your corrections").
 
 ```bash
 uv run omniscan learn show "Solo Leveling"            # rules (id, kind, wrong → right, count, state) + memory size
-uv run omniscan learn show "Solo Leveling" --json     # memory.json with each rule's `active` state
+uv run omniscan learn show "Solo Leveling" --json     # memory.json plus an `active` flag per rule
 uv run omniscan learn show "Solo Leveling" --rebuild  # rebuild from every edits.json first
 uv run omniscan learn disable "Solo Leveling" 3f2a9c1e0b7d   # switch a wrong rule off (kept across rebuilds)
 uv run omniscan learn enable "Solo Leveling" 3f2a9c1e0b7d
