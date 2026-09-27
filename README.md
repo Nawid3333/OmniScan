@@ -31,6 +31,7 @@ packaged into CBZ/PDF.
 | export | working — `omniscan export` (needs inpaint.json, patches.npz, layout.json) |
 | run | working — `omniscan run` (ingest → export, three passes) |
 | pack | working — `omniscan pack` (CBZ/PDF of finished output) |
+| chapter projects | working — `omniscan project pack` / `unpack` / `show`: a chapter's raw pages and all its work (stage outputs, hand edits with undo history, cleanup) in one `.omniscan` file, to pass between group members; unpacking checks every file and never overwrites without `--force` |
 | job queue | working — `omniscan queue add` / `list` / `run` / `pause` / `resume` / `cancel` / `retry` / `clear` |
 | models | working — `omniscan models list` / `download` / `remove` / `verify` |
 | hardware | working — `omniscan hardware [--json]` |

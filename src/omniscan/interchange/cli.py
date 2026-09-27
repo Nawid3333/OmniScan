@@ -16,12 +16,13 @@ from PIL import Image
 from omniscan.cleanup.store import CLEANUP_FILE, current_crop
 from omniscan.core.config import SeriesConfigError, get_config, series_config
 from omniscan.core.paths import ChapterPaths, SeriesPaths, jpeg_paths
-from omniscan.core.schemas import IngestArtifact, LayoutArtifact
+from omniscan.core.schemas import IngestArtifact, LayoutArtifact, ProjectFile
 from omniscan.edits import store
-from omniscan.interchange import ballons, mit
+from omniscan.interchange import ballons, mit, project
 from omniscan.interchange.blocks import Block, join_lines, match_blocks
 from omniscan.interchange.labelplus import export_labels, match_labels, parse, strip_pages, write
 from omniscan.interchange.psd import page_psd
+from omniscan.packaging.names import safe_filename
 from omniscan.translate.on_demand import english_lines
 from omniscan.typeset.page_preview import page_box
 
@@ -343,3 +344,106 @@ def mit_import(
         except (OSError, ValueError) as exc:
             raise _fail(f"{file}: {exc}", "mit") from exc
     _import_blocks("mit", series, chapter, blocks, source=source, add=add, dry_run=dry_run)
+
+
+project_app = typer.Typer(
+    no_args_is_help=True,
+    help="Chapter projects: one chapter's raw pages and all its work in one file, to pass to another OmniScan user.",
+)
+
+
+@project_app.callback()
+def project_group() -> None:
+    """Chapter projects: one chapter's raw pages and all its work in one file, to pass to another OmniScan user."""
+
+
+def _size(size: int) -> str:
+    """A file size for people: kB below a megabyte."""
+    return f"{size / 1000:.0f} kB" if size < 1_000_000 else f"{size / 1_000_000:.1f} MB"
+
+
+def _parts(files: Sequence[ProjectFile]) -> str:
+    """How many files a project holds per part (raw pages, work files, series files, finished pages)."""
+    counts: dict[str, int] = {}
+    for file in files:
+        part = file.path.partition("/")[0]
+        counts[part] = counts.get(part, 0) + 1
+    labels = {
+        "raw": "raw page file(s)",
+        "work": "work file(s)",
+        "series": "series file(s)",
+        "output": "finished page(s)",
+    }
+    return ", ".join(f"{counts[part]} {label}" for part, label in labels.items() if part in counts)
+
+
+@project_app.command("pack")
+def project_pack(
+    series: Annotated[str, typer.Argument()],
+    chapter: Annotated[str, typer.Argument()],
+    output: Annotated[
+        Path | None,
+        typer.Option(
+            "--output", "-o", help="The file to write. Default: '<series> - <chapter>.omniscan' here."
+        ),
+    ] = None,
+    with_output: Annotated[
+        bool, typer.Option("--with-output", help="Also pack the finished pages (for the quality check).")
+    ] = False,
+) -> None:
+    """Pack a chapter — raw pages, every stage's work, hand edits with their undo history, hand cleanup, and the
+    series' series.toml / voices.toml — into one file another OmniScan user unpacks and continues."""
+    series_paths = SeriesPaths.from_config(get_config(), series)
+    if chapter not in series_paths.chapters():
+        raise _fail(f"no chapter {chapter!r} in {series}", "project")
+    dest = (
+        output
+        if output is not None
+        else Path.cwd() / f"{safe_filename(series)} - {safe_filename(chapter)}{project.SUFFIX}"
+    )
+    packed = project.pack(series_paths, chapter, dest, with_output=with_output)
+    typer.echo(f"project: {_parts(packed.files)} -> {dest} ({_size(dest.stat().st_size)})")
+
+
+@project_app.command("unpack")
+def project_unpack(
+    file: Annotated[Path, typer.Argument(exists=True, dir_okay=False, help="A .omniscan chapter project.")],
+    series: Annotated[str | None, typer.Option("--series", help="Unpack into this series instead.")] = None,
+    chapter: Annotated[str | None, typer.Option("--chapter", help="Unpack as this chapter instead.")] = None,
+    force: Annotated[
+        bool, typer.Option("--force", help="Replace the chapter if it exists (its raw pages and work).")
+    ] = False,
+) -> None:
+    """Unpack a chapter project into your library and work folders; every stage done and every hand edit comes
+    along. The series files it carries are added only where the series has none."""
+    try:
+        done = project.unpack(file, get_config(), series=series, chapter=chapter, force=force)
+    except (project.ProjectError, FileExistsError) as exc:
+        raise _fail(str(exc), "project") from exc
+    notes = [f"added {', '.join(done.series_files)}"] if done.series_files else []
+    notes += [f"kept your {', '.join(done.kept_series_files)}"] if done.kept_series_files else []
+    verb = "replaced" if done.replaced else "unpacked"
+    typer.echo(
+        f"project: {verb} {done.paths.series}/{done.paths.chapter}"
+        + (f" ({'; '.join(notes)})" if notes else "")
+    )
+
+
+@project_app.command("show")
+def project_show(
+    file: Annotated[Path, typer.Argument(exists=True, dir_okay=False, help="A .omniscan chapter project.")],
+    as_json: Annotated[bool, typer.Option("--json", help="Print its project.json.")] = False,
+) -> None:
+    """Say what a chapter project holds, without unpacking it (checked like `unpack` checks it)."""
+    try:
+        shown = project.show(file)
+    except project.ProjectError as exc:
+        raise _fail(str(exc), "project") from exc
+    if as_json:
+        typer.echo(shown.model_dump_json(indent=2))
+        return
+    total = sum(entry.bytes for entry in shown.files)
+    typer.echo(
+        f"project: {shown.series}/{shown.chapter} (OmniScan {shown.app_version}): {_parts(shown.files)},"
+        f" {_size(total)} unpacked"
+    )
