@@ -17,6 +17,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
+from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import Field, ValidationError
 
@@ -46,15 +47,14 @@ from omniscan.filter.decide import effective_decision, restore
 from omniscan.glossary.match import find_terms, term_present
 from omniscan.glossary.store import GlossaryStore
 from omniscan.inpaint.patches import load_patches
-from omniscan.learn.apply import translation_hints
 from omniscan.learn.memory import current_memory, is_active, set_rule_enabled
 from omniscan.llm.ollama import OllamaClient, OllamaError, OllamaRateLimitError
-from omniscan.pipeline.stages import STAGE_ORDER, series_story_context
+from omniscan.pipeline.stages import STAGE_ORDER
 from omniscan.queue.store import QueueStore, queue_db_path
 from omniscan.queue.worker import run_queue
-from omniscan.translate.profiles import default_profile_paths, load_profiles, resolve_fallbacks
+from omniscan.translate.on_demand import translate_now
+from omniscan.translate.profiles import default_profile_paths, load_profiles
 from omniscan.translate.run import ChatClient
-from omniscan.translate.suggest import suggest
 from omniscan.typeset.chapter import chapter_layout
 from omniscan.typeset.fonts import font_file, fonts_dir
 from omniscan.typeset.page_preview import render_page
@@ -142,6 +142,14 @@ def decode_mask(data: str, box: BBox) -> np.ndarray:
         raise ValueError(f"mask is not a base64 PNG: {exc}") from exc
 
 
+UI_DIST = Path(__file__).resolve().parents[3] / "webui" / "dist"  # `npm run build` in webui/ writes it
+
+
+def built_ui(folder: Path = UI_DIST) -> Path | None:
+    """The built web UI folder, or None when it has not been built (no index.html)."""
+    return folder if (folder / "index.html").is_file() else None
+
+
 def ollama_client(cfg: Config) -> ChatClient:
     """The chat client for on-demand translation (the configured Ollama daemon)."""
     return OllamaClient(cfg.ollama, get_secrets())
@@ -203,6 +211,7 @@ def create_app(
     cors_origins: Sequence[str] = ("http://localhost:5173",),
     run_worker: bool = False,
     chat_client: Callable[[Config], ChatClient] = ollama_client,
+    ui_dir: Path | None = None,
 ) -> FastAPI:
     """Build the debug API app: series/chapter browsing + ingest/slices artifacts + raw pages.
 
@@ -210,7 +219,8 @@ def create_app(
     a background thread that drains `queue.db`, so `POST .../run` requests actually execute instead of
     only ever sitting queued; tests and other embedders that just want to read existing artifacts
     should leave it `False` (the default here) to avoid touching the GPU/queue at all. `chat_client`
-    builds the LLM client of the on-demand translation route (tests pass a fake).
+    builds the LLM client of the on-demand translation route (tests pass a fake). `ui_dir` (the built web UI,
+    see `built_ui`) is served at `/`, so the API and the Studio share one address.
     """
 
     @asynccontextmanager
@@ -490,35 +500,24 @@ def create_app(
         Nothing else is written. 429 when the Ollama rate limit is hit, 502 when Ollama fails."""
         body = await json_body(request, TranslateBody)
         paths = chapter_paths(series, chapter)
-        direction, _lang = edit_settings(series)
-        scfg = series_config(cfg, series_paths(series).library_dir)
-        known = load_profiles(default_profile_paths())
-        if body.profile is not None:
-            if body.profile not in known:
-                raise HTTPException(status_code=422, detail=f"unknown profile {body.profile!r}")
-            profiles = [known[body.profile]]
-        else:
-            profiles = [p for p in known.values() if p.enabled]
-            if not profiles:
-                raise HTTPException(status_code=422, detail="no translation profile is enabled")
-        regions = edit_store.current_regions(paths)
+        try:
+            scfg = series_config(cfg, series_paths(series).library_dir)
+        except SeriesConfigError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         client = chat_client(scfg)
         try:
-            suggestions = suggest(
+            result = translate_now(
                 client,
-                profiles,
-                regions,
+                scfg,
+                series_paths(series),
+                paths,
                 body.region_ids,
-                glossary_entries(series_paths(series)),
-                final_lines(paths),
-                fallbacks=resolve_fallbacks(profiles, known),
-                story_summary=series_story_context(series_paths(series), chapter),
-                hints=(
-                    translation_hints(current_memory(series_paths(series)), scfg.learn)
-                    if scfg.learn.enabled
-                    else None
-                ),
+                load_profiles(default_profile_paths()),
+                profile=body.profile,
+                apply=body.apply,
             )
+        except edit_store.EditNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except OllamaRateLimitError as exc:
@@ -529,25 +528,12 @@ def create_app(
             close = getattr(client, "close", None)
             if close is not None:
                 close()
-        applied: list[dict[str, object]] = []
-        if body.apply:
-            first: dict[str, tuple[str, str]] = {}
-            for item in suggestions:
-                first.setdefault(item.region_id, (item.text, item.profile))
-            for region_id, (text, profile) in first.items():
-                try:
-                    line = edit_store.set_translation(
-                        paths, region_id, text, direction=direction, suggested_by=profile
-                    )
-                except edit_store.EditNotFoundError as exc:
-                    raise HTTPException(status_code=404, detail=str(exc)) from exc
-                applied.append(line.model_dump(mode="json"))
         return {
             "suggestions": [
                 {"region_id": x.region_id, "profile": x.profile, "model": x.model, "text": x.text}
-                for x in suggestions
+                for x in result.suggestions
             ],
-            "applied": applied,
+            "applied": [line.model_dump(mode="json") for line in result.applied],
         }
 
     @app.post("/api/series/{series}/chapters/{chapter}/final/{region_id}/revert")
@@ -1017,4 +1003,6 @@ def create_app(
         decision = restore(paths, body.target, body.index)
         return decision.model_dump(mode="json")
 
+    if ui_dir is not None:  # last, so every /api route above is matched first
+        app.mount("/", StaticFiles(directory=ui_dir, html=True), name="ui")
     return app

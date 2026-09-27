@@ -929,7 +929,7 @@ def menu_diagnostics(cfg: Config, *, read: Callable[[str], str] = input) -> None
 def menu_launch(cfg: Config, *, read: Callable[[str], str] = input) -> None:
     """Launch submenu: the web debug viewer's API and the desktop app."""
     options = (
-        "Web debug viewer (starts the API on 127.0.0.1:8000; run `npm run dev` in webui/ for the UI)",
+        "Web studio (http://127.0.0.1:8000; build the UI once with `npm run build` in webui/)",
         "Desktop app",
     )
     while True:
@@ -947,7 +947,7 @@ def menu_launch(cfg: Config, *, read: Callable[[str], str] = input) -> None:
 
 def _serve(*, read: Callable[[str], str]) -> None:
     """Launch leaf 1: run the debug API until Ctrl+C (which returns to the Launch submenu)."""
-    typer.echo("Starting the debug API on http://127.0.0.1:8000 (Ctrl+C to stop)...")
+    typer.echo("Starting the web studio on http://127.0.0.1:8000 (Ctrl+C to stop)...")
     with contextlib.suppress(KeyboardInterrupt):
         cmd_serve(host="127.0.0.1", port=8000, reload=False)
     pause(read=read)

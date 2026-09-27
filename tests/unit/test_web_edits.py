@@ -31,7 +31,7 @@ from omniscan.core.schemas import (
     SourceFile,
 )
 from omniscan.llm.ollama import ChatResponse, OllamaError, OllamaRateLimitError
-from omniscan.web.app import create_app
+from omniscan.web.app import built_ui, create_app
 
 SERIES = "Solo Leveling"
 CHAPTER = "Chapter 1"
@@ -541,3 +541,24 @@ def test_translate_shows_the_series_preferred_wording(
     )
     client.post(f"{BASE}/translate", json={"region_ids": ["r0002"]})
     assert "preferred wording" not in fake.messages[-1][-1]["content"]
+
+
+def test_the_built_ui_is_served_next_to_the_api(tmp_path: Path, work: Path) -> None:
+    ui = tmp_path / "dist"
+    assert built_ui(ui) is None  # not built yet
+    (ui / "assets").mkdir(parents=True)
+    (ui / "index.html").write_text("<!doctype html><title>OmniScan</title>", encoding="utf-8")
+    (ui / "assets" / "app.js").write_text("console.log('studio')", encoding="utf-8")
+    assert built_ui(ui) == ui
+    cfg = Config(
+        paths=PathsConfig(
+            library_root=tmp_path / "lib", work_root=tmp_path / "work", output_root=tmp_path / "out"
+        )
+    )
+    client = TestClient(create_app(cfg, ui_dir=ui))
+    page = client.get("/")
+    assert page.status_code == 200 and "<title>OmniScan</title>" in page.text
+    assert client.get("/assets/app.js").text == "console.log('studio')"
+    assert client.get("/api/series").json() == [SERIES]  # the API still answers first
+    assert client.get(f"{BASE}/edits").status_code == 200
+    assert TestClient(create_app(cfg)).get("/").status_code == 404  # API only without a UI

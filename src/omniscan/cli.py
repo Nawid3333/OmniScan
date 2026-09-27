@@ -19,6 +19,7 @@ from omniscan.core.config import Config, get_config, get_secrets, series_config
 from omniscan.core.paths import ChapterPaths, SeriesPaths, chapter_number, list_chapters, list_images
 from omniscan.core.schemas import GlossaryEntry, IngestArtifact, SlicesArtifact
 from omniscan.doctor import run_all_checks
+from omniscan.edits.cli import edit_app
 from omniscan.filter.apply import record_override
 from omniscan.filter.decide import EXAMPLE_SUFFIXES
 from omniscan.glossary.store import GlossaryStore
@@ -960,16 +961,35 @@ def cmd_serve(
     host: Annotated[str, typer.Option("--host")] = "127.0.0.1",
     port: Annotated[int, typer.Option("--port")] = 8000,
     reload: Annotated[bool, typer.Option("--reload")] = False,
+    ui: Annotated[
+        bool, typer.Option("--ui/--no-ui", help="Serve the built web UI (webui/dist) at / as well.")
+    ] = True,
+    open_browser: Annotated[bool, typer.Option("--open", help="Open the Studio in the browser.")] = False,
 ) -> None:
-    """Run the web debug tool's API (pair with `npm run dev` in webui/ for the UI).
+    """Run the web app: the API and, once built (`npm run build` in webui/), the Studio at the same address.
 
     Also drains the job queue in the background, so the UI's "run this" actions actually execute —
     do not also run `omniscan queue run` against the same library while this is up."""
+    import threading
+    import webbrowser
+
     import uvicorn
 
-    from omniscan.web.app import create_app
+    from omniscan.web.app import UI_DIST, built_ui, create_app
 
-    uvicorn.run(create_app(get_config(), run_worker=True), host=host, port=port, reload=reload)
+    ui_dir = built_ui() if ui else None
+    url = f"http://{host}:{port}/"
+    if ui_dir is not None:
+        typer.echo(f"serve: OmniScan Studio at {url}")
+        if open_browser:
+            threading.Timer(1.5, webbrowser.open, args=(url,)).start()
+    elif ui:
+        typer.echo(
+            f"serve: API only at {url}api — the web UI is not built ({UI_DIST} has no index.html): "
+            "run `npm install && npm run build` in webui/ once, or `npm run dev` there while developing"
+        )
+    web_app = create_app(get_config(), run_worker=True, ui_dir=ui_dir)
+    uvicorn.run(web_app, host=host, port=port, reload=reload)
 
 
 app.command("serve")(cmd_serve)
@@ -1537,6 +1557,7 @@ def learn_disable(series: Annotated[str, typer.Argument()], rule: Annotated[str,
 
 
 app.add_typer(learn_app, name="learn")
+app.add_typer(edit_app, name="edit")
 
 queue_app = typer.Typer(no_args_is_help=True, help="Persistent job queue: run pipeline stages over series.")
 
