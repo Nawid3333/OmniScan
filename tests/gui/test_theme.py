@@ -88,3 +88,15 @@ def test_quick_mode_hides_the_models_page(qapp: QApplication, tmp_path: Path) ->
     window.settings_view.mode_combo.setCurrentText("pro")
     assert not window.sidebar.isRowHidden(models)
     apply_theme(qapp, Appearance())
+
+
+def test_stylesheet_uses_the_accent_and_bundled_icons() -> None:
+    """The stylesheet carries the accent for primary buttons and points at icons that exist."""
+    import re
+
+    from omniscan.gui.theme import stylesheet
+
+    sheet = stylesheet(Appearance(theme="light", accent="#ff8800"))
+    assert 'QPushButton[role="primary"] { background: #ff8800;' in sheet
+    icons = re.findall(r"url\(([^)]+)\)", sheet)
+    assert icons and all(Path(icon).is_file() for icon in icons)

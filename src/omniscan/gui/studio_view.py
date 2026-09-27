@@ -33,6 +33,7 @@ from omniscan.gui.run_worker import RunWorker
 from omniscan.gui.services import library
 from omniscan.gui.services.runs import RunController, RunOutcome, RunSpec
 from omniscan.gui.strip_view import StripView
+from omniscan.gui.theme import set_role
 from omniscan.studio.session import StudioRow, StudioSession
 
 COLUMNS = ("Page", "Kind", "Source", "English", "Issues")
@@ -74,6 +75,7 @@ class StudioView(QWidget):
         self.remove_button.setToolTip("Delete the selected region (a false detection)")
         self.save_button = QPushButton("Save", self)
         self.reletter_button = QPushButton("Re-letter", self)
+        set_role(self.reletter_button, "primary")
         self.reletter_button.setToolTip("Save, then redo lettering and export for this chapter")
         self.status_label = QLabel(self)
 
@@ -88,6 +90,7 @@ class StudioView(QWidget):
         header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(_SOURCE_COL, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(_ENGLISH_COL, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(_ISSUES_COL, QHeaderView.ResizeMode.Stretch)
 
         bar = QHBoxLayout()
         for widget in (

@@ -12,6 +12,7 @@ import pytest
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox
 
 from omniscan.core.config import Config
@@ -179,3 +180,45 @@ def test_hardware_tab_lists_the_warnings(qapp: QApplication, cfg: Config) -> Non
     level = view.hardware_table.item(0, 1)
     assert name is not None and level is not None
     assert name.text() == "slow-model" and level.text() == "slow"
+
+
+# ---------------------------------------------------------------------- search
+
+
+def _qsettings(tmp_path: Path) -> QSettings:
+    return QSettings(str(tmp_path / "gui.ini"), QSettings.Format.IniFormat)
+
+
+def test_search_shows_only_matching_settings_and_tabs(
+    qapp: QApplication, cfg: Config, tmp_path: Path
+) -> None:
+    """Typing filters rows by plain name, help, key or choices; tabs without a match are hidden."""
+    view = SettingsView(cfg, hardware=FakeHardware(), qsettings=_qsettings(tmp_path))  # type: ignore[arg-type]
+    device = view._editors[("gpu", "device")]
+    library = view._editors[("paths", "library_root")]
+
+    assert view.filter_settings("graphics") >= 1
+    assert device.isVisibleTo(view) and not library.isVisibleTo(view)
+    visible_tabs = [view.tabs.tabText(i) for i in range(view.tabs.count()) if view.tabs.isTabVisible(i)]
+    assert visible_tabs == ["Global", "Hardware"]
+
+    view.search_edit.setText("accent")  # only on the Appearance tab: it becomes the current one
+    assert view.tabs.currentWidget() is view._pages["appearance"]
+    assert view.accent_button.isVisibleTo(view)
+
+    assert view.filter_settings("no such setting anywhere") == 0
+    assert not view.search_empty.isHidden() and view.tabs.isHidden()
+
+    view.search_edit.setText("")
+    assert library.isVisibleTo(view) and not view.tabs.isHidden()
+    assert all(view.tabs.isTabVisible(i) for i in range(view.tabs.count()))
+
+
+def test_global_rows_use_plain_names_with_the_key_as_tooltip(qapp: QApplication, cfg: Config) -> None:
+    """Each global setting reads as a plain name; the config key stays one hover away."""
+    from PySide6.QtWidgets import QLabel
+
+    view = SettingsView(cfg)
+    labels = {label.text(): label.toolTip() for label in view._pages["global"].findChildren(QLabel)}
+    assert labels["Graphics card"] == "gpu.device"
+    assert labels["Hardware usage"] == "gpu.usage"

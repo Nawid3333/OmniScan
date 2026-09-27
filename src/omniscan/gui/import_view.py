@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Qt, QUrl
-from PySide6.QtGui import QBrush, QColor, QDragEnterEvent, QDropEvent
+from PySide6.QtGui import QBrush, QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -40,11 +40,12 @@ from omniscan.gui.services.importer import (
     set_series,
     split_chapter,
 )
+from omniscan.gui.theme import TINTS, set_role
 from omniscan.gui.workers import WorkerSignals, run_task
 from omniscan.importer.plan import ARCHIVE_SUFFIXES, JPEG_SUFFIXES, ImportPlan
 from omniscan.legal import NOTICE
 
-CONVERT_BACKGROUND = QBrush(QColor(255, 249, 196))  # light yellow: this page will be re-encoded
+CONVERT_BACKGROUND = QBrush(TINTS["attention"])  # this page will be re-encoded
 
 Selected = tuple[int, int | None]  # (chapter index, page index or None for the chapter itself)
 Kept = tuple[str, Path | None]  # what an edit re-selects: (chapter name, page or None for the chapter)
@@ -142,6 +143,7 @@ class ImportView(QWidget):
         self.progress.setVisible(False)
         self.move_toggle = QCheckBox("Move instead of copy", self)
         self.import_button = QPushButton("Import", self)
+        set_role(self.import_button, "primary")
         self.import_button.setEnabled(False)
         self.status_label = QLabel(self)
 
@@ -552,4 +554,4 @@ class ImportView(QWidget):
 
     def _set_status(self, text: str, *, error: bool = False) -> None:
         self.status_label.setText(text)
-        self.status_label.setStyleSheet("color: red;" if error else "")
+        set_role(self.status_label, "error" if error else "")

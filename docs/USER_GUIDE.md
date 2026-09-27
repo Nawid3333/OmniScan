@@ -1324,7 +1324,9 @@ exclusive GPU lock for real-GPU work, so a GUI run and a CLI run queue up instea
 on this machine, download/remove buttons and `Download required models`. Hardware detection runs in
 the background (it imports torch); the header shows the same snapshot `omniscan hardware` prints.
 
-**Settings** edits the config in place, with validation:
+**Settings** edits the config in place, with validation. The search box at the top filters every tab at once
+(plain names, help lines, config keys and choices all match; tabs with no match are hidden). Each setting shows a
+plain name and one help line; hover the name for its config key (e.g. `gpu.device`).
 
 - **Global** — paths, GPU device (`auto`, `cpu`, `mps`, `cuda[:N]`; editable), warm-up, codec, OCR
   engine and models, translation settings, slicer strategy, the filter switch and threshold. Every
@@ -1336,6 +1338,7 @@ the background (it imports torch); the header shows the same snapshot `omniscan 
 - **Translation** — the translation profiles from `config/translation_profiles.toml` plus the user's
   `translation_profiles.toml`; ticking a profile enables it (written to the user file), and a
   translate run runs exactly the enabled profiles.
+- **Appearance** — OLED black (default) or light theme, the accent colour, and Quick / Standard / Pro mode.
 - **Hardware** — the machine snapshot from `hw detect` plus one row per catalog model that does not
   fit (level, device, why). Detection runs when you open the tab (it imports torch) or on
   `Re-detect`.

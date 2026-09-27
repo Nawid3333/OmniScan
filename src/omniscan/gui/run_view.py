@@ -38,6 +38,7 @@ from omniscan.gui.services.runs import (
     StepPreview,
     validate_spec,
 )
+from omniscan.gui.theme import set_role
 from omniscan.pipeline.eta import format_duration
 from omniscan.pipeline.stages import STAGE_ORDER
 
@@ -80,9 +81,10 @@ class RunView(QWidget):
         self.force_checkbox = QCheckBox("Force re-run (ignore up-to-date manifests)", self)
         self.preview_combo = QComboBox(self)
         self.error_label = QLabel("", self)
-        self.error_label.setStyleSheet("color: darkred;")
+        set_role(self.error_label, "error")
         self.error_label.setWordWrap(True)
         self.start_button = QPushButton("Start", self)
+        set_role(self.start_button, "primary")
         self.cancel_button = QPushButton("Cancel", self)
 
         grid = QGridLayout(self.stage_group)

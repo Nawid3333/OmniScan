@@ -2,7 +2,7 @@
 
 Usage: `uv run --frozen python scripts/gui_screenshots.py --out data/screenshots/U3c`
 [--size 1300x800] [--series NAME] [--chapter NAME]. Writes `01-library.png` …
-`07-import.png` into `--out` (created); the run page is also captured mid-run with a
+`08-studio.png` into `--out` (created), in the saved appearance (`--theme` overrides it); the run page is also captured mid-run with a
 step-mode preview waiting (04). Services that would touch Ollama/the GPU are faked, so the
 script needs no daemon and never takes GPU time. Exits 1 for a bad `--size`.
 """
@@ -27,6 +27,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--series", default=None, help="chapter series to open in the Reader (default: fixture)"
     )
     parser.add_argument("--chapter", default=None, help="chapter to open in the Reader (default: fixture)")
+    parser.add_argument(
+        "--theme", choices=("oled", "light"), default="oled", help="appearance theme (default: oled)"
+    )
     return parser.parse_args(argv)
 
 
@@ -100,8 +103,11 @@ def main(argv: list[str] | None = None) -> int:
     from PySide6.QtWidgets import QApplication
     from tests.fixtures.gui_library import CHAPTERS, SERIES, build_library
 
-    from omniscan.gui.main_window import MainWindow
+    from omniscan.core.paths import SeriesPaths
+    from omniscan.core.schemas import BBox, FinalArtifact, FinalLine, Region, RegionsArtifact
+    from omniscan.gui.main_window import PAGES, MainWindow
     from omniscan.gui.services.runs import StageUpdate, StepPreview
+    from omniscan.gui.theme import Appearance, apply_theme
 
     series = args.series or SERIES
     chapter = args.chapter or CHAPTERS[0]
@@ -112,6 +118,8 @@ def main(argv: list[str] | None = None) -> int:
 
     with tempfile.TemporaryDirectory(prefix="omniscan-gui-shots-") as tmp:
         cfg = build_library(Path(tmp) / "lib")
+        apply_theme(app, Appearance(theme=args.theme))  # type: ignore[arg-type]
+        _studio_fixture(cfg, SeriesPaths, Region, BBox, RegionsArtifact, FinalArtifact, FinalLine)
         qsettings = QSettings(str(Path(tmp) / "gui.ini"), QSettings.Format.IniFormat)
         window = MainWindow(
             cfg,
@@ -187,16 +195,50 @@ def main(argv: list[str] | None = None) -> int:
         app.processEvents()
         shot("05-models.png")
 
-        # 06 Settings: the Global tab
+        # 06 Settings: the Global tab, then a search
         window.show_page(4)
         app.processEvents()
         shot("06-settings.png")
+        window.settings_view.search_edit.setText("gpu")
+        shot("06b-settings-search.png")
+        window.settings_view.search_edit.setText("")
 
         # 07 Import: source picker, empty (no source chosen yet)
         window.show_page(5)
         app.processEvents()
         shot("07-import.png")
+
+        # 08 Studio: the first chapter with two regions, one row selected
+        window.show_page(PAGES.index("Studio"))
+        window.studio_view.open_chapter(SERIES, CHAPTERS[0])
+        window.studio_view.select_region("r0001")
+        shot("08-studio.png")
     return 0
+
+
+def _studio_fixture(
+    cfg: Any, series_paths: Any, region: Any, bbox: Any, regions: Any, final: Any, line: Any
+) -> None:
+    """OCR and judge output for the fixture's first chapter, so the Studio has rows to show."""
+    from tests.fixtures.gui_library import CHAPTERS, SERIES
+
+    paths = series_paths.from_config(cfg, SERIES).chapter(CHAPTERS[0])
+    regions(
+        regions=[
+            region(
+                id="r0001",
+                slice_index=0,
+                kind="bubble_text",
+                bbox=bbox(x0=4, y0=20, x1=36, y1=60),
+                text="괜찮아?",
+            ),
+            region(id="r0002", slice_index=2, kind="sfx", bbox=bbox(x0=6, y0=220, x1=34, y1=250), text="쾅"),
+        ]
+    ).save(paths.artifact("ocr.json"))
+    final(
+        judge_model="demo",
+        lines=[line(region_id="r0001", text="Are you okay?", decision="pick", flags=["uncertain"])],
+    ).save(paths.artifact("final.json"))
 
 
 if __name__ == "__main__":

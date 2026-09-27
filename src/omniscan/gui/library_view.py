@@ -25,14 +25,15 @@ from PySide6.QtWidgets import (
 
 from omniscan.core.config import Config
 from omniscan.gui.services import library
+from omniscan.gui.theme import TINTS
 
 COLUMNS = ("Ingest", "Slice", "Detect", "OCR", "Translate", "Judge", "Inpaint", "LaMa", "Typeset", "Export")
 
 # Stage-state cell backgrounds; "not run" keeps the default background.
 STATE_COLORS: dict[str, QColor] = {
-    "done": QColor(200, 230, 201),
-    "stale": QColor(255, 249, 196),
-    "failed": QColor(255, 205, 210),
+    "done": TINTS["positive"],
+    "stale": TINTS["attention"],
+    "failed": TINTS["negative"],
 }
 
 

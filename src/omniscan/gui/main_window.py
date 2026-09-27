@@ -10,15 +10,18 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any, cast
 
-from PySide6.QtCore import QByteArray, QSettings
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtCore import QByteArray, QSettings, QSize, Qt
+from PySide6.QtGui import QIcon, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QHBoxLayout,
     QLabel,
     QListWidget,
+    QListWidgetItem,
     QMainWindow,
-    QSplitter,
     QStackedWidget,
     QStatusBar,
+    QVBoxLayout,
+    QWidget,
 )
 
 from omniscan.core.config import Config, load_config
@@ -32,10 +35,21 @@ from omniscan.gui.services.importer import ImporterService
 from omniscan.gui.services.models import ModelsService
 from omniscan.gui.settings_view import SettingsView
 from omniscan.gui.studio_view import StudioView
-from omniscan.gui.theme import MODE_PAGES, Appearance
+from omniscan.gui.theme import MODE_PAGES, Appearance, set_role
 
 # new pages go last so the first five keep their indices (scripts/gui_screenshots.py hard-codes them).
 PAGES = ("Library", "Reader", "Run", "Models", "Settings", "Import", "Studio")
+# the platform's own icon set (Segoe Fluent on Windows, SF Symbols on macOS, the icon theme on Linux)
+_ICONS = {
+    "Library": QIcon.ThemeIcon.FolderOpen,
+    "Reader": QIcon.ThemeIcon.DocumentPrintPreview,
+    "Run": QIcon.ThemeIcon.MediaPlaybackStart,
+    "Models": QIcon.ThemeIcon.Computer,
+    "Settings": QIcon.ThemeIcon.DocumentProperties,
+    "Import": QIcon.ThemeIcon.DocumentOpen,
+    "Studio": QIcon.ThemeIcon.InsertText,
+}
+_SIDEBAR_WIDTH = 190
 
 
 class MainWindow(QMainWindow):
@@ -78,13 +92,35 @@ class MainWindow(QMainWindow):
         ):
             self.stack.addWidget(view)
         self.sidebar = QListWidget()
-        self.sidebar.addItems(PAGES)
-        self.sidebar.setFixedWidth(140)
+        self.sidebar.setObjectName("sidebar")
+        self.sidebar.setIconSize(QSize(18, 18))
+        for name in PAGES:
+            self.sidebar.addItem(QListWidgetItem(QIcon.fromTheme(_ICONS[name]), name))
+        brand = QLabel("OmniScan")
+        brand.setObjectName("brand")
+        self.title_label = QLabel()
+        set_role(self.title_label, "title")
 
-        central = QSplitter()
-        central.addWidget(self.sidebar)
-        central.addWidget(self.stack)
-        central.setSizes([1, 6])
+        nav = QWidget()
+        nav.setObjectName("nav")
+        nav.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)  # draw the stylesheet's border
+        nav.setFixedWidth(_SIDEBAR_WIDTH)
+        nav_layout = QVBoxLayout(nav)
+        nav_layout.setContentsMargins(0, 0, 0, 0)
+        nav_layout.setSpacing(0)
+        nav_layout.addWidget(brand)
+        nav_layout.addWidget(self.sidebar, 1)
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(24, 16, 24, 12)
+        content_layout.addWidget(self.title_label)
+        content_layout.addWidget(self.stack, 1)
+        central = QWidget()
+        central_layout = QHBoxLayout(central)
+        central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.setSpacing(0)
+        central_layout.addWidget(nav)
+        central_layout.addWidget(content, 1)
         self.setCentralWidget(central)
 
         self.device_label = QLabel()
@@ -128,6 +164,7 @@ class MainWindow(QMainWindow):
         """Show the page matching the sidebar row."""
         if row >= 0:
             self.stack.setCurrentIndex(row)
+            self.title_label.setText(PAGES[row])
 
     def _on_chapter_opened(self, series: str, chapter: str) -> None:
         """Open the double-clicked library chapter in the reader."""

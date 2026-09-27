@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from omniscan.gui.services.models import ModelsService
+from omniscan.gui.theme import TINTS, set_role
 from omniscan.gui.workers import WorkerSignals, run_task
 from omniscan.hw.detect import HardwareInfo
 from omniscan.models.rows import ModelRow
@@ -37,9 +38,9 @@ COLUMNS = ("Model", "Role", "Languages", "Size", "Fit", "Status", "")
 
 # Fit cell backgrounds by level; a clean `ok` row keeps the default background.
 FIT_BACKGROUNDS: dict[str, QColor] = {
-    "slow": QColor(255, 249, 196),  # light yellow
-    "warn": QColor(255, 224, 178),  # light orange
-    "incompatible": QColor(255, 205, 210),  # light red
+    "slow": TINTS["attention"],
+    "warn": TINTS["warning"],
+    "incompatible": TINTS["negative"],
 }
 
 Confirm = Callable[[str, str], bool]
@@ -116,6 +117,7 @@ class ModelsView(QWidget):
         self.progress.setVisible(False)
         self.status_label = QLabel(self)
         self.required_button = QPushButton("Download required models", self)
+        set_role(self.required_button, "primary")
         self.details = QTextBrowser(self)
 
         filters = QHBoxLayout()
@@ -294,7 +296,7 @@ class ModelsView(QWidget):
 
     def _set_status(self, text: str, *, error: bool = False) -> None:
         self.status_label.setText(text)
-        self.status_label.setStyleSheet("color: red;" if error else "")
+        set_role(self.status_label, "error" if error else "")
 
     def _start_download(self, row: ModelRow) -> None:
         """Download one model after a confirmation for incompatible ones only."""

@@ -8,6 +8,7 @@ runs on a pool thread (it imports torch).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -38,9 +39,35 @@ from omniscan.core.config import SERIES_SECTIONS, Config, SettingError
 from omniscan.gui.models_view import hardware_header
 from omniscan.gui.services import library, settings
 from omniscan.gui.services.hardware import HardwareReport, HardwareService
-from omniscan.gui.services.settings import GLOBAL_FIELDS, SettingField
-from omniscan.gui.theme import THEMES, UI_MODES, Appearance, apply_theme, load_appearance, save_appearance
+from omniscan.gui.services.settings import GLOBAL_FIELDS, SECTION_TITLES, SettingField
+from omniscan.gui.theme import (
+    THEMES,
+    UI_MODES,
+    Appearance,
+    apply_theme,
+    load_appearance,
+    save_appearance,
+    set_role,
+)
 from omniscan.gui.workers import run_task
+
+# words that find a whole tab in the search (its own rows are matched one by one)
+_TAB_KEYWORDS = {
+    "series": "per-series override series.toml section key value",
+    "profiles": "translation profiles model endpoint ollama cloud llm enable",
+    "hardware": "hardware gpu graphics card vram memory detect fit models",
+}
+
+
+@dataclass(slots=True)
+class _SearchRow:
+    """One searchable settings row: its widgets, the text it matches and the heading above it."""
+
+    page: str
+    widgets: list[QWidget]
+    haystack: str
+    header: QLabel | None = None
+
 
 _PAGE_TITLES = {
     "global": "Global",
@@ -78,8 +105,17 @@ class SettingsView(QWidget):
         self._editors: dict[tuple[str, str], QWidget] = {}
         self._pages: dict[str, QWidget] = {}
         self._hardware_loaded = False
+        self._search_rows: list[_SearchRow] = []
         self._qsettings = qsettings or QSettings("OmniScan", "gui")
         self.appearance = load_appearance(self._qsettings)
+
+        self.search_edit = QLineEdit(self)
+        self.search_edit.setPlaceholderText("Search settings")
+        self.search_edit.setClearButtonEnabled(True)
+        set_role(self.search_edit, "search")
+        self.search_empty = QLabel("No setting matches your search.", self)
+        set_role(self.search_empty, "muted")
+        self.search_empty.hide()
 
         self.tabs = QTabWidget(self)
         for name, title in _PAGE_TITLES.items():
@@ -89,7 +125,47 @@ class SettingsView(QWidget):
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
         root = QVBoxLayout(self)
+        root.addWidget(self.search_edit)
+        root.addWidget(self.search_empty)
         root.addWidget(self.tabs)
+        self.search_edit.textChanged.connect(self.filter_settings)
+
+    # ------------------------------------------------------------------ search
+
+    def filter_settings(self, text: str) -> int:
+        """Show only the settings matching `text` (every word, any order); returns how many rows/tabs match."""
+        words = text.lower().split()
+        matched_pages: set[str] = set()
+        count = 0
+        headers: dict[int, tuple[QLabel, bool]] = {}
+        for row in self._search_rows:
+            hit = all(word in row.haystack for word in words)
+            for widget in row.widgets:
+                widget.setVisible(hit)
+            if row.header is not None:
+                seen = headers.get(id(row.header), (row.header, False))[1]
+                headers[id(row.header)] = (row.header, seen or hit)
+            if hit:
+                matched_pages.add(row.page)
+                count += 1
+        for header, visible in headers.values():
+            header.setVisible(visible)
+        for name, title in _PAGE_TITLES.items():
+            tab_text = f"{title} {_TAB_KEYWORDS.get(name, '')}".lower()
+            if name not in matched_pages and words and all(word in tab_text for word in words):
+                matched_pages.add(name)
+                count += 1
+        for name, page in self._pages.items():
+            self.tabs.setTabVisible(self.tabs.indexOf(page), not words or name in matched_pages)
+        current = next(
+            (name for name, page in self._pages.items() if page is self.tabs.currentWidget()), None
+        )
+        if words and current not in matched_pages and matched_pages:
+            first = next(name for name in _PAGE_TITLES if name in matched_pages)
+            self.tabs.setCurrentWidget(self._pages[first])
+        self.search_empty.setVisible(bool(words) and not matched_pages)
+        self.tabs.setVisible(not words or bool(matched_pages))
+        return count
 
     # ------------------------------------------------------------------ reconfigure
 
@@ -108,9 +184,11 @@ class SettingsView(QWidget):
         index = self.tabs.indexOf(old)
         self.tabs.removeTab(index)
         old.deleteLater()
+        self._search_rows = [row for row in self._search_rows if row.page != name]
         page = self._build(name)
         self._pages[name] = page
         self.tabs.insertTab(index, page, _PAGE_TITLES[name])
+        self.filter_settings(self.search_edit.text())
 
     def _build(self, name: str) -> QWidget:
         """Build one tab's page."""
@@ -127,26 +205,59 @@ class SettingsView(QWidget):
     # ------------------------------------------------------------------ global tab
 
     def _build_global(self) -> QWidget:
-        """One row per `GLOBAL_FIELDS` value: editor + Reset, committed through the service."""
+        """The `GLOBAL_FIELDS` grouped by section: plain name, editor, Reset and a help line per setting."""
         page = QWidget()
         grid = QGridLayout(page)
+        grid.setHorizontalSpacing(12)
         dump = self._cfg.model_dump(mode="json")
-        for row, field in enumerate(GLOBAL_FIELDS):
+        row = 0
+        header: QLabel | None = None
+        section = ""
+        for field in GLOBAL_FIELDS:
+            if field.section != section:
+                section = field.section
+                header = QLabel(SECTION_TITLES.get(section, section), page)
+                set_role(header, "section")
+                grid.addWidget(header, row, 0, 1, 3)
+                row += 1
             value = dump[field.section][field.key]
             self._last_good[(field.section, field.key)] = value
             self._fields[(field.section, field.key)] = field
-            grid.addWidget(QLabel(f"{field.section}.{field.key}", page), row, 0)
-            grid.addWidget(self._editor(field, value), row, 1)
+            name = QLabel(field.label or f"{field.section}.{field.key}", page)
+            name.setToolTip(f"{field.section}.{field.key}")
+            editor = self._editor(field, value)
             reset = QPushButton("Reset", page)
             reset.setToolTip("Remove the user override and apply the built-in default")
             reset.clicked.connect(lambda _checked=False, f=field: self._reset_global(f))
+            grid.addWidget(name, row, 0)
+            grid.addWidget(editor, row, 1)
             grid.addWidget(reset, row, 2)
+            widgets: list[QWidget] = [name, editor, reset]
+            if field.help:
+                help_label = QLabel(field.help, page)
+                help_label.setWordWrap(True)
+                set_role(help_label, "muted")
+                grid.addWidget(help_label, row + 1, 1, 1, 2)
+                widgets.append(help_label)
+                row += 1
+            row += 1
+            haystack = " ".join(
+                (
+                    field.label,
+                    field.help,
+                    field.section,
+                    field.key,
+                    SECTION_TITLES.get(field.section, ""),
+                    *field.choices,
+                )
+            )
+            self._search_rows.append(_SearchRow("global", widgets, haystack.lower(), header))
         self.global_error = QLabel("", page)
-        self.global_error.setStyleSheet("color: darkred;")
+        set_role(self.global_error, "error")
         self.global_error.setWordWrap(True)
-        grid.addWidget(self.global_error, len(GLOBAL_FIELDS), 0, 1, 3)
+        grid.addWidget(self.global_error, row, 0, 1, 3)
         grid.setColumnStretch(1, 1)
-        grid.setRowStretch(len(GLOBAL_FIELDS) + 1, 1)
+        grid.setRowStretch(row + 1, 1)
         return _in_scroll(page)
 
     def _editor(self, field: SettingField, value: Any) -> QWidget:
@@ -158,7 +269,7 @@ class SettingsView(QWidget):
             browse = QPushButton("Browse...")
             browse.clicked.connect(lambda _checked=False, f=field: self._browse_for(f))
             self._editors[key] = line
-            return _row_widget(line, browse)
+            return _row_widget(line, browse, stretch_first=True)
         if field.kind == "bool":
             editor: QWidget = QCheckBox()
             editor.setChecked(bool(value))
@@ -268,7 +379,7 @@ class SettingsView(QWidget):
         layout.addLayout(top)
 
         self.series_error = QLabel("", page)
-        self.series_error.setStyleSheet("color: darkred;")
+        set_role(self.series_error, "error")
         self.series_error.setWordWrap(True)
 
         self.override_table = QTableWidget(0, 4, page)
@@ -375,7 +486,7 @@ class SettingsView(QWidget):
         )
         layout.addWidget(note)
         self.profiles_error = QLabel("", page)
-        self.profiles_error.setStyleSheet("color: darkred;")
+        set_role(self.profiles_error, "error")
         self.profiles_error.setWordWrap(True)
         layout.addWidget(self.profiles_error)
         self._profile_boxes: list[QCheckBox] = []
@@ -486,12 +597,27 @@ class SettingsView(QWidget):
         self.mode_combo = QComboBox(page)
         self.mode_combo.addItems(UI_MODES)
         self.mode_combo.setCurrentText(self.appearance.mode)
-        for row, (label, widget) in enumerate(
-            (("Theme", self.theme_combo), ("Accent colour", self.accent_button), ("Mode", self.mode_combo))
-        ):
-            grid.addWidget(QLabel(label, page), row, 0)
-            grid.addWidget(widget, row, 1)
-        grid.setRowStretch(3, 1)
+        rows = (
+            ("Theme", self.theme_combo, "OLED black or light", "theme dark black oled light white"),
+            ("Accent colour", self.accent_button, "Buttons, selection and highlights", "accent color colour"),
+            (
+                "Mode",
+                self.mode_combo,
+                "quick shows the basics; pro shows every tool",
+                "mode quick standard pro simple",
+            ),
+        )
+        for index, (label, widget, help_text, words) in enumerate(rows):
+            name = QLabel(label, page)
+            help_label = QLabel(help_text, page)
+            set_role(help_label, "muted")
+            grid.addWidget(name, 2 * index, 0)
+            grid.addWidget(widget, 2 * index, 1)
+            grid.addWidget(help_label, 2 * index + 1, 1)
+            haystack = f"{label} {help_text} {words} appearance look".lower()
+            self._search_rows.append(_SearchRow("appearance", [name, widget, help_label], haystack))
+        grid.setColumnStretch(1, 1)
+        grid.setRowStretch(2 * len(rows), 1)
         self.theme_combo.currentTextChanged.connect(lambda _text: self._commit_appearance())
         self.mode_combo.currentTextChanged.connect(lambda _text: self._commit_appearance())
         self.accent_button.clicked.connect(self._pick_accent)
@@ -543,12 +669,13 @@ def _in_scroll(page: QWidget) -> QScrollArea:
     return scroll
 
 
-def _row_widget(*widgets: QWidget) -> QWidget:
-    """A horizontal row widget."""
+def _row_widget(*widgets: QWidget, stretch_first: bool = False) -> QWidget:
+    """A horizontal row widget; `stretch_first` lets the first widget take the spare width."""
     row = QWidget()
     layout = QHBoxLayout(row)
     layout.setContentsMargins(0, 0, 0, 0)
-    for widget in widgets:
-        layout.addWidget(widget)
-    layout.addStretch(1)
+    for index, widget in enumerate(widgets):
+        layout.addWidget(widget, 1 if stretch_first and index == 0 else 0)
+    if not stretch_first:
+        layout.addStretch(1)
     return row
