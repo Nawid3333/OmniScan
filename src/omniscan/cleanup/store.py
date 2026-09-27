@@ -142,11 +142,9 @@ def _paste(crop: np.ndarray, crop_box: BBox, box: BBox, pixels: np.ndarray, mask
     target[sel] = pixels[y0 - box.y0 : y1 - box.y0, x0 - box.x0 : x1 - box.x0][sel]
 
 
-def current_crop(
-    paths: ChapterPaths, ingest: IngestArtifact, box: BBox, *, before: str | None = None
-) -> np.ndarray:
+def current_crop(paths: ChapterPaths, ingest: IngestArtifact, box: BBox) -> np.ndarray:
     """The page inside `box` as export would show it before any lettering: raw, the automatic cleaning, then
-    the hand patches in order (only those painted before patch `before`, when given)."""
+    the hand patches in order."""
     raw = strip_crop(paths, ingest, box)
     crop = raw.copy()
     for name, items_name in (("patches.npz", "inpaint.json"), ("patches_lama.npz", "inpaint_lama.json")):
@@ -162,8 +160,6 @@ def current_crop(
     if artifact is not None and fits_strip(artifact, ingest):
         arrays = load_arrays(paths)
         for patch in artifact.patches:
-            if patch.id == before:
-                break
             if patch.id not in arrays:
                 continue
             pixels, mask = arrays[patch.id]
