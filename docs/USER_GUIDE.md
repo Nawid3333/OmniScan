@@ -134,6 +134,7 @@ Every key in `config/default.toml`:
 | `learn.enabled` | apply what the series' hand corrections taught to its later chapters (see "Learning from your corrections") | yes (`omniscan ocr`, `translate`, Studio *Translate*) |
 | `learn.min_count` | a word fix, a preferred wording or a deletion acts after this many matching corrections | yes |
 | `learn.examples` | how many similar lines of the translation memory each translation request shows the model | yes |
+| `share.enabled` | whether the series' hand corrections may be shared to improve OmniScan (on by default; see "Contributing corrections") | yes (`omniscan contribute export`) |
 | `ollama.local_url` | local Ollama base URL | yes (`doctor`) |
 | `ollama.cloud_url` | Ollama cloud base URL | yes (`doctor`) |
 | `ollama.request_timeout_s` | per-request timeout | used by the LLM client module (no pipeline stage yet) |
@@ -1213,6 +1214,21 @@ uv run omniscan learn enable "Solo Leveling" 3f2a9c1e0b7d
 A rule's state is `active`, `off` (switched off) or `needs more` (fewer than `learn.min_count`
 corrections so far). An unknown rule id exits 2.
 
+### `omniscan contribute`
+
+Write a series' hand corrections, with the pages they were made on, to one archive you can share so OmniScan
+improves (see "Contributing corrections"). Nothing is uploaded.
+
+```bash
+uv run omniscan contribute export "Solo Leveling" --dry-run        # what the archive would hold
+uv run omniscan contribute export "Solo Leveling"                  # omniscan-contribution-<id>.zip in this folder
+uv run omniscan contribute export "Solo Leveling" -c "Chapter 12" -o fixes.zip
+uv run omniscan contribute export "Solo Leveling" --json           # the summary as JSON (path, bytes)
+```
+
+A series (or machine) that opted out (`[share] enabled = false`) and an unknown chapter exit 2; a series without
+hand corrections writes nothing.
+
 ### `omniscan qa`
 
 Check the finished pages: every region that should have been cleaned is re-read on the exported (lettered)
@@ -1711,6 +1727,28 @@ or is switched off (or a changed `[learn]` setting) re-runs the `ocr` stage, so 
 back once the rule is off; a line you translated by hand re-runs the `translate` stage only for the chapters
 that hold the same line, and the remembered English always wins over a line kept from an earlier run. Set
 `[learn] enabled = false` in a series' `series.toml` to switch learning off for that series.
+
+## Contributing corrections
+
+Your corrections can help everyone's OmniScan get better: better OCR, translation and lettering defaults and
+shared glossaries come from real pages with real fixes. Sharing is **on by default** with a clear opt-out, and
+for now it is only a file: `omniscan contribute export SERIES` writes a zip archive you can look at and send;
+there is no upload service yet (it waits for decisions on hosting, the licence of contributed data and accounts,
+`docs/OPEN_QUESTIONS.md` X1-X3).
+
+What the archive holds (`contribution.json` plus JPEG pages):
+- only the pages that carry a hand correction, as the pipeline saw them (the raw page at strip width);
+- every region on those pages with the pipeline's output next to yours: the OCR's reading and your text, the
+  region type, boxes you added or deleted, the judge's English and your line (typed, or a suggestion you kept),
+  the speaker, and lettering you set by hand (fonts by file name only);
+- the series' locked glossary terms.
+
+What it never holds: file or folder names (the series and chapters are anonymous ids), paths, the pages' camera
+or editing metadata (they are re-encoded), untouched pages, or when and where you exported it (every archive
+entry has the same fixed date).
+
+To opt out, set `[share] enabled = false` in your `config.toml` (every series) or in a series' `series.toml`
+(that series); an opted-out series exports nothing.
 
 ## Speakers and character voices
 

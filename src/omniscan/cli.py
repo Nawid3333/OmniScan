@@ -46,6 +46,7 @@ from omniscan.queue.executor import stage_executor
 from omniscan.queue.notify import combine, log_notifier, webhook_notifier
 from omniscan.queue.store import KNOWN_STAGES, STATUSES, JobStatus, QueueStore, queue_db_path
 from omniscan.queue.worker import run_queue
+from omniscan.share.cli import contribute_app
 from omniscan.update.download import check_for_update, download_update
 from omniscan.update.github import DEFAULT_REPO, ReleaseInfo, UpdateError, platform_key, select_asset
 from omniscan.update.version import current_version
@@ -1642,6 +1643,7 @@ app.add_typer(labelplus_app, name="labelplus")
 app.add_typer(psd_app, name="psd")
 app.add_typer(ballons_app, name="ballons")
 app.add_typer(mit_app, name="mit")
+app.add_typer(contribute_app, name="contribute")
 
 queue_app = typer.Typer(no_args_is_help=True, help="Persistent job queue: run pipeline stages over series.")
 

@@ -7,7 +7,7 @@ Every top-level artifact carries `schema_version`; bump it on any breaking chang
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Literal, Self
 
@@ -521,6 +521,93 @@ class SeriesMemory(Artifact):
 
     rules: list[LearnedRule] = Field(default_factory=list)
     translations: list[MemoryEntry] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------- shared data (contributions)
+
+
+class ContributionLettering(Model):
+    """A hand-set lettering (a LayoutEdit) in page pixels; the font is a file name only, never a path."""
+
+    font: str | None = None
+    size_px: int | None = None
+    color: RGB | None = None
+    stroke_px: int | None = None
+    stroke_color: RGB | None = None
+    align: Literal["center", "left", "right"] | None = None
+    angle: float | None = None
+    box: BBox | None = None
+    lines: list[str] | None = None
+    hidden: bool = False
+
+
+class ContributionRegion(Model):
+    """One text region of a contributed page: what the pipeline produced next to what the editor made of it.
+
+    `auto_kind`, `ocr_text` and `machine_english` are the pipeline's (None where it had none: a region added by
+    hand, a line never judged); `kind`, `text` and `english` are after the hand edits. A `deleted` region was
+    found by the pipeline and removed by hand (a false detection); its fields are the pipeline's.
+    """
+
+    id: str
+    box: BBox  # the text area, page pixels
+    bubble_box: BBox | None = None
+    reading_order: int = 0
+    lang: Lang
+    kind: RegionKind
+    auto_kind: RegionKind | None = None
+    ocr_text: str | None = None
+    text: str
+    added: bool = False
+    deleted: bool = False
+    edited: bool = False  # a hand edit changed the region's box, kind, text or speaker
+    machine_english: str | None = None
+    english: str | None = None
+    english_from: Literal["machine", "suggestion", "typed"] | None = (
+        None  # None: the region has no English line
+    )
+    speaker: str | None = None
+    lettering: ContributionLettering | None = None
+
+
+class ContributionPage(Model):
+    """One contributed page: its image in the archive (strip resolution, no metadata) and its regions."""
+
+    index: int  # the page's SourceFile.index in its chapter
+    image: str  # archive member, e.g. "pages/<chapter id>/0003.jpg"
+    width: int
+    height: int
+    regions: list[ContributionRegion]
+
+
+class ContributionChapter(Model):
+    """The contributed pages of one chapter: only pages that carry a hand correction."""
+
+    id: str  # hash of the series and chapter names (the names themselves are never shared)
+    order: int  # the chapter's position in the series' reading order
+    pages: list[ContributionPage]
+
+
+class ContributionTerm(Model):
+    """A locked glossary term of the series."""
+
+    source: str
+    target: str
+    type: TermType = "other"
+    aliases: list[str] = Field(default_factory=list)
+
+
+class Contribution(Artifact):
+    """contribution.json inside a contribution archive (share/): a series' hand corrections with the pages they
+    were made on, shared to improve the models and defaults. Carries no file names, folder paths or image
+    metadata; built only for series that have not opted out (`[share] enabled`)."""
+
+    app_version: str
+    created: date  # the export's day (UTC)
+    series_id: str  # hash of the series name
+    target_lang: Lang = "en"
+    chapters: list[ContributionChapter]
+    glossary: list[ContributionTerm] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------- manifest

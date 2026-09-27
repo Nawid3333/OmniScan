@@ -212,6 +212,14 @@ class LearnConfig(BaseModel):
     examples: int = Field(default=5, ge=0, le=20)  # translation-memory examples shown per translation request
 
 
+class ShareConfig(BaseModel):
+    """Sharing hand corrections so OmniScan improves (share/, X4 in docs/ROADMAP.md): on by default; `enabled = false`
+    in config.toml opts this machine out, in a series.toml that series. Nothing is uploaded yet: a contribution is
+    a local file the user exports (`omniscan contribute export`), and an opted-out series exports none."""
+
+    enabled: bool = True
+
+
 class Secrets(BaseSettings):
     """Secrets only come from the environment or ~/.config/omniscan/secrets.env — never from TOML."""
 
@@ -235,6 +243,7 @@ class Config(BaseSettings):
     export: ExportConfig = ExportConfig()
     filter: FilterConfig = FilterConfig()
     learn: LearnConfig = LearnConfig()
+    share: ShareConfig = ShareConfig()
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -299,6 +308,7 @@ SERIES_SECTIONS = (
     "export",
     "filter",
     "learn",
+    "share",
 )  # machine-level sections are not per series
 
 

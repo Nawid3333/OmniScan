@@ -40,6 +40,7 @@ to the common strip width. Integers, half-open ranges `[x0, x1)`, `[y0, y1)`. A 
 | `qa.json` | `QaArtifact` (regions whose original text is still readable on the exported pages) | `qa` stage (`omniscan qa`, not part of `omniscan run`) |
 | `manifest.json` | `Manifest` of `StageRecord`s | stage runner |
 | `<series>/memory.json` | `SeriesMemory` (learned rules + translation memory of the whole series) | `learn/memory.py`, rebuilt from every `edits.json` when one changes; only rule switches are set by hand |
+| contribution archive (`.zip`, anywhere) | `Contribution` in `contribution.json` + `pages/<chapter id>/<page>.jpg` (hand corrections with the pages they were made on) | `share/contribution.py` (`omniscan contribute export`); never read by the pipeline |
 Save/load only through `Artifact.save()` (atomic tmp+rename) and `Model.load(path)`.
 
 **Hand edits** (`edits/`): `edits.json` is user-owned — only the editing tools write it (web Studio, via
@@ -79,6 +80,15 @@ like every region edit); a series' hand-written `voices.toml` (library dir, next
 each character talks. The chat_json prompt carries each region's speaker and the voices of the characters who
 speak or are named in the request; `translation_key` includes a region's speaker and voice only when it has a
 speaker, so unassigned lines keep their keys. `voices.toml` is an input of the translate stage.
+
+**Contributions** (`share/contribution.py`, X4 in `docs/ROADMAP.md`): what a user shares so the models and defaults
+improve, for now as a local zip archive. `build` walks a series' chapters: each current region is paired with the
+pipeline's output (`ocr_auto.json` / `final_auto.json`, or the reading an edit recorded in `auto_text`) and its
+hand edits (matched like the stages re-apply them), deleted pipeline regions are added back as `deleted`, and only
+pages holding a correction are kept, in page pixels (strip resolution). `write_archive` re-encodes those pages
+from the raw files (Pillow, like the PSD export: no metadata) and gives every entry the same fixed timestamp.
+Names never leave the machine: the series and chapters are sha256 ids, fonts are file names. `[share] enabled`
+(`ShareConfig`, per machine or per series) gates `build`; no upload exists yet.
 
 **Consistency** (`qa/consistency.py`): a series-wide proofreading report, never a stage and never written to
 disk: `series_lines` reads every chapter's current regions and English lines, `divergences` groups repeated
