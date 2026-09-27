@@ -121,6 +121,38 @@ def rebuild(paths: ChapterPaths, edits: ChapterEdits, *, direction: Direction) -
     return regions
 
 
+def write_ocr(
+    paths: ChapterPaths, reading: list[Region], *, direction: Direction
+) -> tuple[list[Region], int | None]:
+    """The `ocr` stage's write: its own reading as ocr_auto.json, and ocr.json as that reading with the hand
+    edits, under the edit lock so an edit made meanwhile (the Studio, in the same process) is never lost.
+    Returns the regions written and how many region edits found no region (None when there are none)."""
+    with _LOCK:
+        RegionsArtifact(regions=reading).save(paths.artifact(OCR_AUTO_FILE))
+        edits = load_edits(paths)
+        regions, orphans = reading, None
+        if edits.regions:
+            regions, orphans = apply_region_edits(
+                reading, edits, load_slices(paths).slices, direction=direction
+            )
+        RegionsArtifact(regions=regions).save(paths.artifact("ocr.json"))
+        return regions, orphans
+
+
+def write_final(paths: ChapterPaths, judged: FinalArtifact, regions: list[Region]) -> FinalArtifact:
+    """The `judge` stage's write: its own lines as final_auto.json, and final.json as them with the hand-written
+    lines, under the edit lock (see `write_ocr`). Returns what was written as final.json."""
+    with _LOCK:
+        judged.save(paths.artifact(FINAL_AUTO_FILE))
+        edits = load_edits(paths)
+        result = judged
+        if edits.translations:
+            lines, _orphans = apply_translation_edits(judged.lines, edits, regions)
+            result = judged.model_copy(update={"lines": lines})
+        result.save(paths.artifact("final.json"))
+        return result
+
+
 def _find(regions: list[Region], region_id: str) -> Region:
     """The region with `region_id` (EditNotFoundError when there is none)."""
     region = next((region for region in regions if region.id == region_id), None)

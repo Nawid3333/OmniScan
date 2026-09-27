@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import pytest
@@ -202,3 +203,35 @@ def test_chapter_without_ocr_starts_from_hand_drawn_regions(paths: ChapterPaths)
     assert [r.id for r in ocr(paths)] == [added.id]
     assert RegionsArtifact.load(paths.artifact("ocr_auto.json")).regions == []
     assert not paths.artifact("final.json").exists()  # no judge ran and no line was written
+
+
+def test_the_stages_write_their_output_under_the_edit_lock(paths: ChapterPaths) -> None:
+    """The ocr and judge stages run in `omniscan serve`'s queue worker, next to the Studio's edit handlers."""
+    store.update_region(paths, "r0001", direction="ltr", text="안녕하세요")
+    store.set_translation(paths, "r0002", "Nice to meet you", direction="ltr")
+    judged = FinalArtifact(
+        judge_model="judge", lines=[FinalLine(region_id="r0001", text="Hi", decision="pick")]
+    )
+    done = threading.Event()
+
+    def stages() -> None:
+        store.write_ocr(paths, [R1, R2], direction="ltr")
+        store.write_final(paths, judged, [R1, R2])
+        done.set()
+
+    with store._LOCK:  # pyright: ignore[reportPrivateUsage]  # an edit in progress in another thread
+        worker = threading.Thread(target=stages)
+        worker.start()
+        assert not done.wait(0.3)  # the stages wait for it
+    worker.join(5)
+    assert done.is_set()
+    assert RegionsArtifact.load(paths.artifact("ocr_auto.json")).regions == [R1, R2]
+    assert [r.text for r in ocr(paths)] == ["안녕하세요", "반가워"]  # the stage's reading, hand edit applied
+    assert FinalArtifact.load(paths.artifact("final_auto.json")) == judged
+    assert {rid: line.text for rid, line in final(paths).items()} == {
+        "r0001": "Hi",
+        "r0002": "Nice to meet you",
+    }
+    assert store.write_ocr(paths, [R2], direction="ltr")[1] == 1  # r0001 is gone: its edit is an orphan
+    paths.artifact("edits.json").unlink()
+    assert store.write_ocr(paths, [R1, R2], direction="ltr") == ([R1, R2], None)  # no region edits at all
