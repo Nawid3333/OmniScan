@@ -103,6 +103,13 @@ inpaint patches, layout), so every manual change is just a better version of a s
 - Re-run any single stage for one page or one region; history with undo per chapter.
 - Roles for groups later: translator, proofreader, cleaner, typesetter, quality check; a chapter moves between them.
 - Export: CBZ/PDF/images as today, plus a project file a group can pass around.
+- Every manual correction is saved locally as a before/after record (the input X4 later shares, and a per-series
+  memory the next chapter's translation reuses).
+- Automatic QA pass over finished pages: re-read the lettered page to catch leftover source text, overflowing or
+  clipped lettering, untranslated lines and typos; flagged pages open straight in the Studio.
+- Context for the translator model: the page image and the speaker with it, plus per-character voice profiles
+  (how each character talks) kept with the series glossary.
+- Interchange with the tools groups already use: PSD export (layers: raw, clean, text) and LabelPlus import/export.
 
 ### X4 — Shared data that improves the program (opt-in)
 - **Nothing leaves the machine unless the user turns it on**, per series or globally, and every upload shows what
@@ -125,5 +132,7 @@ inpaint patches, layout), so every manual change is just a better version of a s
 - More target languages than English once the Studio exists (the prompts and glossary are already per language).
 
 ## Order
+Research on what translators and groups need (2026-09-27) ranks, for after X1: the page editor, the QA pass,
+saving corrections, image + speaker context for translation, then PSD/LabelPlus interchange.
 X1 now, X3 next (it is what makes OmniScan a translator's tool and it produces the data X4 needs), X2 in parallel
 once X1's CI is green, X4 after the owner answers its questions, X5 when the downloader is ready.
