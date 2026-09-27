@@ -1136,6 +1136,23 @@ does not have are listed (draw the missing boxes in the Studio or with `omniscan
 A page renamed by the group (`001.png` for `001.jpg`) is matched by its name without the extension. Needs the
 chapter's `ingest.json` (page positions); a file that is not LabelPlus exits 2.
 
+### `omniscan psd`
+
+Layered Photoshop files of a chapter's pages, for groups who finish a release in Photoshop (or GIMP, Krita,
+Photopea).
+
+```bash
+uv run omniscan psd export "Solo Leveling" "Chapter 1"               # every page
+uv run omniscan psd export "Solo Leveling" "Chapter 1" --page 0 --page 3 --out ./psd
+```
+
+Each page becomes one `.psd` (named like the raw page) at strip resolution with three layers, bottom to top:
+`raw` (the page as scanned), `clean` (the automatic cleaning plus your hand cleanup) and `text` (the lettering,
+from `layout.json`, on a transparent layer). The file's composite image is the finished page, so viewers without
+layer support show the release. Hide `text` to letter by hand, or paint on `clean`. Default folder:
+`<output_root>/<series>/_psd/<chapter>/`. Pages are built on the CPU with the Studio preview's code; without a
+`layout.json` (typeset not run yet) the `text` layers are empty.
+
 ### `omniscan learn`
 
 What a series' hand corrections taught (see "Learning from your corrections").

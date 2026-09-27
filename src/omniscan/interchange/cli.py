@@ -10,14 +10,23 @@ import typer
 
 from omniscan.core.config import SeriesConfigError, get_config, series_config
 from omniscan.core.paths import SeriesPaths
-from omniscan.core.schemas import IngestArtifact
+from omniscan.core.schemas import IngestArtifact, LayoutArtifact
 from omniscan.edits import store
 from omniscan.interchange.labelplus import export_labels, match_labels, parse, write
+from omniscan.interchange.psd import page_psd
 from omniscan.translate.on_demand import english_lines
 
 labelplus_app = typer.Typer(
     no_args_is_help=True, help="LabelPlus files: export a chapter, import a translation."
 )
+psd_app = typer.Typer(
+    no_args_is_help=True, help="Layered Photoshop files (raw, clean, text) of a chapter's pages."
+)
+
+
+@psd_app.callback()
+def psd_group() -> None:
+    """Layered Photoshop files (raw, clean, text) of a chapter's pages."""
 
 
 class ExportText(enum.StrEnum):
@@ -27,16 +36,16 @@ class ExportText(enum.StrEnum):
     SOURCE = "source"
 
 
-def _fail(message: str) -> typer.Exit:
-    """Print `message` as a labelplus error and return the exit to raise (code 2)."""
-    typer.echo(f"labelplus: {message}", err=True)
+def _fail(message: str, tool: str = "labelplus") -> typer.Exit:
+    """Print `message` as an error of `tool` and return the exit to raise (code 2)."""
+    typer.echo(f"{tool}: {message}", err=True)
     return typer.Exit(2)
 
 
-def _ingest(path: Path) -> IngestArtifact:
+def _ingest(path: Path, tool: str = "labelplus") -> IngestArtifact:
     """The chapter's ingest.json (the page geometry); exit 2 when it is missing."""
     if not path.is_file():
-        raise _fail("ingest.json not found — run the ingest stage first")
+        raise _fail("ingest.json not found — run the ingest stage first", tool)
     return IngestArtifact.load(path)
 
 
@@ -106,3 +115,38 @@ def labelplus_import(
         )
     for page in found.unknown_pages:
         typer.echo(f"labelplus: page {page!r} is not in this chapter")
+
+
+@psd_app.command("export")
+def psd_export(
+    series: Annotated[str, typer.Argument()],
+    chapter: Annotated[str, typer.Argument()],
+    page: Annotated[
+        list[int] | None,
+        typer.Option("--page", "-p", help="Page index (as in ingest.json); repeatable. Default: all."),
+    ] = None,
+    out: Annotated[
+        Path | None, typer.Option("--out", help="Default: <output_root>/<series>/_psd/<chapter>/")
+    ] = None,
+) -> None:
+    """Write one layered PSD per page: raw, clean (cleaning and hand cleanup) and text (the lettering), with the
+    finished page as the composite. Uses layout.json (run typeset first for the text layer)."""
+    series_paths = SeriesPaths.from_config(get_config(), series)
+    paths = series_paths.chapter(chapter)
+    ingest = _ingest(paths.artifact("ingest.json"), "psd")
+    layout_path = paths.artifact("layout.json")
+    items = LayoutArtifact.load(layout_path).items if layout_path.is_file() else []
+    if not items:
+        typer.echo("psd: no layout.json yet — the text layers stay empty (run typeset first)", err=True)
+    pages = [f for f in ingest.files if not f.filtered and f.y1 > f.y0]
+    if page:
+        unknown = sorted(set(page) - {f.index for f in pages})
+        if unknown:
+            raise _fail(f"no page {unknown[0]} in this chapter", "psd")
+        pages = [f for f in pages if f.index in set(page)]
+    folder = out or series_paths.output_dir / "_psd" / chapter
+    folder.mkdir(parents=True, exist_ok=True)
+    for source in pages:
+        target = folder / f"{Path(source.name).stem}.psd"
+        target.write_bytes(page_psd(paths, ingest, source.index, items))
+    typer.echo(f"psd: {len(pages)} page(s) -> {folder}")
