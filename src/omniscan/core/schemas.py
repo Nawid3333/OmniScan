@@ -176,6 +176,7 @@ class Region(Model):
     text_color: RGB | None = None
     stroke_color: RGB | None = None
     mask_ref: str | None = None  # key inside masks/<slice>.npz
+    speaker: str | None = None  # who says the line (set by hand; translate/voices.py)
     angle: float = 0.0  # baseline rotation of the lettering, degrees counter-clockwise (measured on sfx)
     weight: float | None = None  # stroke width / letter height of the original lettering (measured on sfx)
 
@@ -359,6 +360,7 @@ class RegionEdit(Model):
     text: str | None = None  # the corrected source text
     lang: Lang | None = None  # an added region's language
     auto_text: str | None = None  # the pipeline's reading when first edited (None: an added region)
+    speaker: str | None = None  # who says the line; "" clears it
 
 
 class TranslationEdit(Model):

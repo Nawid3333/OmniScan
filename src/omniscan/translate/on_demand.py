@@ -1,7 +1,7 @@
 """Translating a few regions of a chapter on demand — the Studio's Translate and `omniscan edit translate`.
 
 The chosen profiles translate the regions with everything the pipeline gives a translation (neighbouring lines,
-glossary, story so far, the series' learned memory); nothing is written unless `apply` keeps each region's
+glossary, story so far, the series' learned memory and character voices); nothing is written unless `apply` keeps each region's
 first suggestion as its English line (recorded in edits.json with the profile that wrote it).
 """
 
@@ -20,6 +20,7 @@ from omniscan.pipeline.stages import series_entries, series_story_context
 from omniscan.translate.profiles import TranslationProfile, resolve_fallbacks
 from omniscan.translate.run import ChatClient
 from omniscan.translate.suggest import Suggestion, suggest
+from omniscan.translate.voices import load_voices
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +82,7 @@ def translate_now(
         fallbacks=resolve_fallbacks(profiles, dict(known)),
         story_summary=series_story_context(series, paths.chapter),
         hints=translation_hints(current_memory(series), cfg.learn) if cfg.learn.enabled else None,
+        characters=load_voices(series),
     )
     applied: list[FinalLine] = []
     if apply:

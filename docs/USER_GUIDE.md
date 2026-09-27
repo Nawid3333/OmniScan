@@ -1082,6 +1082,7 @@ uv run omniscan edit show "Solo Leveling" "Chapter 1"            # regions: id, 
 uv run omniscan edit show "Solo Leveling" "Chapter 1" --json
 uv run omniscan edit text "Solo Leveling" "Chapter 1" r0003 "진우야, 도망쳐!"
 uv run omniscan edit kind "Solo Leveling" "Chapter 1" r0007 watermark
+uv run omniscan edit speaker "Solo Leveling" "Chapter 1" r0003 Jinwoo
 uv run omniscan edit box "Solo Leveling" "Chapter 1" r0003 120 840 460 910
 uv run omniscan edit add "Solo Leveling" "Chapter 1" 300 1200 420 1260 --kind sfx --text 쾅
 uv run omniscan edit delete "Solo Leveling" "Chapter 1" r0009
@@ -1097,6 +1098,7 @@ uv run omniscan edit cuts "Solo Leveling" "Chapter 1" --reset
 | `show` | list the regions (`--json` for scripts), and the ones deleted by hand |
 | `text`, `kind`, `box` | correct a region's source text, kind (`bubble_text`, `free_text`, `sfx`, `watermark`) or text box |
 | `add` | add a region the detector missed (`--kind`, `--text`); prints its id (`m0001`, …) |
+| `speaker` | say who speaks a region's line (`""` for nobody); see "Speakers and character voices" |
 | `delete` | remove a region (a false detection); `revert` brings it back |
 | `english` | write a region's English line |
 | `translate` | translate regions now with every enabled profile (`--profile` for one, a disabled one too) and print the suggestions; `--apply` keeps each first suggestion |
@@ -1579,6 +1581,30 @@ the Studio's *Translate* (similar lines and your wording only — it always asks
 suggestion). Chapters already processed are not re-run by a new lesson; re-run one with
 `omniscan run --force` to apply it. Set `[learn] enabled = false` in a series' `series.toml` to switch
 learning off for that series.
+
+## Speakers and character voices
+
+A translation reads better when every character keeps one voice. Describe the characters of a series in a
+`voices.toml` next to its `series.toml` (in the library folder of the series):
+
+```toml
+[[character]]
+name = "Jinwoo"
+aliases = ["진우", "성진우"]           # other names, as they appear in the source text
+voice = "calm and terse; plain speech, no honorifics"
+
+[[character]]
+name = "Jinah"
+aliases = ["진아"]
+voice = "cheerful, teases her brother"
+```
+
+Then say who speaks a line — `omniscan edit speaker SERIES CHAPTER REGION NAME`, or the desktop Studio — and
+the translation request shows the model each region's speaker and the voices of the characters who speak or
+are named in it. Speakers are hand edits (`edits.json`), kept by every re-run; the pipeline never guesses
+them. A region without a speaker is translated exactly as before; changing a speaker, or a character's voice
+in `voices.toml`, re-translates only that character's lines on the next run (the rest are reused). An invalid
+`voices.toml` fails the translate stage with the reason.
 
 ## Web viewer
 

@@ -23,6 +23,7 @@ from omniscan.llm.ollama import OllamaClient, OllamaError
 from omniscan.translate.on_demand import english_lines, translate_now
 from omniscan.translate.profiles import default_profile_paths, load_profiles
 from omniscan.translate.run import ChatClient
+from omniscan.translate.voices import VOICES_FILE, character_named, load_voices
 
 edit_app = typer.Typer(
     no_args_is_help=True, help="Edit a chapter by hand: regions, source text, English, cuts."
@@ -92,6 +93,7 @@ def edit_show(
                 "kind": r.kind,
                 "text": r.text,
                 "english": english.get(r.id),
+                "speaker": r.speaker,
                 "edited": r.id in edited,
                 "hand_translated": r.id in translated,
             }
@@ -101,11 +103,11 @@ def edit_show(
         typer.echo(json.dumps({"regions": rows, "deleted": gone}, ensure_ascii=False, indent=2))
         return
     table = Table(title=f"edit: {series} / {chapter} ({len(regions)} region(s))")
-    for column in ("Id", "Kind", "Source", "English", "Edited"):
+    for column in ("Id", "Kind", "Speaker", "Source", "English", "Edited"):
         table.add_column(column)
     for r in regions:
         marks = [label for label, ids in (("region", edited), ("English", translated)) if r.id in ids]
-        table.add_row(r.id, r.kind, r.text, english.get(r.id, ""), ", ".join(marks))
+        table.add_row(r.id, r.kind, r.speaker or "", r.text, english.get(r.id, ""), ", ".join(marks))
     Console().print(table)
     if deleted:
         typer.echo("deleted by hand: " + ", ".join(f"{r.id} ({r.text})" for r in deleted))
@@ -130,6 +132,29 @@ def edit_kind(
     new_kind = cast(RegionKind, kind.value)  # the enum's values are the RegionKind literals
     _run(lambda: store.update_region(paths, region, direction=cfg.detect.reading_direction, kind=new_kind))
     typer.echo(f"edit: {region} is now {kind.value}")
+
+
+@edit_app.command("speaker")
+def edit_speaker(
+    series: Series,
+    chapter: Chapter,
+    region: RegionId,
+    name: Annotated[
+        str, typer.Argument(help='A character of the series\' voices.toml, any name, or "" for nobody.')
+    ],
+) -> None:
+    """Say who speaks a region's line; the translation keeps that character's voice (voices.toml)."""
+    cfg, series_paths, paths = _chapter(series, chapter)
+    _run(lambda: store.update_region(paths, region, direction=cfg.detect.reading_direction, speaker=name))
+    if not name.strip():
+        typer.echo(f"edit: {region} has no speaker")
+        return
+    try:
+        known = character_named(name, load_voices(series_paths)) is not None
+    except ValueError as exc:
+        raise _fail(str(exc)) from exc
+    note = "" if known else f" (not in {VOICES_FILE}: no voice to keep)"
+    typer.echo(f"edit: {region} is said by {name.strip()}{note}")
 
 
 def _box(x0: int, y0: int, x1: int, y1: int) -> BBox:

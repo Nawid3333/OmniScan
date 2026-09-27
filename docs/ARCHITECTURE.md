@@ -65,6 +65,12 @@ the `ocr` stage runs `apply_to_regions` on its reading (so `ocr_auto.json` holds
 memory line is used as the candidate; similar lines and preferred words go into the chat_json prompt).
 `memory.json` is not a stage input: a new lesson applies to chapters processed from then on.
 
+**Speakers and voices** (`translate/voices.py`): `Region.speaker` is set by hand (a `RegionEdit.speaker`, applied
+like every region edit); a series' hand-written `voices.toml` (library dir, next to `series.toml`) describes how
+each character talks. The chat_json prompt carries each region's speaker and the voices of the characters who
+speak or are named in the request; `translation_key` includes a region's speaker and voice only when it has a
+speaker, so unassigned lines keep their keys. `voices.toml` is an input of the translate stage.
+
 ## Stages (`core/stage.py`)
 A stage is a class with `name`, `version`, `gpu_group` class vars and four methods:
 `inputs(ctx) -> list[Path]`, `outputs(ctx) -> list[str]`, `config_subset(cfg) -> Mapping`, `run(ctx, models) -> metrics`.

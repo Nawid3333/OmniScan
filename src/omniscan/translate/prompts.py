@@ -12,12 +12,15 @@ from __future__ import annotations
 import json
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from omniscan.core.paths import natural_key
 from omniscan.core.schemas import GlossaryEntry, Region
 from omniscan.glossary.match import find_terms
 from omniscan.translate.languages import region_language, source_language
+
+if TYPE_CHECKING:
+    from omniscan.translate.voices import Character
 
 
 def chat_json_system(lang: str) -> str:
@@ -141,13 +144,15 @@ def chat_json_messages(
     context: Sequence[ContextLine] = (),
     memory: Sequence[tuple[str, str]] = (),
     preferences: Sequence[tuple[str, str]] = (),
+    characters: Sequence[Character] = (),
 ) -> list[dict[str, str]]:
     """The chat_json prompt: system message plus story context, glossary sections and the regions list.
 
     `context` (translating a few regions on demand) adds the neighbouring lines, source and English, before
     the regions list; without it the prompt is exactly the whole-chapter one. `memory` (source, English)
     lines the editor translated before and `preferences` (machine word, the editor's word) come from the
-    series' learned memory (learn/); each adds its section only when given."""
+    series' learned memory (learn/); each adds its section only when given. `characters` (translate/voices.py)
+    adds how they talk; a region with a speaker carries it, so a prompt without either is unchanged."""
     subset = glossary_subset(regions, entries)
     parts: list[str] = []
     if story_summary:
@@ -169,6 +174,16 @@ def chat_json_messages(
             "Editor's preferred wording (write the right-hand form wherever the left-hand one would "
             f"appear):\n{lines}"
         )
+    speaking = any(r.speaker for r in regions)
+    if characters or speaking:
+        lines = "\n".join(
+            f"- {c.name}" + (f" ({', '.join(c.aliases)})" if c.aliases else "") + f": {c.voice}"
+            for c in characters
+        )
+        parts.append(
+            "Characters (a region's \"speaker\" says who is talking; keep each character's voice):"
+            + (f"\n{lines}" if lines else "")
+        )
     if context:
         context_json = json.dumps(
             [{"id": line.id, "text": line.text, "english": line.english} for line in context],
@@ -180,7 +195,15 @@ def chat_json_messages(
             f"translate them):\n{context_json}"
         )
     regions_json = json.dumps(
-        [{"id": r.id, "kind": r.kind, "text": source_text(r)} for r in regions],
+        [
+            {
+                "id": r.id,
+                "kind": r.kind,
+                "text": source_text(r),
+                **({"speaker": r.speaker} if r.speaker else {}),
+            }
+            for r in regions
+        ],
         ensure_ascii=False,
         indent=1,
     )

@@ -473,6 +473,28 @@ def test_translate_stage_answers_remembered_lines_from_the_series_memory(cfg: Co
     assert run_adapter(TranslateStage(client, [cloud_profile()]), off, force=True).metrics["memory"] == 0.0
 
 
+def test_translate_stage_gives_speakers_their_voices_and_reruns_when_one_changes(cfg: Config) -> None:
+    ctx = make_context(cfg, SERIES, CHAPTER)
+    RegionsArtifact(
+        regions=[region("r0001", "가자").model_copy(update={"speaker": "Jinwoo"}), region("r0002", "응")]
+    ).save(ctx.paths.artifact("ocr.json"))
+    voices = ctx.series.library_dir / "voices.toml"
+    voices.parent.mkdir(parents=True, exist_ok=True)
+    voices.write_text('[[character]]\nname = "Jinwoo"\nvoice = "calm"\n', encoding="utf-8")
+    client = FakeClient([json_reply({"r0001": "Let's go.", "r0002": "Yeah."})])
+    stage = TranslateStage(client, [cloud_profile()])
+    assert voices in stage.inputs(ctx)
+    run_adapter(stage, ctx, force=True)
+    user = json.dumps(client.messages[0], ensure_ascii=False)
+    assert "- Jinwoo: calm" in user and '\\"speaker\\": \\"Jinwoo\\"' in user
+    voices.write_text('[[character]]\nname = "Jinwoo"\nvoice = "loud"\n', encoding="utf-8")
+    again = TranslateStage(FakeClient([json_reply({"r0001": "LET'S GO!"})]), [cloud_profile()])
+    outcome = run_adapter(again, make_context(cfg, SERIES, CHAPTER))
+    assert (
+        outcome.status == "done" and outcome.metrics["reused"] == 1.0
+    )  # r0002 kept, only Jinwoo's line re-sent
+
+
 def test_judge_stage_judges_only_its_own_runs(cfg: Config) -> None:
     ctx = make_context(cfg, SERIES, CHAPTER)
     write_ocr(ctx.paths, ("r0001", "안녕"))

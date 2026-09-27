@@ -76,6 +76,7 @@ export interface Region {
   text_color: [number, number, number] | null;
   stroke_color: [number, number, number] | null;
   mask_ref: string | null;
+  speaker?: string | null; // who says the line (set by hand)
 }
 
 export interface RegionsArtifact {

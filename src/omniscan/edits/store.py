@@ -184,8 +184,10 @@ def update_region(
     bbox: BBox | None = None,
     bubble_bbox: BBox | None = None,
     text: str | None = None,
+    speaker: str | None = None,
 ) -> Region:
-    """Change a region's kind, text box, bubble box and/or source text; returns the region as rebuilt."""
+    """Change a region's kind, text box, bubble box, source text and/or speaker ("" clears it); returns the
+    region as rebuilt."""
     with _LOCK:
         _ensure_auto(paths)
         region = _find(current_regions(paths), region_id)
@@ -200,6 +202,8 @@ def update_region(
             changes["bubble_bbox"] = clamp_box(bubble_bbox, slices)
         if text is not None:
             changes["text"] = text
+        if speaker is not None:
+            changes["speaker"] = speaker.strip()
         edits = load_edits(paths)
         followers = (_translation_edit_of(paths, edits, region.id), _layout_edit_of(paths, edits, region.id))
         index = _region_edit_of(paths, edits, region.id)

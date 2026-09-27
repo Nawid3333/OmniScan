@@ -27,6 +27,7 @@ from omniscan.translate.prompts import (
     translatable,
     translategemma_prompt,
 )
+from omniscan.translate.voices import Character, relevant_characters
 
 if TYPE_CHECKING:
     from omniscan.learn.apply import TranslationHints
@@ -97,6 +98,7 @@ def run_profile(
     context: Sequence[ContextLine] = (),
     reused: Mapping[str, Candidate] | None = None,
     hints: TranslationHints | None = None,
+    characters: Sequence[Character] = (),
     clock: Callable[[], float] = time.perf_counter,
 ) -> CandidateRun:
     """Translate the chapter's translatable regions with one profile and return its candidate run.
@@ -105,7 +107,9 @@ def run_profile(
     `reused` (region id -> candidate) are kept as they are and never sent; the regions still to translate
     then see their neighbours — source and English, reused lines included — as context (chat_json).
     `hints` (the series' learned memory): a region whose source line the editor already translated takes
-    that English as is; the requests show similar memory lines and the preferred wording (chat_json)."""
+    that English as is; the requests show similar memory lines and the preferred wording (chat_json).
+    `characters` (the series' voices.toml): each request shows the voices of the characters who speak or are
+    named in it (chat_json)."""
     start = clock()
     targets = translatable(regions)
     target_ids = {r.id for r in targets}
@@ -152,6 +156,7 @@ def run_profile(
                 story_summary,
                 context_for,
                 hints,
+                characters,
             )
         else:
             _run_translategemma(client, profile, remaining, entries, by_id, save_partial, usage)
@@ -185,6 +190,7 @@ def _run_chat_json(
     story_summary: str | None = None,
     context_for: Callable[[Sequence[Region]], Sequence[ContextLine]] = lambda _chunk: (),
     hints: TranslationHints | None = None,
+    characters: Sequence[Character] = (),
 ) -> None:
     """Request the regions in chunks; repair missing ids, then save the partial after every chunk."""
     for chunk in (
@@ -193,6 +199,7 @@ def _run_chat_json(
         context = context_for(chunk)
         memory = hints.examples_for([source_text(r) for r in chunk]) if hints is not None else []
         preferences = list(hints.preferences) if hints is not None else []
+        voices = relevant_characters(chunk, characters, (line.text for line in context))
         texts = _request_translations(
             client,
             profile,
@@ -204,6 +211,7 @@ def _run_chat_json(
             context=context,
             memory=memory,
             preferences=preferences,
+            characters=voices,
         )
         missing = [r for r in chunk if r.id not in texts]
         for _ in range(max_repair_rounds):
@@ -220,6 +228,7 @@ def _run_chat_json(
                 context=context,
                 memory=memory,
                 preferences=preferences,
+                characters=voices,
             )
             texts.update(repair)
             missing = [r for r in missing if r.id not in repair]
@@ -241,6 +250,7 @@ def _request_translations(
     context: Sequence[ContextLine] = (),
     memory: Sequence[tuple[str, str]] = (),
     preferences: Sequence[tuple[str, str]] = (),
+    characters: Sequence[Character] = (),
 ) -> dict[str, str]:
     """One chat_json request for `regions`; returns the usable id -> text pairs of the reply."""
     response = client.chat(
@@ -252,6 +262,7 @@ def _request_translations(
             context=context,
             memory=memory,
             preferences=preferences,
+            characters=characters,
         ),
         cloud=(profile.endpoint == "cloud"),
         format=TRANSLATIONS_SCHEMA,

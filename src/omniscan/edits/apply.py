@@ -72,6 +72,8 @@ def edited_region(region: Region, edit: RegionEdit) -> Region:
         update["text"] = edit.text
         update["confidence"] = 1.0
         update["ocr_alt"] = None
+    if edit.speaker is not None:
+        update["speaker"] = edit.speaker or None
     return region.model_copy(update=update)
 
 

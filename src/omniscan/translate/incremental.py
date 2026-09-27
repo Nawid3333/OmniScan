@@ -18,6 +18,7 @@ from omniscan.core.schemas import GlossaryEntry, Region
 from omniscan.translate.judge_config import JudgeConfig
 from omniscan.translate.profiles import TranslationProfile
 from omniscan.translate.prompts import glossary_subset, source_text
+from omniscan.translate.voices import Character, voice_key
 
 REJUDGE_FLAGS = frozenset({"judge_failed"})  # a line with one of these flags is judged again next run
 
@@ -33,8 +34,14 @@ def _terms(region: Region, entries: Sequence[GlossaryEntry]) -> list[list[str]]:
     return sorted([e.source, e.target, e.status] for e in glossary_subset([region], entries))
 
 
-def translation_key(region: Region, entries: Sequence[GlossaryEntry], profile: TranslationProfile) -> str:
-    """Key of one region's translation by `profile`."""
+def translation_key(
+    region: Region,
+    entries: Sequence[GlossaryEntry],
+    profile: TranslationProfile,
+    characters: Sequence[Character] = (),
+) -> str:
+    """Key of one region's translation by `profile`; a region with a speaker also depends on the speaker and
+    their voice (an unassigned region's key is the same as before speakers existed)."""
     return _digest(
         {
             "text": source_text(region),
@@ -42,6 +49,7 @@ def translation_key(region: Region, entries: Sequence[GlossaryEntry], profile: T
             "lang": region.lang,
             "glossary": _terms(region, entries),
             "profile": profile.model_dump(exclude={"enabled", "fallback", "chunk_regions"}),
+            **voice_key(region, characters),
         }
     )
 
