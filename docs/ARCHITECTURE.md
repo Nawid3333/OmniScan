@@ -33,7 +33,6 @@ to the common strip width. Integers, half-open ranges `[x0, x1)`, `[y0, y1)`. A 
 | `final_auto.json` | `FinalArtifact` (the judge's own lines, before hand edits) | judge |
 | `edits.json` | `ChapterEdits` (hand edits: regions, English lines, lettering) | editing tools only (`edits/store.py`) |
 | `edits_history.json` | `EditsHistory` (earlier states of `edits.json`, for undo and redo) | editing tools only (`edits/store.py`) |
-| `layout_auto.json` | `LayoutArtifact` (the typesetter's own items, before hand lettering) | typeset |
 | `cleanup.json` + `cleanup.npz` | `CleanupArtifact` + npz (hand-painted cleanup patches: masks, pixels) | editing tools only (`cleanup/store.py`); applied last by export |
 | `inpaint.json` + `patches.npz` | `InpaintArtifact` + npz (cleaned crops and masks per region) | inpaint |
 | `layout.json` | `LayoutArtifact` (hand lettering applied) | typeset |
@@ -67,7 +66,11 @@ the old word; the translation memory keeps the latest English per source line. `
 the `ocr` stage runs `apply_to_regions` on its reading (so `ocr_auto.json` holds the lessons), the
 `translate` stage and the studio's on-demand translation pass `TranslationHints` to `run_profile` (an exact
 memory line is used as the candidate; similar lines and preferred words go into the chat_json prompt).
-`memory.json` is not a stage input: a new lesson applies to chapters processed from then on.
+`memory.json` is not a stage input file (every edit rewrites it); instead the two stages declare what they take
+from it through the optional `input_extra(ctx)` hook (`core/stage.py`, hashed with the input files): the
+`ocr` stage its active lessons (`learn/apply.py::ocr_lessons`), the `translate` stage the remembered English of
+this chapter's lines (`remembered_lines`). A switched-off rule re-runs the OCR; a new hand translation re-runs
+only the chapters holding that line, and an exact memory line wins over a reused candidate.
 
 **Speakers and voices** (`translate/voices.py`): `Region.speaker` is set by hand (a `RegionEdit.speaker`, applied
 like every region edit); a series' hand-written `voices.toml` (library dir, next to `series.toml`) describes how

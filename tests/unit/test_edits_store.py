@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import pytest
@@ -228,6 +229,42 @@ def test_output_cuts_are_sorted_validated_and_reset(paths: ChapterPaths) -> None
         store.set_cuts(paths, [100, 600])  # the strip is 600 rows: a cut must lie strictly inside
     assert store.load_edits(paths).cuts == [200, 400]
     assert store.set_cuts(paths, None) is None and store.load_edits(paths).cuts is None
+    assert store.set_cuts(paths, []) is None  # no cuts at all is one image per slice, not one whole strip
+    with pytest.raises(ValueError, match=r"rows 200-600 would be 400 rows tall, more than 300"):
+        store.set_cuts(paths, [200], max_height=300)
+    assert store.set_cuts(paths, [200, 400], max_height=300) == [200, 400]
+
+
+def test_the_stages_write_their_output_under_the_edit_lock(paths: ChapterPaths) -> None:
+    """The ocr and judge stages run in `omniscan serve`'s queue worker, next to the Studio's edit handlers."""
+    store.update_region(paths, "r0001", direction="ltr", text="안녕하세요")
+    store.set_translation(paths, "r0002", "Nice to meet you", direction="ltr")
+    judged = FinalArtifact(
+        judge_model="judge", lines=[FinalLine(region_id="r0001", text="Hi", decision="pick")]
+    )
+    done = threading.Event()
+
+    def stages() -> None:
+        store.write_ocr(paths, [R1, R2], direction="ltr")
+        store.write_final(paths, judged, [R1, R2])
+        done.set()
+
+    with store._LOCK:  # pyright: ignore[reportPrivateUsage]  # an edit in progress in another thread
+        worker = threading.Thread(target=stages)
+        worker.start()
+        assert not done.wait(0.3)  # the stages wait for it
+    worker.join(5)
+    assert done.is_set()
+    assert RegionsArtifact.load(paths.artifact("ocr_auto.json")).regions == [R1, R2]
+    assert [r.text for r in ocr(paths)] == ["안녕하세요", "반가워"]  # the stage's reading, hand edit applied
+    assert FinalArtifact.load(paths.artifact("final_auto.json")) == judged
+    assert {rid: line.text for rid, line in final(paths).items()} == {
+        "r0001": "Hi",
+        "r0002": "Nice to meet you",
+    }
+    assert store.write_ocr(paths, [R2], direction="ltr")[1] == 1  # r0001 is gone: its edit is an orphan
+    paths.artifact("edits.json").unlink()
+    assert store.write_ocr(paths, [R1, R2], direction="ltr") == ([R1, R2], None)  # no region edits at all
 
 
 def test_edits_remember_the_pipeline_text_they_replaced(paths: ChapterPaths) -> None:
@@ -246,3 +283,29 @@ def test_edits_remember_the_pipeline_text_they_replaced(paths: ChapterPaths) -> 
     ]
     # the judge's line, not the first hand-written one; a region the judge never saw has none
     assert [(e.region_id, e.auto_text) for e in edits.translations] == [("r0001", "Hi"), ("m0001", None)]
+
+
+def test_several_lines_are_written_at_once_or_not_at_all(paths: ChapterPaths) -> None:
+    with pytest.raises(store.EditNotFoundError, match="r0009"):
+        store.set_translations(paths, {"r0001": "Hello", "r0009": "Lost"}, direction="ltr")
+    assert store.load_edits(paths).translations == []  # nothing half-imported
+    lines = store.set_translations(
+        paths,
+        {"r0002": "Glad to see you", "r0001": "Hello"},
+        direction="ltr",
+        suggested_by={"r0001": "cloud"},
+    )
+    assert [(line.region_id, line.text, line.decision) for line in lines] == [
+        ("r0002", "Glad to see you", "manual"),
+        ("r0001", "Hello", "manual"),
+    ]
+    edits = store.load_edits(paths).translations
+    assert [(e.region_id, e.suggested_by, e.auto_text) for e in edits] == [
+        ("r0002", None, "Glad"),  # the judge's own line, kept for learning
+        ("r0001", "cloud", "Hi"),
+    ]
+    store.set_translations(paths, {"r0001": "Hi there"}, direction="ltr")  # replaces, keeps the judge's line
+    assert [(e.region_id, e.text, e.auto_text) for e in store.load_edits(paths).translations] == [
+        ("r0002", "Glad to see you", "Glad"),
+        ("r0001", "Hi there", "Hi"),
+    ]
