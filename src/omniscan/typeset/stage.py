@@ -1,4 +1,4 @@
-"""Typeset stage wrapper: ocr.json + final.json + inpaint(_lama).json -> layout.json (no GPU, no images)."""
+"""Typeset stage wrapper: ocr.json + final.json (+ studio.json edits) + inpaint(_lama).json -> layout.json (no GPU)."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from omniscan.core.schemas import (
     InpaintArtifact,
     LayoutArtifact,
     RegionsArtifact,
+    StudioEdits,
 )
 from omniscan.core.stage import ChapterContext
 from omniscan.translate.prompts import translatable
@@ -35,8 +36,11 @@ class TypesetStage:
             ctx.paths.artifact("final.json"),
             ctx.paths.artifact("inpaint.json"),
         ]
-        lama = ctx.paths.artifact("inpaint_lama.json")  # which sound effects LaMa erased
-        return [*inputs, lama] if lama.is_file() else inputs
+        optional = (
+            ctx.paths.artifact("inpaint_lama.json"),  # which sound effects LaMa erased
+            ctx.paths.artifact("studio.json"),  # the translator's manual lines (Translator Studio)
+        )
+        return [*inputs, *(path for path in optional if path.is_file())]
 
     def outputs(self, ctx: ChapterContext) -> list[str]:
         """Artifact names (relative to the chapter work dir) this stage writes."""
@@ -60,6 +64,9 @@ class TypesetStage:
 
         regions = RegionsArtifact.load(ocr_path).regions
         lines = {line.region_id: line.text for line in FinalArtifact.load(final_path).lines}
+        studio_path = ctx.paths.artifact("studio.json")
+        if studio_path.is_file():
+            lines |= StudioEdits.load(studio_path).translations  # manual lines win over the judge's
         inpaint = InpaintArtifact.load(inpaint_path).items
         fills: dict[str, RGB] = {item.region_id: item.fill for item in inpaint if item.fill is not None}
         erased = {item.region_id for item in inpaint if item.method == "flat"}

@@ -293,6 +293,21 @@ class LayoutArtifact(Artifact):
     items: list[LayoutItem]
 
 
+# ---------------------------------------------------------------- translator studio
+
+
+class StudioEdits(Artifact):
+    """Manual changes made in the Translator Studio (studio.json); they survive re-running the pipeline.
+
+    Source edits and removed regions are also written into ocr.json (so translate sees them); translation edits
+    live only here and are applied by `typeset` on top of final.json, so a re-judged chapter keeps them.
+    """
+
+    translations: dict[str, str] = Field(default_factory=dict)  # region id -> the translator's English line
+    sources: dict[str, str] = Field(default_factory=dict)  # region id -> corrected source (OCR) text
+    removed: list[str] = Field(default_factory=list)  # region ids deleted as false detections
+
+
 # ---------------------------------------------------------------- export
 
 

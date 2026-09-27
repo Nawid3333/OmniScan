@@ -37,6 +37,7 @@ from omniscan.ocr.watermark_text import (
     load_watermark_patterns,
     reclassify_watermark_regions,
 )
+from omniscan.studio.edits import apply_source_edits, load_edits
 
 
 class OcrStage:
@@ -155,5 +156,6 @@ class OcrStage:
         metrics["watermarked"] = float(sum(1 for r in kept if r.kind == "watermark"))
         kept = [measure_lettering_style(strip, r) if r.kind in ("sfx", "free_text") else r for r in kept]
         metrics["sfx"] = float(sum(1 for r in kept if r.kind == "sfx"))
+        kept = apply_source_edits(kept, load_edits(ctx.paths))  # the translator's fixes survive a re-read
         RegionsArtifact(regions=kept).save(ctx.paths.artifact("ocr.json"))
         return metrics
