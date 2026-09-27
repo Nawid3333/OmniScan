@@ -856,10 +856,13 @@ def create_app(
         return memory_view(current_memory(series_paths(series)), learn)
 
     @app.post("/api/series/{series}/memory/rebuild")
-    def rebuild_memory(series: str) -> dict[str, object]:
-        """Rebuild memory.json from every chapter's edits.json now (rule switches are kept)."""
+    async def rebuild_memory(series: str, request: Request) -> dict[str, object]:
+        """Rebuild memory.json from every chapter's edits.json now (rule switches are kept). The body must be
+        `{}` sent as application/json, so a cross-site page cannot trigger it; the rebuild runs in a thread."""
+        await json_body(request, EmptyBody)
         learn = learn_settings(series)
-        return memory_view(current_memory(series_paths(series), rebuild=True), learn)
+        memory = await run_in_threadpool(current_memory, series_paths(series), rebuild=True)
+        return memory_view(memory, learn)
 
     @app.put("/api/series/{series}/memory/rules/{rule_id}")
     async def switch_rule(series: str, rule_id: str, request: Request) -> dict[str, object]:

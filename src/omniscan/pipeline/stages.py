@@ -155,6 +155,21 @@ class TranslateStage:
         """Artifact names (relative to the chapter work dir) this stage writes."""
         return [f"translations/{profile.name}.json" for profile in self._profiles]
 
+    def input_extra(self, ctx: ChapterContext) -> Mapping[str, Any]:
+        """The translation memory's English for this chapter's lines (learn/), hashed with the inputs: a
+        line the editor translated elsewhere re-runs only the chapters that hold it."""
+        from omniscan.core.schemas import RegionsArtifact
+        from omniscan.learn.apply import remembered_lines
+        from omniscan.learn.memory import current_memory
+        from omniscan.translate.prompts import source_text, translatable
+
+        ocr_path = ctx.paths.artifact("ocr.json")
+        if not ctx.cfg.learn.enabled or not ocr_path.is_file():
+            return {}
+        texts = [source_text(r) for r in translatable(RegionsArtifact.load(ocr_path).regions)]
+        lines = remembered_lines(current_memory(ctx.series), ctx.cfg.learn, texts)
+        return {"memory": lines} if lines else {}
+
     def config_subset(self, cfg: Config) -> Mapping[str, Any]:
         """Only the config values that affect this stage's output (hashed for invalidation)."""
         return {

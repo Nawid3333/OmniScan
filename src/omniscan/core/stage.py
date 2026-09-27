@@ -83,6 +83,22 @@ class Stage(Protocol):
         ...
 
 
+@runtime_checkable
+class ExtraInputs(Protocol):
+    """Optional on a stage: inputs that are no chapter file, e.g. the series' learned lessons that apply to
+    the chapter; hashed with the input files, so a change re-runs only the chapters it concerns."""
+
+    def input_extra(self, ctx: ChapterContext) -> Mapping[str, Any] | None:
+        """JSON-able data this stage's output depends on besides its input files and config."""
+        ...
+
+
+def input_hash(stage: Stage, ctx: ChapterContext) -> str:
+    """The hash of what a stage reads for this chapter: its input files, plus its `input_extra` if it has one."""
+    extra = stage.input_extra(ctx) if isinstance(stage, ExtraInputs) else None
+    return hash_inputs(stage.inputs(ctx), extra)
+
+
 @dataclass(frozen=True, slots=True)
 class StageOutcome:
     stage: str
@@ -119,13 +135,13 @@ def make_context(
 def run_stage(stage: Stage, ctx: ChapterContext, *, force: bool = False) -> StageOutcome:
     """Run one stage for one chapter unless it is up to date."""
     work = ctx.paths.work_dir
-    input_hash = hash_inputs(stage.inputs(ctx))
+    inputs = input_hash(stage, ctx)
     config_hash = hash_json(stage.config_subset(ctx.cfg))
     if not force and is_up_to_date(
         ctx.manifest,
         stage.name,
         version=stage.version,
-        input_hash=input_hash,
+        input_hash=inputs,
         config_hash=config_hash,
         work_dir=work,
     ):
@@ -162,7 +178,7 @@ def run_stage(stage: Stage, ctx: ChapterContext, *, force: bool = False) -> Stag
     ctx.manifest.stages[stage.name] = StageRecord(
         stage=stage.name,
         version=stage.version,
-        input_hash=input_hash,
+        input_hash=inputs,
         config_hash=config_hash,
         outputs=list(stage.outputs(ctx)),
         status=status,

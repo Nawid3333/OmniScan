@@ -1487,9 +1487,11 @@ memory is rebuilt) and search the translation memory. `omniscan learn show SERIE
 Lessons apply when a stage runs: the `ocr` stage (metrics `learned_fixes`, `learned_drops`,
 `learned_kinds`), the `translate` stage (metric `memory`: lines taken from the translation memory) and
 the Studio's *Translate* (similar lines and your wording only — it always asks the model for a fresh
-suggestion). Chapters already processed are not re-run by a new lesson; re-run one with
-`omniscan run --force` to apply it. Set `[learn] enabled = false` in a series' `series.toml` to switch
-learning off for that series.
+suggestion). The next `omniscan run` brings processed chapters up to date: an OCR lesson that becomes active
+or is switched off (or a changed `[learn]` setting) re-runs the `ocr` stage, so a region a rule dropped comes
+back once the rule is off; a line you translated by hand re-runs the `translate` stage only for the chapters
+that hold the same line, and the remembered English always wins over a line kept from an earlier run. Set
+`[learn] enabled = false` in a series' `series.toml` to switch learning off for that series.
 
 ## Web viewer
 

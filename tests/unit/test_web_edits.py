@@ -535,6 +535,8 @@ def test_memory_lists_what_the_edits_taught_and_switches_rules(client: TestClien
         False,
     )
     assert client.post(f"{MEMORY}/rebuild", json={}).json()["rules"][0]["enabled"] is False
+    cross_site = client.post(f"{MEMORY}/rebuild", content=b"x=1", headers={"content-type": "text/plain"})
+    assert cross_site.status_code == 415  # a form another page submits cannot trigger a rebuild
     assert client.put(f"{MEMORY}/rules/nope", json={"enabled": False}).status_code == 404
     assert client.put(f"{MEMORY}/rules/{rule['id']}", json={"enabled": "maybe"}).status_code == 422
 

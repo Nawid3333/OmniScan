@@ -27,7 +27,7 @@ from omniscan.detect.tiles import keep_tiles, plan_tiles
 from omniscan.edits.store import OCR_AUTO_FILE, write_ocr
 from omniscan.gpu.groups import VISION_GROUP
 from omniscan.ingest.strip import load_strip
-from omniscan.learn.apply import apply_to_regions
+from omniscan.learn.apply import apply_to_regions, ocr_lessons
 from omniscan.learn.memory import current_memory
 from omniscan.ocr.engines import engine_rec_model
 from omniscan.ocr.pipeline import read_region_crops, read_regions
@@ -67,6 +67,12 @@ class OcrStage:
     def outputs(self, ctx: ChapterContext) -> list[str]:
         """Artifact names (relative to the chapter work dir) this stage writes."""
         return ["ocr.json", OCR_AUTO_FILE]
+
+    def input_extra(self, ctx: ChapterContext) -> Mapping[str, Any]:
+        """The series' active learned lessons (learn/), hashed with the inputs: switching a rule off (or
+        on, or changing `[learn]`) re-runs the OCR, so a region a rule dropped comes back."""
+        lessons = ocr_lessons(current_memory(ctx.series), ctx.cfg.learn)
+        return {"learned": lessons} if lessons else {}
 
     def config_subset(self, cfg: Config) -> Mapping[str, Any]:
         """Only the config values that affect this stage's output (hashed for invalidation)."""
