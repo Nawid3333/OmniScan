@@ -11,8 +11,7 @@ from typing import Literal
 
 from omniscan.core.paths import ChapterPaths
 from omniscan.core.schemas import CandidateRun, FinalArtifact, GlossaryEntry, RegionsArtifact
-from omniscan.edits.apply import apply_translation_edits
-from omniscan.edits.store import FINAL_AUTO_FILE, load_edits
+from omniscan.edits.store import write_final
 from omniscan.translate.judge import JudgeStats, judge_regions
 from omniscan.translate.judge_config import JudgeConfig
 from omniscan.translate.run import ChatClient
@@ -61,12 +60,7 @@ def judge_chapter(
             "rate_limited": float(stats.rate_limited),
         },
     )
-    result.save(paths.artifact(FINAL_AUTO_FILE))
-    edits = load_edits(paths)
-    if edits.translations:
-        lines, _orphans = apply_translation_edits(result.lines, edits, artifact.regions)
-        result = result.model_copy(update={"lines": lines})
-    result.save(output)
+    result = write_final(paths, result, artifact.regions)
     return "done", result, stats
 
 
