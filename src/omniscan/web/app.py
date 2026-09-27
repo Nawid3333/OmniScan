@@ -15,6 +15,7 @@ from typing import Literal
 
 import numpy as np
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
@@ -509,12 +510,8 @@ def create_app(
             for p in load_profiles(default_profile_paths()).values()
         ]
 
-    @app.post("/api/series/{series}/chapters/{chapter}/translate")
-    async def translate_regions(series: str, chapter: str, request: Request) -> dict[str, object]:
-        """Translate a few regions now (neighbouring lines as context, glossary and story applied) and return
-        every profile's suggestion; with `apply` each region's first suggestion becomes its English line.
-        Nothing else is written. 429 when the Ollama rate limit is hit, 502 when Ollama fails."""
-        body = await json_body(request, TranslateBody)
+    def translate_body(series: str, chapter: str, body: TranslateBody) -> dict[str, object]:
+        """The work of `translate_regions`; blocking (it waits on the model), so it runs in a worker thread."""
         paths = chapter_paths(series, chapter)
         try:
             scfg = series_config(cfg, series_paths(series).library_dir)
@@ -551,6 +548,15 @@ def create_app(
             ],
             "applied": [line.model_dump(mode="json") for line in result.applied],
         }
+
+    @app.post("/api/series/{series}/chapters/{chapter}/translate")
+    async def translate_regions(series: str, chapter: str, request: Request) -> dict[str, object]:
+        """Translate a few regions now (neighbouring lines as context, glossary and story applied) and return
+        every profile's suggestion; with `apply` each region's first suggestion becomes its English line.
+        Nothing else is written. 429 when the Ollama rate limit is hit, 502 when Ollama fails. The model is
+        asked in a worker thread, so the server keeps answering (job polling, previews) meanwhile."""
+        body = await json_body(request, TranslateBody)
+        return await run_in_threadpool(translate_body, series, chapter, body)
 
     @app.post("/api/series/{series}/chapters/{chapter}/final/{region_id}/revert")
     async def revert_final_line(
@@ -757,7 +763,8 @@ def create_app(
         """Set the output cuts by hand (strip rows), or reset them with null; export applies them."""
         body = await json_body(request, CutsBody)
         paths = chapter_paths(series, chapter)
-        run_edit(lambda: edit_store.set_cuts(paths, body.cuts))
+        max_height = series_config(cfg, series_paths(series).library_dir).slicer.hard_max_height
+        run_edit(lambda: edit_store.set_cuts(paths, body.cuts, max_height=max_height))
         return cuts_state(series, chapter)
 
     @app.get("/api/fonts")
@@ -907,10 +914,13 @@ def create_app(
         return memory_view(current_memory(series_paths(series)), learn)
 
     @app.post("/api/series/{series}/memory/rebuild")
-    def rebuild_memory(series: str) -> dict[str, object]:
-        """Rebuild memory.json from every chapter's edits.json now (rule switches are kept)."""
+    async def rebuild_memory(series: str, request: Request) -> dict[str, object]:
+        """Rebuild memory.json from every chapter's edits.json now (rule switches are kept). The body must be
+        `{}` sent as application/json, so a cross-site page cannot trigger it; the rebuild runs in a thread."""
+        await json_body(request, EmptyBody)
         learn = learn_settings(series)
-        return memory_view(current_memory(series_paths(series), rebuild=True), learn)
+        memory = await run_in_threadpool(current_memory, series_paths(series), rebuild=True)
+        return memory_view(memory, learn)
 
     @app.put("/api/series/{series}/memory/rules/{rule_id}")
     async def switch_rule(series: str, rule_id: str, request: Request) -> dict[str, object]:
