@@ -5,18 +5,25 @@ reading (`ocr_auto.json`) and final.json from the judge's (`final_auto.json`) wi
 same functions the `ocr` and `judge` stages apply when they re-run, so a tool and the pipeline never
 disagree. A chapter processed before those files existed gets them from its ocr.json/final.json on its
 first edit; a chapter with no OCR yet starts from no regions (everything drawn by hand).
+
+Every change of edits.json is one undo step (`undo`, `redo`; edits_history.json keeps the earlier states); the
+changes made inside `edit_group` — an import, a desktop save — are one step together.
 """
 
 from __future__ import annotations
 
 import shutil
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
 from typing import Literal
 
 from omniscan.core.paths import ChapterPaths
 from omniscan.core.schemas import (
     BBox,
     ChapterEdits,
+    EditsHistory,
     FinalArtifact,
     FinalLine,
     Lang,
@@ -38,6 +45,8 @@ from omniscan.edits.apply import (
 )
 
 EDITS_FILE = "edits.json"
+HISTORY_FILE = "edits_history.json"  # earlier states of edits.json, for undo and redo
+HISTORY_DEPTH = 50  # undo steps kept per chapter
 OCR_AUTO_FILE = "ocr_auto.json"  # ocr.json as the `ocr` stage read it, before hand edits
 FINAL_AUTO_FILE = "final_auto.json"  # final.json as the `judge` stage wrote it, before hand edits
 MANUAL_JUDGE = "manual"  # FinalArtifact.judge_model of a final.json no judge has written
@@ -48,6 +57,7 @@ Direction = Literal["ltr", "rtl"]
 # One edit at a time in this process: the web server runs its handlers on a thread pool, and every
 # operation is a read-modify-write of edits.json, ocr.json and final.json.
 _LOCK = threading.RLock()
+_GROUPS: dict[Path, int] = {}  # chapter work dir -> how many edit groups are open on it (under _LOCK)
 
 
 class EditNotFoundError(LookupError):
@@ -60,9 +70,77 @@ def load_edits(paths: ChapterPaths) -> ChapterEdits:
     return ChapterEdits.load(path) if path.is_file() else ChapterEdits()
 
 
+def load_history(paths: ChapterPaths) -> EditsHistory:
+    """The chapter's edits_history.json, or an empty history when it does not exist."""
+    path = paths.artifact(HISTORY_FILE)
+    return EditsHistory.load(path) if path.is_file() else EditsHistory()
+
+
+def _record(paths: ChapterPaths, before: ChapterEdits) -> None:
+    """Make `before` the newest undo step (the oldest beyond HISTORY_DEPTH dropped) and forget the redo steps,
+    unless edits.json is still `before`."""
+    if load_edits(paths) == before:
+        return
+    history = load_history(paths)
+    EditsHistory(undo=[*history.undo, before][-HISTORY_DEPTH:], redo=[]).save(paths.artifact(HISTORY_FILE))
+
+
 def save_edits(paths: ChapterPaths, edits: ChapterEdits) -> None:
-    """Atomically write the chapter's edits.json."""
-    edits.save(paths.artifact(EDITS_FILE))
+    """Atomically write the chapter's edits.json, recording the state it replaces as an undo step (one step for
+    a whole `edit_group`)."""
+    with _LOCK:
+        before = load_edits(paths)
+        edits.save(paths.artifact(EDITS_FILE))
+        if not _GROUPS.get(paths.work_dir):
+            _record(paths, before)
+
+
+@contextmanager
+def edit_group(paths: ChapterPaths) -> Iterator[None]:
+    """Make every edit of the chapter inside this block one undo step (other edits wait until it ends)."""
+    with _LOCK:
+        before = load_edits(paths)
+        _GROUPS[paths.work_dir] = _GROUPS.get(paths.work_dir, 0) + 1
+        try:
+            yield
+        finally:
+            _GROUPS[paths.work_dir] -= 1
+            if not _GROUPS[paths.work_dir]:
+                del _GROUPS[paths.work_dir]
+                _record(paths, before)
+
+
+def history_steps(paths: ChapterPaths) -> tuple[int, int]:
+    """How many steps can be undone and redone."""
+    history = load_history(paths)
+    return len(history.undo), len(history.redo)
+
+
+def _step(paths: ChapterPaths, *, direction: Direction, back: bool) -> ChapterEdits:
+    """Undo (`back`) or redo one step: edits.json goes to that state and ocr.json / final.json follow it."""
+    with _LOCK:
+        history = load_history(paths)
+        source, target = (history.undo, history.redo) if back else (history.redo, history.undo)
+        if not source:
+            raise EditNotFoundError(f"nothing to {'undo' if back else 'redo'}")
+        state = source.pop()
+        target.append(load_edits(paths))
+        rebuild(paths, state, direction=direction)  # first: when it cannot (no slices.json), nothing changes
+        state.save(paths.artifact(EDITS_FILE))
+        history.save(paths.artifact(HISTORY_FILE))
+        return state
+
+
+def undo(paths: ChapterPaths, *, direction: Direction) -> ChapterEdits:
+    """Take back the last change of edits.json (an edit, or a whole `edit_group`); returns the edits now in force.
+    EditNotFoundError when there is nothing to undo."""
+    return _step(paths, direction=direction, back=True)
+
+
+def redo(paths: ChapterPaths, *, direction: Direction) -> ChapterEdits:
+    """Make the last undone change again; EditNotFoundError when there is nothing to redo (a new edit since the
+    undo forgets the steps that could be redone)."""
+    return _step(paths, direction=direction, back=False)
 
 
 def load_slices(paths: ChapterPaths) -> SlicesArtifact:

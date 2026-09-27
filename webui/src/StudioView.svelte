@@ -9,6 +9,7 @@
     deleteRegion,
     getCleanup,
     getEdits,
+    stepEdits,
     getFinal,
     getIngest,
     getInpaint,
@@ -51,6 +52,7 @@
     handleCursor,
     handlePoint,
     hexToRgb,
+    historyShortcut,
     maskBounds,
     overlapsPage,
     pageOf,
@@ -509,13 +511,24 @@
     }, NUDGE_COMMIT_MS);
   }
 
+  /** Undo the last hand edit or redo the last undone one, then show the chapter as it is now. */
+  async function stepHistory(step: "undo" | "redo"): Promise<void> {
+    const left = step === "undo" ? edits?.history?.undo : edits?.history?.redo;
+    if (busy || !left) return;
+    await act(() => stepEdits(series, chapter, step));
+    select(selectedId);
+  }
+
   function onKeydown(event: KeyboardEvent): void {
     const target = event.target as HTMLElement | null;
     if (target !== null && (target.tagName === "TEXTAREA" || target.tagName === "INPUT" || target.tagName === "SELECT")) {
-      return;
+      return;  // text fields keep their own undo
     }
     const step = event.shiftKey ? 10 : 1;
-    if (tool === "clean" && event.key === "Enter") {
+    const history = historyShortcut(event);
+    if (history !== null) {
+      void stepHistory(history);
+    } else if (tool === "clean" && event.key === "Enter") {
       void applyStrokes();
     } else if (tool === "clean" && event.key === "Escape" && painted) {
       discardStrokes();
@@ -684,6 +697,8 @@
     <button class:active={tool === "select"} onclick={() => setTool("select")} title="select, move and resize boxes (V)">Select</button>
     <button class:active={tool === "draw"} onclick={() => setTool("draw")} title="draw a new text box (B)">Draw box</button>
     <button class:active={tool === "clean"} onclick={() => setTool("clean")} title="paint over what to clean or restore (C)">Clean</button>
+    <button onclick={() => void stepHistory("undo")} disabled={busy || !edits?.history?.undo} title="undo the last edit: box, text, English, lettering or cuts (Ctrl+Z)">↶ Undo</button>
+    <button onclick={() => void stepHistory("redo")} disabled={busy || !edits?.history?.redo} title="redo the last undone edit (Ctrl+Shift+Z or Ctrl+Y)">↷ Redo</button>
     <select bind:value={newKind} title="kind of the next drawn box">
       {#each KINDS as kind (kind)}
         <option value={kind}>{kind}</option>

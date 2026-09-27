@@ -549,17 +549,35 @@ def create_app(
 
     @app.get("/api/series/{series}/chapters/{chapter}/edits")
     def get_edits(series: str, chapter: str) -> dict[str, object]:
-        """The chapter's hand edits (edits.json; empty lists when none), the regions they deleted, and which
-        current regions carry a region edit or a hand-written line."""
+        """The chapter's hand edits (edits.json; empty lists when none), the regions they deleted, which current
+        regions carry a region edit or a hand-written line, and how many steps can be undone and redone."""
         paths = chapter_paths(series, chapter)
         edits = edit_store.load_edits(paths)
         edited, translated = edit_store.edited_ids(paths)
+        back, forward = edit_store.history_steps(paths)
         return {
             **edits.model_dump(mode="json"),
             "deleted_regions": [r.model_dump(mode="json") for r in edit_store.deleted_regions(paths)],
             "edited_region_ids": edited,
             "manual_translation_ids": translated,
+            "history": {"undo": back, "redo": forward},
         }
+
+    @app.post("/api/series/{series}/chapters/{chapter}/edits/{step}")
+    async def step_edits(
+        series: str, chapter: str, step: Literal["undo", "redo"], request: Request
+    ) -> dict[str, object]:
+        """Undo the last hand edit (an import or a desktop save is one) or redo the last undone one; returns the
+        edits as GET does. 409 when there is nothing to undo or redo."""
+        await json_body(request, EmptyBody)
+        paths = chapter_paths(series, chapter)
+        direction, _lang = edit_settings(series)
+        operation = edit_store.undo if step == "undo" else edit_store.redo
+        try:
+            operation(paths, direction=direction)
+        except edit_store.EditNotFoundError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return get_edits(series, chapter)
 
     @app.post("/api/series/{series}/chapters/{chapter}/regions", status_code=201)
     async def add_region(series: str, chapter: str, request: Request) -> dict[str, object]:

@@ -408,6 +408,14 @@ class ChapterEdits(Artifact):
     cuts: list[int] | None = None
 
 
+class EditsHistory(Artifact):
+    """edits_history.json in the chapter work dir: earlier states of edits.json to undo to and the states undone
+    since the last edit to redo, newest last in both. Written only by the editing tools (edits/store.py)."""
+
+    undo: list[ChapterEdits] = Field(default_factory=list)
+    redo: list[ChapterEdits] = Field(default_factory=list)
+
+
 # ---------------------------------------------------------------- hand cleanup
 
 CleanupMethod = Literal["fill", "inpaint", "clone", "restore"]

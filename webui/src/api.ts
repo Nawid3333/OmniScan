@@ -449,6 +449,12 @@ export interface LayoutEdit {
 /** A region's hand lettering as sent to the server (every field left out keeps the typesetter's choice). */
 export type LayoutFields = Partial<Omit<LayoutEdit, "region_id" | "anchor">>;
 
+/** How many hand edits can be undone and redone. */
+export interface EditHistory {
+  undo: number;
+  redo: number;
+}
+
 export interface ChapterEdits {
   regions: RegionEdit[];
   translations: TranslationEdit[];
@@ -456,6 +462,7 @@ export interface ChapterEdits {
   deleted_regions: Region[];
   edited_region_ids: string[];
   manual_translation_ids: string[];
+  history?: EditHistory;
 }
 
 export interface RegionPatch {
@@ -467,6 +474,11 @@ export interface RegionPatch {
 
 export async function getEdits(series: string, chapter: string): Promise<ChapterEdits> {
   return getJson<ChapterEdits>(`${chapterBase(series, chapter)}/edits`);
+}
+
+/** Undo the last hand edit (an import counts as one) or redo the last undone one; the edits afterwards. */
+export async function stepEdits(series: string, chapter: string, step: "undo" | "redo"): Promise<ChapterEdits> {
+  return postJson<ChapterEdits>(`${chapterBase(series, chapter)}/edits/${step}`, {});
 }
 
 /** Change a region's kind, text box, bubble box and/or source text (recorded in edits.json). */

@@ -208,3 +208,17 @@ export function typedLines(text: string): string[] | undefined {
     .filter((line) => line !== "");
   return lines.length > 0 ? lines : undefined;
 }
+
+/** The history step a key press asks for: Ctrl/⌘+Z undo, Ctrl/⌘+Shift+Z or Ctrl/⌘+Y redo, anything else null. */
+export function historyShortcut(event: {
+  key: string;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  shiftKey: boolean;
+  altKey: boolean;
+}): "undo" | "redo" | null {
+  if (!(event.ctrlKey || event.metaKey) || event.altKey) return null;
+  const key = event.key.toLowerCase();
+  if (key === "z") return event.shiftKey ? "redo" : "undo";
+  return key === "y" && !event.shiftKey ? "redo" : null;
+}

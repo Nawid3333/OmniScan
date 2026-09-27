@@ -284,6 +284,7 @@ def test_ballons_import_takes_translations_sources_and_new_regions(
         "ballons: imported 1 English line(s), 2 source text(s); 1 line(s) already the same",
         "ballons: 001.jpg block at 300,150-350,200 (strip) is over no region — added as m0001",
     ]
+    assert store.history_steps(chapter) == (1, 0)  # the whole import is one undo step
     regions = {r.id: r for r in store.current_regions(chapter)}
     assert (regions["r0001"].text, regions["r0002"].text, regions["m0001"].text) == ("어디 가?", "쾅!", "어?")
     assert regions["m0001"].bbox == box(300, 150, 350, 200)

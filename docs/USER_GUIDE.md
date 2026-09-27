@@ -1091,6 +1091,8 @@ uv run omniscan edit translate "Solo Leveling" "Chapter 1" r0003 r0004 --apply
 uv run omniscan edit revert "Solo Leveling" "Chapter 1" r0003 --english
 uv run omniscan edit cuts "Solo Leveling" "Chapter 1" 2400 4800
 uv run omniscan edit cuts "Solo Leveling" "Chapter 1" --reset
+uv run omniscan edit undo "Solo Leveling" "Chapter 1"
+uv run omniscan edit redo "Solo Leveling" "Chapter 1"
 ```
 
 | Command | What it does |
@@ -1104,6 +1106,7 @@ uv run omniscan edit cuts "Solo Leveling" "Chapter 1" --reset
 | `translate` | translate regions now with every enabled profile (`--profile` for one, a disabled one too) and print the suggestions; `--apply` keeps each first suggestion |
 | `revert` | drop a region's hand edits (a drawn region is removed), or with `--english` its hand-written line |
 | `cuts` | show or set where the exported images split; `--reset` goes back to one image per slice |
+| `undo`, `redo` | take back the last hand edit of the chapter, or make the last undone one again (see "Undo and redo" in the Studio section) |
 
 A missing chapter artifact or region, a box outside the strip or a cut outside it exits 2 with the reason;
 an Ollama failure in `translate` exits 1. `omniscan run SERIES --chapter CHAPTER` (or the Studio's
@@ -1594,6 +1597,13 @@ shows one raw page at a time with every text region as a box:
   region's text or bubble is drawn red ("cuts through r0003") so no balloon is split across two images.
   Export writes one image per piece between the cuts; the rows of filtered (promo) slices stay out. Stored
   as `cuts` in `edits.json`; changing them never re-runs detection or OCR.
+- **Undo and redo.** *↶ Undo* (Ctrl+Z) takes back the last edit of the chapter — a box, a source text, an
+  English line, a kind, lettering, output cuts, a deletion or a restore — and *↷ Redo* (Ctrl+Shift+Z or
+  Ctrl+Y) makes it again; inside a text field the keys undo your typing instead. The same history is shared
+  by every editing tool: `omniscan edit undo` / `redo`, the desktop Studio (one *Save* is one step) and the
+  imports (one `omniscan labelplus import`, `ballons import` or `mit import` is one step, as is *Translate
+  page*). The last 50 steps are kept per chapter (`edits_history.json`); a new edit after an undo forgets
+  what could be redone. Hand cleanup has its own *Undo last cleanup*.
 - **Render.** *Render (inpaint → export)* re-runs only the render stages (inpaint, LaMa, typeset,
   export) for the chapter, so the finished pages in the Reader view show your edits without
   re-translating the chapter.

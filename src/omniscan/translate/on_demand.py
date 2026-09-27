@@ -89,14 +89,15 @@ def translate_now(
         first: dict[str, Suggestion] = {}
         for item in suggestions:
             first.setdefault(item.region_id, item)
-        for item in first.values():
-            applied.append(
-                edit_store.set_translation(
-                    paths,
-                    item.region_id,
-                    item.text,
-                    direction=cfg.detect.reading_direction,
-                    suggested_by=item.profile,
+        with edit_store.edit_group(paths):  # one undo step for the lines kept together
+            for item in first.values():
+                applied.append(
+                    edit_store.set_translation(
+                        paths,
+                        item.region_id,
+                        item.text,
+                        direction=cfg.detect.reading_direction,
+                        suggested_by=item.profile,
+                    )
                 )
-            )
     return OnDemand(suggestions=suggestions, applied=applied)

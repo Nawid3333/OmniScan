@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import importlib
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -188,31 +189,53 @@ class StudioSession:
         self._english.pop(region_id, None)
 
     def save(self) -> int:
-        """Record every change in edits.json (applied to ocr.json / final.json at once); returns how many."""
+        """Record every change in edits.json (applied to ocr.json / final.json at once) as one undo step
+        (`undo`); returns how many."""
         if not self.dirty:
             return 0
         direction: store.Direction = (
             self._direction if self._direction is not None else self._series_direction()
         )
         self._start_ocr_json()
-        for region_id in {*self._sources, *self._speakers}:
-            store.update_region(
-                self.paths,
-                region_id,
-                direction=direction,
-                text=self._sources.get(region_id),
-                speaker=self._speakers.get(region_id),
-            )
-        for region_id, line in self._english.items():
-            if line is None:
-                store.revert_translation(self.paths, region_id, direction=direction)
-            else:
-                store.set_translation(self.paths, region_id, line, direction=direction)
-        for region_id in self._removed:
-            store.delete_region(self.paths, region_id, direction=direction)
+        with store.edit_group(self.paths):  # one save is one undo step
+            for region_id in {*self._sources, *self._speakers}:
+                store.update_region(
+                    self.paths,
+                    region_id,
+                    direction=direction,
+                    text=self._sources.get(region_id),
+                    speaker=self._speakers.get(region_id),
+                )
+            for region_id, line in self._english.items():
+                if line is None:
+                    store.revert_translation(self.paths, region_id, direction=direction)
+                else:
+                    store.set_translation(self.paths, region_id, line, direction=direction)
+            for region_id in self._removed:
+                store.delete_region(self.paths, region_id, direction=direction)
         count = len(self._sources) + len(self._speakers) + len(self._english) + len(self._removed)
         self._reload()
         return count
+
+    def undo(self) -> bool:
+        """Take back the last saved change of the chapter (a whole save is one step; unsaved changes are
+        dropped); False when there is nothing to undo."""
+        return self._history_step(store.undo)
+
+    def redo(self) -> bool:
+        """Make the last undone change again (unsaved changes are dropped); False when there is nothing to redo."""
+        return self._history_step(store.redo)
+
+    def _history_step(self, step: Callable[..., object]) -> bool:
+        """Run `store.undo` or `store.redo`, then read the chapter again."""
+        direction = self._direction if self._direction is not None else self._series_direction()
+        try:
+            step(self.paths, direction=direction)
+        except store.EditNotFoundError:
+            return False
+        finally:
+            self._reload()
+        return True
 
     def _series_direction(self) -> store.Direction:
         """The series' reading direction (series.toml applied)."""
