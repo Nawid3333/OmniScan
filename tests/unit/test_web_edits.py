@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 import json
@@ -199,9 +200,15 @@ class FakeChat:
     def __init__(self) -> None:
         self.calls = 0
         self.closed = False
+        self.on_event_loop = False
 
     def chat(self, model: str, messages: list[dict[str, Any]], **_: Any) -> ChatResponse:
         self.calls += 1
+        try:
+            asyncio.get_running_loop()
+            self.on_event_loop = True  # a blocking call here would stall every other request
+        except RuntimeError:
+            pass
         regions = json.loads(messages[-1]["content"].split("Regions (reading order):\n", 1)[1])
         answer = {"translations": [{"id": r["id"], "text": f"EN({r['text']})"} for r in regions]}
         return ChatResponse(
@@ -267,7 +274,7 @@ def test_translate_returns_suggestions_and_writes_nothing(
         ],
         "applied": [],
     }
-    assert fake.calls == 1 and fake.closed
+    assert fake.calls == 1 and fake.closed and not fake.on_event_loop
     assert (work / "final.json").read_bytes() == before
     assert not (work / "edits.json").exists()
 
@@ -488,3 +495,9 @@ def test_output_cuts_get_put_reset_and_crossings(client: TestClient, work: Path)
     assert state["crossings"] == [{"cut": 30, "region_id": "r0001"}, {"cut": 230, "region_id": "r0002"}]
     assert client.put(f"{BASE}/cuts", json={"cuts": [700]}).status_code == 422
     assert client.put(f"{BASE}/cuts", json={"cuts": None}).json()["cuts"] is None
+    assert client.put(f"{BASE}/cuts", json={"cuts": []}).json()["cuts"] is None  # not one strip-tall image
+    (work.parents[2] / "lib" / SERIES / "series.toml").write_text(
+        "[slicer]\nhard_max_height = 250\n", encoding="utf-8"
+    )
+    too_tall = client.put(f"{BASE}/cuts", json={"cuts": [100]})  # rows 100-600: 500 > 250
+    assert too_tall.status_code == 422 and "slicer.hard_max_height" in too_tall.json()["detail"]

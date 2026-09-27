@@ -32,7 +32,6 @@ to the common strip width. Integers, half-open ranges `[x0, x1)`, `[y0, y1)`. A 
 | `final.json` | `FinalArtifact` (hand-written lines applied) | judge (+ editing tools) |
 | `final_auto.json` | `FinalArtifact` (the judge's own lines, before hand edits) | judge |
 | `edits.json` | `ChapterEdits` (hand edits: regions, English lines, lettering) | editing tools only (`edits/store.py`) |
-| `layout_auto.json` | `LayoutArtifact` (the typesetter's own items, before hand lettering) | typeset |
 | `cleanup.json` + `cleanup.npz` | `CleanupArtifact` + npz (hand-painted cleanup patches: masks, pixels) | editing tools only (`cleanup/store.py`); applied last by export |
 | `inpaint.json` + `patches.npz` | `InpaintArtifact` + npz (cleaned crops and masks per region) | inpaint |
 | `layout.json` | `LayoutArtifact` (hand lettering applied) | typeset |
