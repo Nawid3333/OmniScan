@@ -1406,8 +1406,8 @@ shows one raw page at a time with every text region as a box:
   lettering*; *Apply lettering* keeps them, *Revert lettering* gives the region back to the typesetter.
   A new font, size or box sets the line again (the text is re-fitted into the box at the given size, or
   the largest that fits); colour, outline, alignment and angle only restyle it. Hand lettering is stored
-  in `edits.json` (`layout`) and applied by every `typeset` run (the typesetter's own items stay in
-  `layout_auto.json`); an edit whose region is gone counts as the stage's `edits_orphaned`.
+  in `edits.json` (`layout`) and applied by every `typeset` run (the typesetter recomputes its own items
+  each time); an edit whose region is gone counts as the stage's `edits_orphaned`.
 - **Preview.** *preview* shows the page as the release will look — raw page, automatic cleaning, your
   hand cleanup and the lettering with your edits — rendered on the spot (CPU, no pipeline run). It is a
   preview: the export decodes and composites the strip on the GPU, so single pixels may differ.
