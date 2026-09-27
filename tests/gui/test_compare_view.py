@@ -46,6 +46,11 @@ def _chapter_view(tmp_path: Path) -> ChapterView:
     return ChapterView("S", "Chapter 1", STRIP_WIDTH, 400, raw, output, True)
 
 
+# fit-width zoom is not a whole number where the platform style's scrollbar width differs (macOS): a scroll
+# position is whole widget pixels, so strip y lands within one widget pixel of the requested row
+ROUNDING = 0.5
+
+
 def _shown(qapp: QApplication, compare: CompareView) -> CompareView:
     """Resize, show and settle a compare view sized so fit-width is not zoom-clamped."""
     compare.resize(240, 400)
@@ -115,10 +120,10 @@ def test_linked_follows_strip_y_and_zoom(qapp: QApplication, tmp_path: Path) -> 
     compare.set_chapter(_chapter_view(tmp_path))
 
     compare.left.set_strip_y(80)
-    assert compare.right.strip_y() == 80.0
+    assert compare.right.strip_y() == pytest.approx(80.0, abs=ROUNDING)
     compare.right.set_strip_y(120)  # scrolling the right view moves the left one
-    assert compare.left.strip_y() == 120.0
-    assert compare.strip_y() == 120.0  # of the master (the right view)
+    assert compare.left.strip_y() == pytest.approx(120.0, abs=ROUNDING)
+    assert compare.strip_y() == pytest.approx(120.0, abs=ROUNDING)  # of the master (the right view)
 
     compare.left.set_zoom(2.0)
     assert compare.right.zoom() == 2.0
@@ -149,12 +154,12 @@ def test_independent_and_realign_on_switch_back(qapp: QApplication, tmp_path: Pa
     compare.left.set_strip_y(80)
     assert compare.right.strip_y() == 0.0  # the other side does not follow
     compare.right.set_strip_y(120)
-    assert compare.left.strip_y() == 80.0
+    assert compare.left.strip_y() == pytest.approx(80.0, abs=ROUNDING)
 
     compare.set_sync_mode("linked")  # master = right (moved last): left is re-aligned to it
     assert modes == ["independent", "linked"]
-    assert compare.left.strip_y() == 120.0
-    assert compare.right.strip_y() == 120.0
+    assert compare.left.strip_y() == pytest.approx(120.0, abs=ROUNDING)
+    assert compare.right.strip_y() == pytest.approx(120.0, abs=ROUNDING)
     assert compare.sync_checkbox.isChecked()
     assert compare.sync_mode() == "linked"
 

@@ -56,6 +56,8 @@ def test_auto_prefers_more_multiprocessors_then_memory(monkeypatch: pytest.Monke
 
 def test_auto_with_only_an_integrated_gpu_uses_cpu(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_cuda(monkeypatch, [gpu(integrated=True, sms=2, gib=24)])
+    fake_xpu(monkeypatch, None)
+    fake_mps(monkeypatch, False)  # a macOS runner really has MPS
     assert resolve_device("auto") == torch.device("cpu")
 
 

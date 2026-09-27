@@ -91,8 +91,3 @@ jobs:
       - name: uv.lock is up to date
         run: uv lock --check
 
-      # TEMPORARY (removed once uv.lock is committed): the dev container that restored the backend extras
-      # cannot reach download.pytorch.org, so the regenerated lock is printed here to be copied back.
-      - name: Print regenerated uv.lock
-        if: failure()
-        run: uv lock && gzip -9c uv.lock | base64 -w0 && echo
