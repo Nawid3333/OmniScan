@@ -36,6 +36,7 @@ from omniscan.edits.apply import (
     match_region_edits,
     match_translation_edits,
 )
+from omniscan.export.segments import output_segments
 
 EDITS_FILE = "edits.json"
 OCR_AUTO_FILE = "ocr_auto.json"  # ocr.json as the `ocr` stage read it, before hand edits
@@ -428,17 +429,32 @@ def hand_lettered_ids(paths: ChapterPaths) -> list[str]:
     return [region.id for region in current if region.id in claimed]
 
 
-def set_cuts(paths: ChapterPaths, cuts: list[int] | None) -> list[int] | None:
+def set_cuts(
+    paths: ChapterPaths, cuts: list[int] | None, *, max_height: int | None = None
+) -> list[int] | None:
     """Set the chapter's output cuts (strip rows; sorted, de-duplicated, clamped to the strip's inside) or
-    reset them to one image per slice (None); returns what was stored. ValueError for a cut outside the strip."""
+    reset them to one image per slice (None, or no cuts at all); returns what was stored. ValueError for a
+    cut outside the strip, or for an image taller than `max_height` rows (the slicer's hard maximum)."""
     with _LOCK:
-        height = load_slices(paths).strip_height
+        slices = load_slices(paths)
+        height = slices.strip_height
         stored = None
-        if cuts is not None:
+        if cuts:
             outside = [c for c in cuts if not 0 < c < height]
             if outside:
                 raise ValueError(f"cut {outside[0]} lies outside the strip (0 < cut < {height})")
             stored = sorted(set(cuts))
+            tall = [
+                s
+                for s in output_segments(slices.slices, height, stored)
+                if s.y1 - s.y0 > (max_height or height)
+            ]
+            if tall:
+                rows = tall[0].y1 - tall[0].y0
+                raise ValueError(
+                    f"the image of rows {tall[0].y0}-{tall[0].y1} would be {rows} rows tall, more than "
+                    f"{max_height} (slicer.hard_max_height): add a cut inside it"
+                )
         edits = load_edits(paths)
         edits.cuts = stored
         save_edits(paths, edits)

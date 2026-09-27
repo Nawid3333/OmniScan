@@ -113,7 +113,9 @@ class ExportStage:
             blend_rgba(strip, glyph)
             glyph_items += 1
         slices = SlicesArtifact.load(ctx.paths.artifact("slices.json")).slices
-        segments = output_segments(slices, ingest.strip_height, load_edits(ctx.paths).cuts)
+        # only a hand piece over the limit (which set_cuts refuses) is split, so the limit is not hashed
+        cuts = load_edits(ctx.paths).cuts
+        segments = output_segments(slices, ingest.strip_height, cuts, ctx.cfg.slicer.hard_max_height)
         codec = get_codec(ctx.cfg)
         try:
             files = _write_slices(ctx, strip, segments, codec)

@@ -691,7 +691,8 @@ def create_app(
         """Set the output cuts by hand (strip rows), or reset them with null; export applies them."""
         body = await json_body(request, CutsBody)
         paths = chapter_paths(series, chapter)
-        run_edit(lambda: edit_store.set_cuts(paths, body.cuts))
+        max_height = series_config(cfg, series_paths(series).library_dir).slicer.hard_max_height
+        run_edit(lambda: edit_store.set_cuts(paths, body.cuts, max_height=max_height))
         return cuts_state(series, chapter)
 
     @app.get("/api/fonts")

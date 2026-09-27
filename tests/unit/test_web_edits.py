@@ -495,3 +495,9 @@ def test_output_cuts_get_put_reset_and_crossings(client: TestClient, work: Path)
     assert state["crossings"] == [{"cut": 30, "region_id": "r0001"}, {"cut": 230, "region_id": "r0002"}]
     assert client.put(f"{BASE}/cuts", json={"cuts": [700]}).status_code == 422
     assert client.put(f"{BASE}/cuts", json={"cuts": None}).json()["cuts"] is None
+    assert client.put(f"{BASE}/cuts", json={"cuts": []}).json()["cuts"] is None  # not one strip-tall image
+    (work.parents[2] / "lib" / SERIES / "series.toml").write_text(
+        "[slicer]\nhard_max_height = 250\n", encoding="utf-8"
+    )
+    too_tall = client.put(f"{BASE}/cuts", json={"cuts": [100]})  # rows 100-600: 500 > 250
+    assert too_tall.status_code == 422 and "slicer.hard_max_height" in too_tall.json()["detail"]

@@ -1413,7 +1413,9 @@ shows one raw page at a time with every text region as a box:
   preview: the export decodes and composites the strip on the GPU, so single pixels may differ.
 - **Output cuts** (in the **Slicer** view). The processing slices stay the slicer's; where the finished
   images split is yours to choose: *Edit output cuts* starts from the slicer's cuts; click to add a cut,
-  drag one to move it, × removes it, *Reset to one image per slice* goes back. With *snap to calm rows* a
+  drag one to move it, × removes it, *Reset to one image per slice* goes back (so does removing
+  every cut). No image may be taller than `slicer.hard_max_height` (15000 rows by default): a cut that would
+  leave a taller one is refused. With *snap to calm rows* a
   cut jumps into a uniform band within 60 rows (a clean place between panels). A cut that runs through a
   region's text or bubble is drawn red ("cuts through r0003") so no balloon is split across two images.
   Export writes one image per piece between the cuts; the rows of filtered (promo) slices stay out. Stored
