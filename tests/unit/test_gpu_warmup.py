@@ -20,7 +20,8 @@ class Recorder:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
-        self.threads: set[int] = set()
+        # the Thread objects themselves, kept alive: a finished thread's ident can be reused by the next one
+        self.threads: dict[int, threading.Thread] = {}
 
     def names(self) -> list[str]:
         return [name for name, _args, _kwargs in self.calls]
@@ -36,7 +37,8 @@ def patch_ops(
         def fn(*args: Any, **kwargs: Any) -> None:
             counters[op] = counters.get(op, 0) + 1
             recorder.calls.append((op, args, kwargs))
-            recorder.threads.add(threading.get_ident())
+            thread = threading.current_thread()
+            recorder.threads[id(thread)] = thread
             if op in fail_at:
                 raise RuntimeError(f"{op} failed #{counters[op]}")
 
@@ -85,7 +87,7 @@ def test_sequence_runs_exactly_once_on_another_thread(
 ) -> None:
     recorder = Recorder()
     patch_ops(monkeypatch, recorder)
-    main_thread = threading.get_ident()
+    main_thread = id(threading.current_thread())
     with caplog.at_level(logging.INFO, logger="omniscan.gpu.warmup"):
         warmup = GpuWarmup(CUDA)
         warmup.start()
