@@ -7,6 +7,8 @@ a crop-reading engine (manga_ocr or paddleocr_vl) every region is read as one wh
 no line detection runs. Stored fixed-position watermarks pass through unread; with `sfx.sweep` CRAFT
 then looks over every active tile for sound effects the detector missed (ocr/sweep.py), read by the
 same engine.
+The reading is kept as ocr_auto.json; ocr.json is that reading with the chapter's hand edits (edits.json)
+applied, so a re-run never loses them.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ from omniscan.core.paths import list_images
 from omniscan.core.schemas import IngestArtifact, RegionsArtifact, SlicesArtifact
 from omniscan.core.stage import ChapterContext
 from omniscan.detect.tiles import keep_tiles, plan_tiles
+from omniscan.edits.store import OCR_AUTO_FILE, write_ocr
 from omniscan.gpu.groups import VISION_GROUP
 from omniscan.ingest.strip import load_strip
 from omniscan.ocr.engines import engine_rec_model
@@ -60,7 +63,7 @@ class OcrStage:
 
     def outputs(self, ctx: ChapterContext) -> list[str]:
         """Artifact names (relative to the chapter work dir) this stage writes."""
-        return ["ocr.json"]
+        return ["ocr.json", OCR_AUTO_FILE]
 
     def config_subset(self, cfg: Config) -> Mapping[str, Any]:
         """Only the config values that affect this stage's output (hashed for invalidation)."""
@@ -155,5 +158,7 @@ class OcrStage:
         metrics["watermarked"] = float(sum(1 for r in kept if r.kind == "watermark"))
         kept = [measure_lettering_style(strip, r) if r.kind in ("sfx", "free_text") else r for r in kept]
         metrics["sfx"] = float(sum(1 for r in kept if r.kind == "sfx"))
-        RegionsArtifact(regions=kept).save(ctx.paths.artifact("ocr.json"))
+        _regions, orphans = write_ocr(ctx.paths, kept, direction=cfg.detect.reading_direction)
+        if orphans is not None:
+            metrics["edits_orphaned"] = float(orphans)
         return metrics

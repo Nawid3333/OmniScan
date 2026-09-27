@@ -13,7 +13,7 @@ import torch
 from PIL import Image
 
 from omniscan.core.config import Config, GpuConfig, OcrConfig, PathsConfig, SfxConfig
-from omniscan.core.schemas import BBox, Region, RegionsArtifact
+from omniscan.core.schemas import BBox, ChapterEdits, Region, RegionEdit, RegionsArtifact
 from omniscan.core.stage import ChapterContext, make_context, run_chapter, run_stage
 from omniscan.ingest.stage import IngestStage
 from omniscan.ocr.lines import LineBox
@@ -119,6 +119,26 @@ def prepared(cfg: Config) -> ChapterContext:
     return ctx
 
 
+def test_ocr_stage_reapplies_hand_edits_and_keeps_its_own_reading(cfg: Config) -> None:
+    """edits.json survives a forced re-run: ocr.json carries the fix, ocr_auto.json the stage's reading."""
+    ctx = prepared(cfg)
+    ChapterEdits(
+        regions=[
+            RegionEdit(region_id="r0001", anchor=BBox(x0=10, y0=50, x1=390, y1=200), text="고친 글"),
+            RegionEdit(region_id="m0001", anchor=BBox(x0=10, y0=400, x1=200, y1=450), added=True, text="툭"),
+        ]
+    ).save(ctx.paths.artifact("edits.json"))
+    ctx.gpu = FakeScheduler(
+        {"line_detector": FakeLineDetector({0: [((20, 60, 200, 90), 0.95)]}), "recognizer": FakeRecognizer()}
+    )
+    outcome = run_stage(OcrStage(), ctx, force=True)
+    assert outcome.status == "done" and outcome.metrics["edits_orphaned"] == 0.0
+    edited = RegionsArtifact.load(ctx.paths.artifact("ocr.json")).regions
+    assert [(r.id, r.text) for r in edited] == [("r0001", "고친 글"), ("m0001", "툭")]
+    auto = RegionsArtifact.load(ctx.paths.artifact("ocr_auto.json")).regions
+    assert [(r.id, r.text) for r in auto] == [("r0001", "텍스트")]
+
+
 def test_ocr_stage_writes_ocr_json_and_is_resumable(cfg: Config) -> None:
     def scheduler() -> FakeScheduler:
         """Fresh scripted models — the fake detector counts tiles across runs."""
@@ -144,7 +164,10 @@ def test_ocr_stage_writes_ocr_json_and_is_resumable(cfg: Config) -> None:
     assert built.lines[0].engine == cfg.ocr.rec_repo.split("/")[-1]
 
     manifest = make_context(cfg, SERIES, CHAPTER).manifest
-    assert manifest.stages["ocr"].status == "done" and manifest.stages["ocr"].outputs == ["ocr.json"]
+    assert manifest.stages["ocr"].status == "done" and manifest.stages["ocr"].outputs == [
+        "ocr.json",
+        "ocr_auto.json",
+    ]
     assert run_stage(OcrStage(), make_context(cfg, SERIES, CHAPTER, scheduler())).status == "skipped"
 
     # changing ocr.rec_repo re-runs the stage (and the engine name follows the repo)

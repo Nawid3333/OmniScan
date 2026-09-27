@@ -8,12 +8,14 @@
     series,
     chapter,
     through,
+    startStage,
     label,
     onDone,
   }: {
     series: string;
     chapter: string;
     through: string;
+    startStage?: string;
     label?: string;
     onDone: () => void;
   } = $props();
@@ -50,7 +52,7 @@
     const myEpoch = ++epoch;
     stopPolling();
     try {
-      const result = await postRun(series, chapter, through);
+      const result = await postRun(series, chapter, through, startStage);
       if (myEpoch !== epoch) return;
       stages = result.stages; // shown immediately, before the first poll resolves
       runState = { phase: "queued", error: null };

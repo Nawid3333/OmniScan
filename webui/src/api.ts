@@ -217,11 +217,23 @@ async function putJson<T>(path: string, body: unknown): Promise<T> {
   return sendJson<T>(path, "PUT", body);
 }
 
-async function sendJson<T>(path: string, method: "POST" | "PUT", body: unknown): Promise<T> {
+async function patchJson<T>(path: string, body: unknown): Promise<T> {
+  return sendJson<T>(path, "PATCH", body);
+}
+
+async function deleteJson<T>(path: string): Promise<T> {
+  return sendJson<T>(path, "DELETE", undefined);
+}
+
+async function sendJson<T>(
+  path: string,
+  method: "POST" | "PUT" | "PATCH" | "DELETE",
+  body: unknown,
+): Promise<T> {
   const res = await fetch(path, {
     method,
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!res.ok) {
     let detail = "";
@@ -344,12 +356,18 @@ export interface RunResult {
 }
 
 /** Queue every pipeline stage through `through` (inclusive, e.g. "ocr", "typeset", "export") for
- *  one chapter. Only actually executes while the server was started with a worker (the real
- *  `omniscan serve`); poll `getJob` with the returned id for progress. */
-export async function postRun(series: string, chapter: string, through: string): Promise<RunResult> {
+ *  one chapter — from `start` when given (e.g. "inpaint" re-renders without re-translating). Only
+ *  actually executes while the server was started with a worker (the real `omniscan serve`); poll
+ *  `getJob` with the returned id for progress. */
+export async function postRun(
+  series: string,
+  chapter: string,
+  through: string,
+  start?: string,
+): Promise<RunResult> {
   return postJson<RunResult>(
     `${BASE}/series/${encodeURIComponent(series)}/chapters/${encodeURIComponent(chapter)}/run`,
-    { through },
+    start === undefined ? { through } : { through, start },
   );
 }
 
@@ -376,4 +394,91 @@ export async function putFinalLine(series: string, chapter: string, regionId: st
     `${BASE}/series/${encodeURIComponent(series)}/chapters/${encodeURIComponent(chapter)}/final/${encodeURIComponent(regionId)}`,
     { text },
   );
+}
+function chapterBase(series: string, chapter: string): string {
+  return `${BASE}/series/${encodeURIComponent(series)}/chapters/${encodeURIComponent(chapter)}`;
+}
+
+export interface RegionEdit {
+  region_id: string;
+  anchor: BBox;
+  added: boolean;
+  deleted: boolean;
+  kind: RegionKind | null;
+  bbox: BBox | null;
+  bubble_bbox: BBox | null;
+  text: string | null;
+  lang: string | null;
+}
+
+export interface TranslationEdit {
+  region_id: string;
+  anchor: BBox;
+  text: string;
+  source: string;
+}
+
+/** GET .../edits: edits.json plus what the server derives from it for the current regions. */
+export interface ChapterEdits {
+  regions: RegionEdit[];
+  translations: TranslationEdit[];
+  deleted_regions: Region[];
+  edited_region_ids: string[];
+  manual_translation_ids: string[];
+}
+
+export interface RegionPatch {
+  kind?: RegionKind;
+  bbox?: BBox;
+  bubble_bbox?: BBox;
+  text?: string;
+}
+
+export async function getEdits(series: string, chapter: string): Promise<ChapterEdits> {
+  return getJson<ChapterEdits>(`${chapterBase(series, chapter)}/edits`);
+}
+
+/** Change a region's kind, text box, bubble box and/or source text (recorded in edits.json). */
+export async function patchRegion(
+  series: string,
+  chapter: string,
+  regionId: string,
+  patch: RegionPatch,
+): Promise<Region> {
+  return patchJson<Region>(`${chapterBase(series, chapter)}/regions/${encodeURIComponent(regionId)}`, patch);
+}
+
+/** Add a hand-drawn region (strip-space box); the server gives it an m-prefixed id. */
+export async function addRegion(
+  series: string,
+  chapter: string,
+  region: { bbox: BBox; kind?: RegionKind; text?: string; bubble_bbox?: BBox },
+): Promise<Region> {
+  return postJson<Region>(`${chapterBase(series, chapter)}/regions`, region);
+}
+
+export async function deleteRegion(series: string, chapter: string, regionId: string): Promise<void> {
+  await deleteJson<unknown>(`${chapterBase(series, chapter)}/regions/${encodeURIComponent(regionId)}`);
+}
+
+/** Drop every hand edit of a region; null when it was hand-added (and is now gone). */
+export async function revertRegion(series: string, chapter: string, regionId: string): Promise<Region | null> {
+  const result = await postJson<{ region: Region | null }>(
+    `${chapterBase(series, chapter)}/regions/${encodeURIComponent(regionId)}/revert`,
+    {},
+  );
+  return result.region;
+}
+
+/** Drop a region's hand-written line; the judge's line again, or null when it has none. */
+export async function revertFinalLine(
+  series: string,
+  chapter: string,
+  regionId: string,
+): Promise<FinalLine | null> {
+  const result = await postJson<{ line: FinalLine | null }>(
+    `${chapterBase(series, chapter)}/final/${encodeURIComponent(regionId)}/revert`,
+    {},
+  );
+  return result.line;
 }

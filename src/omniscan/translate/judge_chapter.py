@@ -1,4 +1,8 @@
-"""Chapter-level judging: a chapter's ocr.json plus every candidate run judged into final.json."""
+"""Chapter-level judging: a chapter's ocr.json plus every candidate run judged into final.json.
+
+The judge's own lines are kept as final_auto.json; final.json is them with the chapter's hand-written lines
+(edits.json) applied, so a re-run never loses them.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +11,7 @@ from typing import Literal
 
 from omniscan.core.paths import ChapterPaths
 from omniscan.core.schemas import CandidateRun, FinalArtifact, GlossaryEntry, RegionsArtifact
+from omniscan.edits.store import write_final
 from omniscan.translate.judge import JudgeStats, judge_regions
 from omniscan.translate.judge_config import JudgeConfig
 from omniscan.translate.run import ChatClient
@@ -23,7 +28,8 @@ def judge_chapter(
     story_summary: str | None = None,
     rate_limit_fallback: bool = False,
 ) -> tuple[Literal["done", "skipped"], FinalArtifact | None, JudgeStats | None]:
-    """Judge one chapter's candidate runs into `final.json` (skipped when it exists, unless forced)."""
+    """Judge one chapter's candidate runs into `final.json` (skipped when it exists, unless forced); the
+    returned artifact is final.json's, hand-written lines included."""
     output = paths.artifact("final.json")
     if output.is_file() and not force:
         return "skipped", None, None
@@ -54,7 +60,7 @@ def judge_chapter(
             "rate_limited": float(stats.rate_limited),
         },
     )
-    result.save(output)
+    result = write_final(paths, result, artifact.regions)
     return "done", result, stats
 
 

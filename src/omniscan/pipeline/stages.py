@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Protocol, runtime_checkable
 from omniscan.core.config import Config
 from omniscan.core.paths import SeriesPaths
 from omniscan.core.stage import ChapterContext, Stage
+from omniscan.edits.store import FINAL_AUTO_FILE
 from omniscan.glossary.store import GlossaryStore
 from omniscan.llm.ollama import OllamaRateLimitError
 from omniscan.story.store import SummaryStore
@@ -247,7 +248,7 @@ class JudgeStage:
 
     def outputs(self, ctx: ChapterContext) -> list[str]:
         """Artifact names (relative to the chapter work dir) this stage writes."""
-        return ["final.json"]
+        return ["final.json", FINAL_AUTO_FILE]
 
     def config_subset(self, cfg: Config) -> Mapping[str, Any]:
         """Only the config values that affect this stage's output (hashed for invalidation)."""
