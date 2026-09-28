@@ -23,10 +23,65 @@ on:
         type: string
         default: windows-latest
 
+# A new push to a pull request cancels the run still going for its previous commit; pushes to main
+# always finish. The runner inputs are in the group so runner-images.yml's two calls never cancel
+# each other.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ inputs.linux-runner }}-${{ inputs.windows-runner }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
+env:
+  # a stale uv.lock fails the sync instead of being re-resolved on the runner
+  UV_LOCKED: "1"
+  # pytest-xdist runs the suite on every core; pinned here, not in uv.lock: the lock cannot be
+  # regenerated off the owner's machine (AMD's ROCm index), and CI is the only place it runs.
+  XDIST: pytest-xdist==3.8.0
+
 jobs:
+  # Lint and type check once, on Linux: none of them depends on the OS the check runs on.
+  # pyright checks the code as each shipped OS sees it (sys.platform branches), so one job covers all three.
+  lint:
+    runs-on: ${{ inputs.linux-runner || 'ubuntu-latest' }}
+    timeout-minutes: 15 # a normal run takes ~2 min
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0 (no floating major tags since v8: pinned)
+
+      # the workflows themselves: expression and shell mistakes fail here, not on the next scheduled run
+      - name: Lint workflows
+        run: uvx --from actionlint-py==1.7.12.25 actionlint
+
+      - name: Sync (cpu + gui)
+        id: sync
+        if: ${{ !cancelled() }}
+        run: uv sync --extra cpu --extra gui
+
+      - name: Format
+        if: ${{ !cancelled() && steps.sync.outcome == 'success' }}
+        run: uv run ruff format --check .
+
+      - name: Lint
+        if: ${{ !cancelled() && steps.sync.outcome == 'success' }}
+        run: uv run ruff check --output-format=github .
+
+      - name: Type check (Linux)
+        if: ${{ !cancelled() && steps.sync.outcome == 'success' }}
+        run: uv run pyright --pythonplatform Linux
+
+      - name: Type check (Windows)
+        if: ${{ !cancelled() && steps.sync.outcome == 'success' }}
+        run: uv run pyright --pythonplatform Windows
+
+      - name: Type check (macOS)
+        if: ${{ !cancelled() && steps.sync.outcome == 'success' }}
+        run: uv run pyright --pythonplatform Darwin
+
   test:
     strategy:
       # compare all three independently: a failure on one OS must not cancel the others
@@ -44,6 +99,8 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0 (no floating major tags since v8: pinned)
 
@@ -55,30 +112,9 @@ jobs:
       - name: Sync (cpu + gui)
         run: uv sync --extra cpu --extra gui
 
+      # --durations lists the slowest tests in the log, so a test that starts to crawl shows up
       - name: Test (non-GPU suite)
-        run: uv run pytest -m "not gpu"
-
-      - name: Lint
-        run: uv run ruff format --check . && uv run ruff check .
-
-      - name: Type check
-        run: uv run pyright
-
-  rocm-gfx1201:
-    # the owner's PC: Windows + AMD RX 9070 XT. The runner has no AMD GPU; this proves the pinned ROCm
-    # wheels still install and the suite passes against that build.
-    runs-on: ${{ inputs.windows-runner || 'windows-latest' }}
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0 (no floating major tags since v8: pinned)
-
-      - name: Sync (rocm-gfx1201 + gui)
-        run: uv sync --extra rocm-gfx1201 --extra gui
-
-      - name: Test (non-GPU suite)
-        run: uv run pytest -m "not gpu"
+        run: uv run --with "$XDIST" pytest -m "not gpu" -n auto --durations=15
 
   lock:
     # uv.lock must cover every backend extra; a pyproject.toml change without `uv lock` fails here
@@ -86,11 +122,37 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0 (no floating major tags since v8: pinned)
 
       - name: uv.lock is up to date
         run: uv lock --check
+
+  rocm-gfx1201:
+    # the owner's PC: Windows + AMD RX 9070 XT. The runner has no AMD GPU; this proves the pinned ROCm
+    # wheels still install and the suite passes against that build.
+    runs-on: ${{ inputs.windows-runner || 'windows-latest' }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0 (no floating major tags since v8: pinned)
+        with:
+          # its own cache: the test job on the same image saves the cpu build under the default key
+          cache-suffix: rocm-gfx1201
+
+      - name: Sync (rocm-gfx1201 + gui)
+        run: uv sync --extra rocm-gfx1201 --extra gui
+
+      - name: Test (non-GPU suite)
+        run: uv run --with "$XDIST" pytest -m "not gpu" -n auto
 
   # The web UI (the Studio editor and the debug views): unit tests, type check and production build.
   webui:
@@ -101,6 +163,8 @@ jobs:
         working-directory: webui
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v5
         with:
