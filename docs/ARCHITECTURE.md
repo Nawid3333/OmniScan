@@ -92,6 +92,14 @@ in crop pixels; the models come from a VRAM manager's vision group under the GPU
 reading is only returned; keeping it is a hand edit (`update_region(text=…)`). The module imports torch only
 inside `read_region`, so the web app and the CLI stay torch-free at import.
 
+**Finding missed text on one page** (`detect/on_demand.py`): the Studio's *Find missed text* and
+`omniscan edit find` crop one raw page's strip rows, run the `detect` stage's own tiling, merging and
+`build_regions` over it (optionally at another detector threshold, restored afterwards), drop every box a
+current region covers (the box mostly inside the region, or the region mostly inside the box), and read the
+rest with `ocr/on_demand.read_in` from the same crop, all under one vision-group load. The finds are returned
+as suggestions; adding one is `edits.store.add_region`, so `regions.json` / `ocr_auto.json` and the manifest
+never change.
+
 **Interchange** (`interchange/`): other tools' files in and out of a chapter, never a stage. Out: LabelPlus
 files (`labelplus.py`), layered PSD pages (`psd.py`) and BallonsTranslator projects (`ballons.py`), built from
 the chapter's artifacts on the CPU. In: LabelPlus labels (a point each) go to the region they point into

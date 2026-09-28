@@ -26,6 +26,7 @@
     putLayout,
     putFinalLine,
     readRegionAgain,
+    findMissedText,
     revertFinalLine,
     revertRegion,
     translateRegions,
@@ -41,6 +42,7 @@
     LayoutFields,
     LayoutItem,
     OcrReading,
+    FoundText,
     Region,
     RegionKind,
     SourceFile,
@@ -121,6 +123,10 @@
   let suggestions = $state<Suggestion[]>([]);
   let ocrReading = $state<OcrReading | null>(null);
   let rereading = $state(false);
+  let found = $state<FoundText[]>([]); // missed text found on page `foundPage` (SourceFile.index)
+  let foundPage = $state<number | null>(null);
+  let finding = $state(false);
+  let findThreshold = $state<number | null>(null); // null = the series' detect.threshold
   let kept = $state<Suggestion | null>(null); // the suggestion the English draft was taken from
   let translating = $state(false);
   let cleanups = $state<CleanupPatch[]>([]);
@@ -146,6 +152,7 @@
 
   let page = $derived(files[pageIndex] ?? null);
   let onPage = $derived(page ? pageRegions(page, regions) : []);
+  let foundOnPage = $derived(page !== null && foundPage === page.index ? found : []);
   let lineById = $derived(new Map(lines.map((line) => [line.region_id, line])));
   let selected = $derived(regions.find((region) => region.id === selectedId) ?? null);
   let selectedLine = $derived(selected ? lineById.get(selected.id) : undefined);
@@ -597,6 +604,39 @@
     if (line !== null) translationDraft = line.text;
   }
 
+  /** Run the detector again on this page and list the text areas no region covers (nothing is saved). */
+  async function findMissed(): Promise<void> {
+    if (page === null) return;
+    const index = page.index;
+    finding = true;
+    actionError = "";
+    try {
+      const result = await findMissedText(series, chapter, index, findThreshold);
+      found = result;
+      foundPage = index;
+    } catch (e) {
+      actionError = e instanceof Error ? e.message : String(e);
+    } finally {
+      finding = false;
+    }
+  }
+
+  /** Add found boxes as hand-drawn regions with the text the OCR read (one request each). */
+  async function addFound(items: FoundText[]): Promise<void> {
+    for (const item of items) {
+      const region = await act(() =>
+        addRegion(series, chapter, {
+          bbox: item.bbox,
+          kind: item.kind,
+          text: item.text,
+          ...(item.bubble_bbox !== null ? { bubble_bbox: item.bubble_bbox } : {}),
+        }),
+      );
+      if (region === null) return;
+      found = found.filter((other) => other !== item);
+    }
+  }
+
   /** Read the selected region again with the OCR (nothing is saved until Save source). */
   async function readSelectedAgain(): Promise<void> {
     if (selected === null) return;
@@ -887,6 +927,11 @@
                 {/if}
               {/each}
             {/if}
+            {#each foundOnPage as item, i (i)}
+              {@const rect = stripToPage(page, item.bbox)}
+              <rect x={rect.x} y={rect.y} width={rect.width} height={rect.height} fill="#f59e0b" fill-opacity="0.12" stroke="#f59e0b" stroke-width={2 / zoom} stroke-dasharray="{6 / zoom} {3 / zoom}" pointer-events="none" />
+              <text x={rect.x + 2 / zoom} y={rect.y - 3 / zoom} fill="#b45309" font-size={12 / zoom} pointer-events="none">+{i + 1}</text>
+            {/each}
             {#if tool === "select"}
               {#each letteringOnPage as item (item.region_id)}
                 {@const rect = stripToPage(page, letteringBoxOf(item))}
@@ -1137,6 +1182,36 @@
             </li>
           {/each}
         </ol>
+      </section>
+      <section>
+        <h4>Missed text</h4>
+        <p class="muted">
+          Run the detector again on this page (the first search loads the models) and list text areas no box covers,
+          read by the OCR. A lower threshold finds fainter text.
+        </p>
+        <label title="the detector's score threshold; empty = the series' setting">
+          threshold
+          <input type="number" min="0.05" max="0.95" step="0.05" placeholder="series" bind:value={findThreshold} />
+        </label>
+        <button onclick={() => void findMissed()} disabled={busy || finding || page === null}>
+          {finding ? "Searching…" : "Find missed text"}
+        </button>
+        {#if page !== null && foundPage === page.index}
+          {#if foundOnPage.length === 0}
+            <p class="muted">no missed text left on this page</p>
+          {:else}
+            <ol class="list">
+              {#each foundOnPage as item, i (i)}
+                <li>
+                  <span class="muted">+{i + 1}</span>
+                  <span>{snippet(item.text) || "(nothing read)"}</span>
+                  <button class="link" onclick={() => void addFound([item])} disabled={busy}>add</button>
+                </li>
+              {/each}
+            </ol>
+            <button onclick={() => void addFound([...foundOnPage])} disabled={busy}>Add all</button>
+          {/if}
+        {/if}
       </section>
       {#if deletedOnPage.length > 0}
         <section>

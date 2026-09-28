@@ -43,6 +43,7 @@ from omniscan.core.schemas import (
     SeriesMemory,
     SlicesArtifact,
 )
+from omniscan.detect.on_demand import Found, find_on_page_now
 from omniscan.edits import store as edit_store
 from omniscan.edits.replace import FindReplace, apply_changes
 from omniscan.edits.replace import plan as replace_plan
@@ -105,6 +106,14 @@ class OcrBody(Model):
     """Body of the one-region OCR POST request."""
 
     apply: bool = False  # keep a non-empty reading as the region's source text (a hand edit)
+
+
+class FindBody(Model):
+    """Body of the find-missed-text POST request."""
+
+    threshold: float | None = Field(
+        default=None, gt=0.0, lt=1.0
+    )  # the detector's score threshold; None = the series'
 
 
 class LayoutBody(Model):
@@ -237,6 +246,9 @@ def create_app(
     run_worker: bool = False,
     chat_client: Callable[[Config], ChatClient] = ollama_client,
     ocr_reader: Callable[[ChapterPaths, str, Config], Reading] = read_region_now,
+    page_finder: Callable[
+        [ChapterPaths, int, Config, float | None], list[Found]
+    ] = find_on_page_now,  # tests fake it
     ui_dir: Path | None = None,
 ) -> FastAPI:
     """Build the debug API app: series/chapter browsing + ingest/slices artifacts + raw pages.
@@ -594,6 +606,44 @@ def create_app(
         source text, a hand edit. 404 for an unknown region, 503 when the OCR cannot run."""
         body = await json_body(request, OcrBody)
         return await run_in_threadpool(ocr_body, series, chapter, region_id, body)
+
+    def find_body(series: str, chapter: str, page: int, body: FindBody) -> dict[str, object]:
+        """Search one page for missed text (sync, runs in a worker thread)."""
+        paths = chapter_paths(series, chapter)
+        try:
+            scfg = series_config(cfg, series_paths(series).library_dir)
+        except SeriesConfigError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        try:
+            found = page_finder(paths, page, scfg, body.threshold)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except (ImportError, OSError, RuntimeError) as exc:  # no torch backend, no models, no GPU
+            raise HTTPException(status_code=503, detail=f"the detector could not run: {exc}") from exc
+        return {
+            "found": [
+                {
+                    "kind": item.kind,
+                    "bbox": item.bbox.model_dump(),
+                    "bubble_bbox": None if item.bubble_bbox is None else item.bubble_bbox.model_dump(),
+                    "score": item.score,
+                    "text": item.text,
+                    "confidence": item.confidence,
+                }
+                for item in found
+            ]
+        }
+
+    @app.post("/api/series/{series}/chapters/{chapter}/pages/{page}/find")
+    async def find_on_page(series: str, chapter: str, page: int, request: Request) -> dict[str, object]:
+        """Run the detector again on raw page `page` (SourceFile.index; optionally at another score threshold) and
+        return the text areas no current region covers, with what the OCR reads there — suggestions to add as
+        hand-drawn regions (POST …/regions); nothing is written. 404 without the page layout or a page file, 422
+        for no such page, 503 when the models cannot run."""
+        body = await json_body(request, FindBody)
+        return await run_in_threadpool(find_body, series, chapter, page, body)
 
     @app.post("/api/series/{series}/chapters/{chapter}/translate")
     async def translate_regions(series: str, chapter: str, request: Request) -> dict[str, object]:

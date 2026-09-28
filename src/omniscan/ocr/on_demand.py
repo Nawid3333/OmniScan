@@ -11,7 +11,7 @@ web app and the CLI stay importable without it.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -74,37 +74,48 @@ def region_crop(paths: ChapterPaths, region_id: str) -> tuple[Region, BBox, np.n
     return region, crop, strip_crop(paths, ingest, crop)
 
 
-def read_region(paths: ChapterPaths, region_id: str, cfg: Config, models: Mapping[str, Any]) -> Reading:
-    """Read region `region_id` with the engine `cfg` names and its loaded `models` (a vision group)."""
-    import torch  # deferred: only reading needs it
-
-    from omniscan.gpu.device import resolve_device
+def read_in(
+    tile: Any, regions: Sequence[Region], cfg: Config, models: Mapping[str, Any]
+) -> tuple[list[Region], str]:
+    """`regions` (boxes in the pixels of `tile`, uint8 [3, h, w] on the models' device) read by the engine `cfg`
+    names with its loaded `models` (a vision group): the regions with their text, and the engine's name."""
     from omniscan.ocr.engines import engine_rec_model
     from omniscan.ocr.pipeline import read_region_crops, read_regions
 
-    region, crop, pixels = region_crop(paths, region_id)
-    tile = torch.from_numpy(np.ascontiguousarray(pixels.transpose(2, 0, 1))).to(
-        resolve_device(cfg.gpu.device)
-    )
-    local = in_crop(region, crop)
     if cfg.ocr.engine == "ppocr":
         engine = cfg.ocr.rec_model or cfg.ocr.rec_repo.split("/")[-1]
         read, _ = read_regions(
             tile,
-            [local],
+            regions,
             models["line_detector"],
             models["recognizer"],
             cfg.ocr,
             direction=cfg.detect.reading_direction,
             engine=engine,
         )
-    else:
-        rec_model = engine_rec_model(cfg.ocr)
-        if rec_model is None:
-            raise ValueError(f"OCR engine '{cfg.ocr.engine}' needs ocr.rec_model")
-        engine = rec_model
-        read, _ = read_region_crops(tile, [local], models["reader"], cfg.ocr, engine=engine)
-    (result,) = read
+        return read, engine
+    rec_model = engine_rec_model(cfg.ocr)
+    if rec_model is None:
+        raise ValueError(f"OCR engine '{cfg.ocr.engine}' needs ocr.rec_model")
+    read, _ = read_region_crops(tile, regions, models["reader"], cfg.ocr, engine=rec_model)
+    return read, rec_model
+
+
+def on_device(pixels: np.ndarray, cfg: Config) -> Any:
+    """Pixels (uint8 [h, w, 3]) as a uint8 [3, h, w] tensor on the device `cfg` names."""
+    import torch  # deferred: only reading needs it
+
+    from omniscan.gpu.device import resolve_device
+
+    return torch.from_numpy(np.ascontiguousarray(pixels.transpose(2, 0, 1))).to(
+        resolve_device(cfg.gpu.device)
+    )
+
+
+def read_region(paths: ChapterPaths, region_id: str, cfg: Config, models: Mapping[str, Any]) -> Reading:
+    """Read region `region_id` with the engine `cfg` names and its loaded `models` (a vision group)."""
+    region, crop, pixels = region_crop(paths, region_id)
+    (result,), engine = read_in(on_device(pixels, cfg), [in_crop(region, crop)], cfg, models)
     return Reading(region_id=region.id, text=result.text, confidence=result.confidence, engine=engine)
 
 
