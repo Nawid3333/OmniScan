@@ -6,6 +6,10 @@
 # `*-cloud` models (verified in docs/benchmarks/translation-probe.md), so no OLLAMA_API_KEY is
 # needed for them. `think = false` keeps thinking models from spending the whole budget reasoning;
 # translategemma rejects `think: true`, so its profile sends nothing.
+#
+# `images = true` (chat_json only, vision models only) also sends the page images the regions sit on;
+# `image_side = 1280` is the most pixels an image has on either side (a tall slice is cut into tiles that
+# size), `images_per_request = 3` the images per request.
 
 #
 # Default: gemma4-31b-cloud alone, with translategemma-12b-local as its fallback when the cloud tokens

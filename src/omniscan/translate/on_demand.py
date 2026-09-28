@@ -17,6 +17,7 @@ from omniscan.edits import store as edit_store
 from omniscan.learn.apply import translation_hints
 from omniscan.learn.memory import current_memory
 from omniscan.pipeline.stages import series_entries, series_story_context
+from omniscan.translate.images import PageImages
 from omniscan.translate.profiles import TranslationProfile, resolve_fallbacks
 from omniscan.translate.run import ChatClient
 from omniscan.translate.suggest import Suggestion, suggest
@@ -83,6 +84,7 @@ def translate_now(
         story_summary=series_story_context(series, paths.chapter),
         hints=translation_hints(current_memory(series), cfg.learn) if cfg.learn.enabled else None,
         characters=load_voices(series),
+        images=PageImages(paths),
     )
     applied: list[FinalLine] = []
     if apply:

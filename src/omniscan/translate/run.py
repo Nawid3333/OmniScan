@@ -31,6 +31,7 @@ from omniscan.translate.voices import Character, relevant_characters
 
 if TYPE_CHECKING:
     from omniscan.learn.apply import TranslationHints
+    from omniscan.translate.images import PageImage, PageImages
 
 MEMORY_NOTE = "translation memory"  # Candidate.notes of a line taken from the series' translation memory
 _PARTIAL_EVERY_REGIONS = 20  # translategemma saves the partial after this many regions
@@ -99,6 +100,7 @@ def run_profile(
     reused: Mapping[str, Candidate] | None = None,
     hints: TranslationHints | None = None,
     characters: Sequence[Character] = (),
+    images: PageImages | None = None,
     clock: Callable[[], float] = time.perf_counter,
 ) -> CandidateRun:
     """Translate the chapter's translatable regions with one profile and return its candidate run.
@@ -109,7 +111,8 @@ def run_profile(
     `hints` (the series' learned memory): a region whose source line the editor already translated takes
     that English as is; the requests show similar memory lines and the preferred wording (chat_json).
     `characters` (the series' voices.toml): each request shows the voices of the characters who speak or are
-    named in it (chat_json)."""
+    named in it (chat_json). `images` (the chapter's pages) are attached to each request when the profile asks
+    for them (`images = true`, chat_json); the requests are then cut to at most `images_per_request` images."""
     start = clock()
     targets = translatable(regions)
     target_ids = {r.id for r in targets}
@@ -158,6 +161,7 @@ def run_profile(
                 context_for,
                 hints,
                 characters,
+                images if profile.images else None,
             )
         else:
             _run_translategemma(client, profile, remaining, entries, by_id, save_partial, usage)
@@ -192,11 +196,13 @@ def _run_chat_json(
     context_for: Callable[[Sequence[Region]], Sequence[ContextLine]] = lambda _chunk: (),
     hints: TranslationHints | None = None,
     characters: Sequence[Character] = (),
+    images: PageImages | None = None,
 ) -> None:
     """Request the regions in chunks; repair missing ids, then save the partial after every chunk."""
-    for chunk in (
-        remaining[i : i + profile.chunk_regions] for i in range(0, len(remaining), profile.chunk_regions)
-    ):
+    side = profile.image_side
+    image_of = None if images is None else lambda region: images.tile(region, side) or region.slice_index
+    for chunk in _chunks(remaining, profile, image_of):
+        pages = images.for_regions(chunk, side) if images is not None else {}
         context = context_for(chunk)
         memory = hints.examples_for([source_text(r) for r in chunk]) if hints is not None else []
         preferences = list(hints.preferences) if hints is not None else []
@@ -213,6 +219,7 @@ def _run_chat_json(
             memory=memory,
             preferences=preferences,
             characters=voices,
+            images=pages,
         )
         missing = [r for r in chunk if r.id not in texts]
         for _ in range(max_repair_rounds):
@@ -230,6 +237,7 @@ def _run_chat_json(
                 memory=memory,
                 preferences=preferences,
                 characters=voices,
+                images={r.id: pages[r.id] for r in missing if r.id in pages},  # only the pages still needed
             )
             texts.update(repair)
             missing = [r for r in missing if r.id not in repair]
@@ -237,6 +245,29 @@ def _run_chat_json(
             if region.id in texts:
                 by_id[region.id] = Candidate(region_id=region.id, text=texts[region.id], notes=None)
         save_partial()
+
+
+def _chunks(
+    regions: Sequence[Region], profile: TranslationProfile, image_of: Callable[[Region], object] | None
+) -> list[list[Region]]:
+    """The regions of each request: `chunk_regions` at a time, and with page images (`image_of`: the image a
+    region is sent with) also on at most `images_per_request` images (a new request starts where one more
+    image would not fit)."""
+    chunks: list[list[Region]] = []
+    current: list[Region] = []
+    shown: set[object] = set()
+    for region in regions:
+        image = image_of(region) if image_of is not None else None
+        full = len(current) >= profile.chunk_regions
+        crowded = image_of is not None and image not in shown and len(shown) >= profile.images_per_request
+        if current and (full or crowded):
+            chunks.append(current)
+            current, shown = [], set()
+        current.append(region)
+        shown.add(image)
+    if current:
+        chunks.append(current)
+    return chunks
 
 
 def _request_translations(
@@ -252,6 +283,7 @@ def _request_translations(
     memory: Sequence[tuple[str, str]] = (),
     preferences: Sequence[tuple[str, str]] = (),
     characters: Sequence[Character] = (),
+    images: Mapping[str, PageImage] | None = None,
 ) -> dict[str, str]:
     """One chat_json request for `regions`; returns the usable id -> text pairs of the reply."""
     response = client.chat(
@@ -264,6 +296,7 @@ def _request_translations(
             memory=memory,
             preferences=preferences,
             characters=characters,
+            images=images,
         ),
         cloud=(profile.endpoint == "cloud"),
         format=TRANSLATIONS_SCHEMA,

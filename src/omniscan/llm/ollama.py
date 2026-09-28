@@ -10,6 +10,9 @@ that callers must surface, never swallow (a past run lost 71 turns to exactly th
 
 from __future__ import annotations
 
+import base64
+import io
+import math
 import random
 import time
 from collections.abc import Callable
@@ -17,6 +20,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 import httpx
+from PIL import Image
 
 from omniscan.core.config import OllamaConfig, Secrets
 
@@ -26,6 +30,8 @@ _JITTER_FRACTION = 0.25
 _BODY_TRUNC_CHARS = 2000
 _PS_RETRIES = 5
 _REPLY_TOKENS = 4096  # room left for the answer when sizing num_ctx to a prompt
+_IMAGE_PATCH_PX = 28  # an image costs about one token per 28x28 px patch (qwen2.5-vl, mistral-small3.1)
+_IMAGE_TOKENS = 2048  # what an image whose size cannot be read is counted as
 
 
 @dataclass(slots=True)
@@ -73,6 +79,7 @@ class OllamaClient:
         self._sleep = sleep
         self._owns_http = http is None
         self._http = http if http is not None else httpx.Client(timeout=cfg.request_timeout_s)
+        self._image_ctx: dict[str, int] = {}  # the largest num_ctx an image request of each model got
 
     def chat(
         self,
@@ -137,17 +144,23 @@ class OllamaClient:
     ) -> dict[str, Any] | None:
         """`options` plus a `num_ctx` for a local model: the configured floor, or more for a long prompt.
 
-        Two tokens per prompt character (an upper bound for CJK and English alike) plus room for the reply,
-        rounded up to 4096, so a whole-chapter prompt is never truncated. Every other request gets the same
-        floor, which keeps the loaded model (Ollama reloads it when num_ctx changes)."""
+        Two tokens per prompt character (an upper bound for CJK and English alike), a token per 28 px patch of
+        every attached image, plus room for the reply, rounded up to 4096, so a whole-chapter prompt is never
+        truncated. Every other request gets the same floor, which keeps the loaded model (Ollama reloads it when
+        num_ctx changes); for the same reason a request with images never gets less than an earlier one with
+        images of the same model (the number of pages per request varies)."""
         floor = self._cfg.num_ctx
         if floor == 0 or cloud or model.endswith((":cloud", "-cloud")):
             return options
         if options is not None and "num_ctx" in options:
             return options
         chars = sum(len(str(message.get("content", ""))) for message in messages)
-        needed = -(-(2 * chars + _REPLY_TOKENS) // 4096) * 4096
-        return {**(options or {}), "num_ctx": max(floor, needed)}
+        images = [image for message in messages for image in message.get("images", ())]
+        pixels = sum(_image_tokens(image) for image in images)
+        needed = max(floor, -(-(2 * chars + pixels + _REPLY_TOKENS) // 4096) * 4096)
+        if images:
+            needed = self._image_ctx[model] = max(needed, self._image_ctx.get(model, 0))
+        return {**(options or {}), "num_ctx": needed}
 
     def _endpoint(self, cloud: bool) -> tuple[str, dict[str, str]]:
         """Resolve base URL and auth headers; cloud requires the API key before any I/O."""
@@ -228,3 +241,14 @@ class OllamaClient:
         if retry_after_s is not None:
             delay = max(delay, retry_after_s)
         return delay + random.uniform(0, delay * _JITTER_FRACTION)
+
+
+def _image_tokens(data: str) -> int:
+    """What one attached image (base64) costs a vision model: a token per 28 px patch of its size, read from
+    the image header (_IMAGE_TOKENS when it cannot be read)."""
+    try:
+        with Image.open(io.BytesIO(base64.b64decode(data, validate=True))) as image:
+            width, height = image.size
+    except OSError, ValueError:  # not base64 (binascii.Error), not an image (UnidentifiedImageError)
+        return _IMAGE_TOKENS
+    return math.ceil(width / _IMAGE_PATCH_PX) * math.ceil(height / _IMAGE_PATCH_PX)

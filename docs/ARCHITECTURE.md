@@ -80,6 +80,20 @@ from it through the optional `input_extra(ctx)` hook (`core/stage.py`, hashed wi
 this chapter's lines (`remembered_lines`). A switched-off rule re-runs the OCR; a new hand translation re-runs
 only the chapters holding that line, and an exact memory line wins over a reused candidate.
 
+**Page images** (`translate/images.py`): a `chat_json` profile with `images = true` attaches the page tiles its
+request's regions sit on (`PageImages`: read from the raw pages with Pillow; each slice scaled so the strip width
+fits `image_side` and cut into tiles at most `image_side` px tall (`tiles_of`), so a webtoon slice keeps its
+detail; base64 JPEG in the Ollama message's `images`). Each region carries `image` and `box` in its tile's pixels
+(the tile holding its vertical centre), `run.py::_chunks` cuts requests at `images_per_request` images, and a
+repair round sends only the missing regions' tiles. The stage builds one `PageImages` for all its profiles.
+`translation_key` adds the image size and the tile's identity (its rows and the sha256 of the raw pages under
+it, from ingest.json) only for a line actually sent with its image (`PageImages.sent`), so profiles without
+images keep their keys, a replaced page re-translates the lines it shows, and a line sent text-only is sent
+again once its page can be read. The stage hash sees the image settings only when they are on
+(`stage_profile`), and with images the stage's inputs add ingest.json, slices.json and the raw pages. Local
+models get a token per 28 px patch of each image added to `num_ctx`, which never shrinks between image requests
+of one model (no reload per request). Unreadable pages degrade to a text-only request (logged once).
+
 **Speakers and voices** (`translate/voices.py`): `Region.speaker` is set by hand (a `RegionEdit.speaker`, applied
 like every region edit); a series' hand-written `voices.toml` (library dir, next to `series.toml`) describes how
 each character talks. The chat_json prompt carries each region's speaker and the voices of the characters who

@@ -776,7 +776,16 @@ Profiles live in `config/translation_profiles.toml`, overridden by
 `~/.config/omniscan/translation_profiles.toml` (a profile there replaces the same-named one here).
 One profile is one model plus a prompt style: `chat_json` (many regions per request, glossary in the
 prompt, JSON answer) or `translategemma` (one request per region, locked glossary terms
-pre-substituted). Interrupted or rate-limited runs keep a dot-prefixed partial file that the next
+pre-substituted). A `chat_json` profile with `images = true` also sends the page images the regions sit
+on, so a vision model sees who is speaking and what a line refers to; each region then says which image it
+is on and where. `image_side` (default 1280) is the most pixels an image has on either side — a page is
+scaled so its width fits and a tall webtoon slice is cut into tiles that size, so the text and faces stay
+readable — and `images_per_request` (default 3) how many images one request covers; requests are cut to fit.
+Only models that accept images can use it (Ollama answers with an error otherwise); turning it on
+re-translates that profile's lines once, other profiles are unaffected (not even re-run). A replaced raw page
+re-translates the lines it shows, and a line that had to go without its page (a missing page file) is sent
+again once the page is back. The Studio's *Translate* sends it too for those profiles. Interrupted or
+rate-limited runs keep a dot-prefixed partial file that the next
 invocation resumes; a finished run deletes it. Exit 2 for unknown profiles or chapters with no
 `ocr.json`-less series; a chapter without `ocr.json` fails that chapter but the rest still run (exit
 1). An Ollama rate limit stops everything immediately with exit 3 and keeps the partial results.
