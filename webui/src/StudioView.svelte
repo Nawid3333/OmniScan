@@ -11,6 +11,7 @@
     deleteRegion,
     getCleanup,
     getEdits,
+    setChecked,
     stepEdits,
     getFinal,
     getIngest,
@@ -527,6 +528,14 @@
     }, NUDGE_COMMIT_MS);
   }
 
+  /** Mark the selected region's line checked (its source and English as they are now), or unmark it. */
+  async function toggleSelectedChecked(): Promise<void> {
+    if (selected === null || selectedStatus === null) return;
+    const id = selected.id;
+    const checked = !selectedStatus.checked;
+    await act(() => setChecked(series, chapter, [id], checked));
+  }
+
   /** Undo the last hand edit or redo the last undone one, then show the chapter as it is now. */
   async function stepHistory(step: "undo" | "redo"): Promise<void> {
     const left = step === "undo" ? edits?.history?.undo : edits?.history?.redo;
@@ -941,7 +950,9 @@
             <button class="link" onclick={() => select(null)}>close</button>
           </h3>
           {#if statusLabels(selectedStatus).length > 0}
-            <p class="labels">{statusLabels(selectedStatus).join(" · ")}</p>
+            <p class="labels">
+              {#each statusLabels(selectedStatus) as label, i (label)}{#if i > 0}{" · "}{/if}<span class:ok={label === "checked"}>{label}</span>{/each}
+            </p>
           {/if}
           <label>
             kind
@@ -994,6 +1005,11 @@
             </ul>
           {/if}
           <div class="actions">
+            <button
+              onclick={() => void toggleSelectedChecked()}
+              disabled={busy}
+              title="A checked line is approved; changing its source or English unchecks it"
+            >{selectedStatus.checked ? "Uncheck line" : "Mark line checked"}</button>
             {#if selectedStatus.manualTranslation}
               <button onclick={() => void revertSelectedTranslation()} disabled={busy}>Revert English</button>
             {/if}
@@ -1097,7 +1113,11 @@
                 <span class="texts">
                   <span lang={region.lang}>{snippet(region.text) || "—"}</span>
                   <span class="en">{snippet(line?.text ?? "") || "—"}</span>
-                  {#if labels.length > 0}<span class="labels">{labels.join(" · ")}</span>{/if}
+                  {#if labels.length > 0}
+                    <span class="labels">
+                      {#each labels as label, i (label)}{#if i > 0}{" · "}{/if}<span class:ok={label === "checked"}>{label}</span>{/each}
+                    </span>
+                  {/if}
                 </span>
               </button>
             </li>
@@ -1245,6 +1265,9 @@
   .labels {
     color: #9a3412;
     font-size: 12px;
+  }
+  .labels .ok {
+    color: #15803d; /* a checked line is good news, not a warning */
   }
   .muted {
     color: #6b7280;

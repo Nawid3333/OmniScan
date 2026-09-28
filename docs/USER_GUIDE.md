@@ -1081,7 +1081,7 @@ edit in the chapter's `edits.json` and applies it to `ocr.json` / `final.json` a
 Studio, so it survives every re-run (see "Studio: editing by hand"). Boxes and cuts are strip pixels.
 
 ```bash
-uv run omniscan edit show "Solo Leveling" "Chapter 1"            # regions: id, kind, source, English, edited
+uv run omniscan edit show "Solo Leveling" "Chapter 1"            # regions: id, kind, source, English, edited, status
 uv run omniscan edit show "Solo Leveling" "Chapter 1" --json
 uv run omniscan edit text "Solo Leveling" "Chapter 1" r0003 "진우야, 도망쳐!"
 uv run omniscan edit kind "Solo Leveling" "Chapter 1" r0007 watermark
@@ -1096,6 +1096,9 @@ uv run omniscan edit cuts "Solo Leveling" "Chapter 1" 2400 4800
 uv run omniscan edit cuts "Solo Leveling" "Chapter 1" --reset
 uv run omniscan edit replace "Solo Leveling" "Jinwoo" "Jin-Woo" --word --ignore-case --dry-run
 uv run omniscan edit replace "Solo Leveling" "Jinwoo" "Jin-Woo" --word --ignore-case --chapter "Chapter 1"
+uv run omniscan edit check "Solo Leveling" "Chapter 1" r0003 r0004
+uv run omniscan edit check "Solo Leveling" "Chapter 1" --all
+uv run omniscan edit check "Solo Leveling" "Chapter 1" r0004 --uncheck
 uv run omniscan edit undo "Solo Leveling" "Chapter 1"
 uv run omniscan edit redo "Solo Leveling" "Chapter 1"
 ```
@@ -1112,6 +1115,7 @@ uv run omniscan edit redo "Solo Leveling" "Chapter 1"
 | `revert` | drop a region's hand edits (a drawn region is removed), or with `--english` its hand-written line |
 | `cuts` | show or set where the exported images split; `--reset` goes back to one image per slice |
 | `replace` | find and replace across the English lines of the whole series (`--chapter` for some chapters; `--source` for the source texts); `--word` whole words, `--ignore-case` any case (the replacement takes each match's case: JINWOO → JIN-WOO), `--regex` a regular expression (`\1` … in the replacement), `--dry-run` lists the changes only; every change is a hand edit, one undo step per chapter |
+| `check` | mark lines checked (`--all` every region, `--uncheck` to unmark): their source and English as they are now are approved, and a later change to either unchecks them; `show` lists each line's status (todo, edited, checked) |
 | `undo`, `redo` | take back the last hand edit of the chapter, or make the last undone one again (see "Undo and redo" in the Studio section) |
 
 A missing chapter artifact or region, a box outside the strip or a cut outside it exits 2 with the reason;
@@ -1678,6 +1682,14 @@ shows one raw page at a time with every text region as a box:
   every change; *Replace all* (only after a preview of the same rule) records them as hand edits — kept by
   every re-run and learned from — as one undo step per chapter. Watermarks are never touched. Same as
   `omniscan edit replace`.
+- **Checked lines.** *Mark line checked* approves the selected line — its source text and English as they are
+  now — for proofreading: the region list shows it as `checked` (green). Changing either one (by hand, or a
+  re-run whose machine line differs) makes it unchecked again, so what is checked is always what will be
+  lettered; moving the box, setting a speaker or lettering keeps the check, and deleting the region drops it.
+  Every line is `todo`, `edited` (a hand edit since the last check) or `checked`; the same status is in
+  `omniscan edit show` / `check` and the desktop Studio. A check is an undo step like any edit; checking a line
+  that is already checked as it is, or unchecking one that is not, changes nothing (`edit check` counts only the
+  lines whose status changed).
 - **Undo and redo.** *↶ Undo* (Ctrl+Z) takes back the last edit of the chapter — a box, a source text, an
   English line, a kind, lettering, output cuts, a deletion or a restore — and *↷ Redo* (Ctrl+Shift+Z or
   Ctrl+Y) makes it again; inside a text field the keys undo your typing instead. The same history is shared

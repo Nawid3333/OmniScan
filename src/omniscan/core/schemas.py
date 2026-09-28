@@ -431,6 +431,17 @@ class LayoutEdit(Model):
     hidden: bool = False  # no English lettering for this region at all
 
 
+class LineCheck(Model):
+    """A region's line marked checked by hand (edits.json): a proofreader approved its source text and English as
+    they were then. A later change to either makes the line unchecked again; matched to its region like the other
+    edits (the same id still overlapping `anchor`, else the best-overlapping region)."""
+
+    region_id: str
+    anchor: BBox  # the region's text box when the line was checked
+    source: str  # the region's source text when checked (whitespace collapsed)
+    english: str  # its English line when checked, whitespace collapsed ("" for a region without one)
+
+
 class ChapterEdits(Artifact):
     """edits.json in the chapter work dir: every hand edit of the chapter. Written only by the editing tools
     (web studio, CLI); the stages read it and re-apply it to what they produce, so edits survive re-runs."""
@@ -438,6 +449,7 @@ class ChapterEdits(Artifact):
     regions: list[RegionEdit] = Field(default_factory=list)
     translations: list[TranslationEdit] = Field(default_factory=list)
     layout: list[LayoutEdit] = Field(default_factory=list)
+    checked: list[LineCheck] = Field(default_factory=list)  # lines a proofreader approved (per-line status)
     # Output cuts: the strip rows where the exported images split, set by hand (sorted, inside the strip);
     # None = one image per slice. Filtered slices stay out of the output either way.
     cuts: list[int] | None = None

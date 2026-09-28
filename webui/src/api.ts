@@ -455,13 +455,23 @@ export interface EditHistory {
   redo: number;
 }
 
+/** One line a proofreader approved: its source text and English when it was checked (edits.json). */
+export interface LineCheck {
+  region_id: string;
+  anchor: BBox;
+  source: string;
+  english: string;
+}
+
 export interface ChapterEdits {
   regions: RegionEdit[];
   translations: TranslationEdit[];
   layout?: LayoutEdit[];
+  checked?: LineCheck[]; // the raw checks; `checked_region_ids` says which still hold
   deleted_regions: Region[];
   edited_region_ids: string[];
   manual_translation_ids: string[];
+  checked_region_ids?: string[]; // lines a proofreader approved (their source and English unchanged since)
   history?: EditHistory;
 }
 
@@ -506,6 +516,16 @@ export async function replaceText(
 /** Undo the last hand edit (an import counts as one) or redo the last undone one; the edits afterwards. */
 export async function stepEdits(series: string, chapter: string, step: "undo" | "redo"): Promise<ChapterEdits> {
   return postJson<ChapterEdits>(`${chapterBase(series, chapter)}/edits/${step}`, {});
+}
+
+/** Mark regions' lines checked (their source and English as they are now) or unchecked; one undo step. */
+export async function setChecked(
+  series: string,
+  chapter: string,
+  regionIds: string[],
+  checked: boolean,
+): Promise<ChapterEdits> {
+  return postJson<ChapterEdits>(`${chapterBase(series, chapter)}/checked`, { region_ids: regionIds, checked });
 }
 
 /** Change a region's kind, text box, bubble box and/or source text (recorded in edits.json). */
