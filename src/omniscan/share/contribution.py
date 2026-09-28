@@ -379,7 +379,8 @@ def build(
         raise ShareOptOutError(
             "this machine is opted out of sharing ([share] enabled = false in config.toml)"
         )
-    if not series_config(cfg, series.library_dir).share.enabled:
+    series_cfg = series_config(cfg, series.library_dir)
+    if not series_cfg.share.enabled:
         raise ShareOptOutError(f"{series.series} is opted out of sharing ([share] enabled = false)")
     salt = install_salt(cfg.paths.work_root)
     order = {name: i for i, name in enumerate(series.chapters())}
@@ -393,6 +394,7 @@ def build(
     contribution = Contribution(
         app_version=str(current_version()),
         series_id=digest(series.series, salt),
+        target_lang=series_cfg.translate.target_lang,
         chapters=contributed,
         glossary=locked_terms(series),
     )

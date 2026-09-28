@@ -14,27 +14,29 @@ from dataclasses import dataclass
 from typing import Any
 
 from omniscan.core.schemas import GlossaryEntry, Region
-from omniscan.translate.languages import region_language, source_language
+from omniscan.translate.languages import honorifics, region_language, source_language, target_language
 from omniscan.translate.prompts import glossary_subset, source_text
 
 
-def judge_system(lang: str) -> str:
-    """The judge system prompt for `lang`'s source language; "ko" is the tuned original."""
+def judge_system(lang: str, target: str = "en") -> str:
+    """The judge system prompt for `lang`'s source language into `target`; "ko" into "en" is the tuned
+    original."""
     sl = source_language(lang)
+    tl = target_language(target)
     return (
-        f"You are the editor of an official English release of a {sl.name} {sl.work}. For every "
-        f"numbered region you get the {sl.name} source text and one or more candidate English "
+        f"You are the editor of an official {tl.name} release of a {sl.name} {sl.work}. For every "
+        f"numbered region you get the {sl.name} source text and one or more candidate {tl.name} "
         'translations labelled A, B, C. Decide per region: "pick" the best candidate unchanged; '
         '"merge" to combine the best parts of the candidates into one line; or "rewrite" to write '
         "a better line yourself when every candidate is wrong or unnatural. Judge the meaning "
         f"against the {sl.name} source, not by how many candidates agree. Write natural, idiomatic "
-        "English suited to comic lettering: concise, in the character's voice, one continuous line "
-        f"without manual line breaks, no translator notes. {sl.honorifics}For a region of "
-        'kind "sfx" (a sound effect) give the English sound effect an official release would letter: '
-        "one short, punchy onomatopoeia such as BOOM, THUD, WHOOSH or BA-DUMP, never a description of "
+        f"{tl.name} suited to comic lettering: concise, in the character's voice, one continuous line "
+        f"without manual line breaks, no translator notes. {honorifics(sl, tl)}For a region of "
+        f'kind "sfx" (a sound effect) give the {tl.name} sound effect an official release would letter: '
+        f"one short, punchy onomatopoeia such as {tl.sfx_examples}, never a description of "
         'the sound; a repeated sound stays repeated. Entries under "Glossary (binding)" are '
         "mandatory: whenever a source term appears"
-        f"{sl.particle_hint}, its target must appear in your English exactly as written. If a region "
+        f"{sl.particle_hint}, its target must appear in your {tl.name} exactly as written. If a region "
         'has "problems", your earlier answer was rejected: fix exactly those problems (each missing '
         "binding target must appear verbatim in your text) and answer again. Answer with JSON only, in "
         'exactly this shape: {"judgements":[{"id":"r0001","decision":"pick","pick":"A",'
@@ -86,9 +88,14 @@ def label_for(index: int) -> str:
 
 
 def judge_messages(
-    items: Sequence[JudgeItem], entries: Sequence[GlossaryEntry], *, story_summary: str | None = None
+    items: Sequence[JudgeItem],
+    entries: Sequence[GlossaryEntry],
+    *,
+    story_summary: str | None = None,
+    target: str = "en",
 ) -> list[dict[str, str]]:
-    """The judge prompt: system message plus story context, glossary sections and the regions list."""
+    """The judge prompt (a release in `target`): system message plus story context, glossary sections and the
+    regions list."""
     subset = glossary_subset([item.region for item in items], entries)
     parts: list[str] = []
     if story_summary:
@@ -101,7 +108,7 @@ def judge_messages(
     regions_json = json.dumps([_region_dict(item) for item in items], ensure_ascii=False, indent=1)
     parts.append(f"Regions (reading order):\n{regions_json}")
     return [
-        {"role": "system", "content": judge_system(region_language([item.region for item in items]))},
+        {"role": "system", "content": judge_system(region_language([item.region for item in items]), target)},
         {"role": "user", "content": "\n\n".join(parts)},
     ]
 

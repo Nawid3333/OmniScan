@@ -111,8 +111,10 @@ def judge_regions(
     story_summary: str | None = None,
     clock: Callable[[], float] = time.perf_counter,
     rate_limit_fallback: bool = False,
+    target: str = "en",
 ) -> tuple[list[FinalLine], JudgeStats]:
-    """Judge the chapter's translatable regions into final lines, asking the model only where needed."""
+    """Judge the chapter's translatable regions into final lines (a release in `target`), asking the model only
+    where needed."""
     start = clock()
     targets = translatable(regions)
     analyses = [_analysis(region, runs, cfg) for region in targets]
@@ -146,7 +148,7 @@ def judge_regions(
         ]
         response = client.chat(
             cfg.model,
-            judge_messages(items, entries, story_summary=story_summary),
+            judge_messages(items, entries, story_summary=story_summary, target=target),
             cloud=(cfg.endpoint == "cloud"),
             format=JUDGE_SCHEMA,
             options={"temperature": cfg.temperature},

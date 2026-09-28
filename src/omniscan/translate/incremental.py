@@ -4,7 +4,9 @@ A key hashes everything the model saw for one region that the stage's own invali
 cover per region: the source text, kind and language, the glossary entries that match it, and the model
 settings. When one bubble's text is fixed by hand, only that bubble is translated and judged again; the
 chapter's other lines are kept word for word (and cost no tokens). The story summary is context, not
-content, and is left out: a new summary of an earlier chapter does not re-translate this one.
+content, and is left out: a new summary of an earlier chapter does not re-translate this one. A release
+language other than English (`[translate] target_lang`) is part of every key; an English key is the same as
+before other languages existed.
 """
 
 from __future__ import annotations
@@ -30,6 +32,11 @@ def _digest(payload: Mapping[str, Any]) -> str:
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
+def _target_key(target: str) -> dict[str, str]:
+    """The release language's part of a key: nothing for English (so every older key stays valid)."""
+    return {} if target == "en" else {"target": target}
+
+
 def _terms(region: Region, entries: Sequence[GlossaryEntry]) -> list[list[str]]:
     """The glossary entries that match the region's text, as sorted (source, target, status) triples."""
     return sorted([e.source, e.target, e.status] for e in glossary_subset([region], entries))
@@ -41,11 +48,12 @@ def translation_key(
     profile: TranslationProfile,
     characters: Sequence[Character] = (),
     page: str | None = None,
+    target: str = "en",
 ) -> str:
     """Key of one region's translation by `profile`; a region with a speaker also depends on the speaker and
     their voice (an unassigned region's key is the same as before speakers existed), and a region sent with its
     page image (`page`: the image's identity, translate/images.py) on that image and the image size (a region
-    sent without one keys as before images existed)."""
+    sent without one keys as before images existed); `target` is the release language."""
     return _digest(
         {
             "text": source_text(region),
@@ -55,6 +63,7 @@ def translation_key(
             "profile": profile.model_dump(exclude={"enabled", "fallback", "chunk_regions", *IMAGE_FIELDS}),
             **voice_key(region, characters),
             **image_key(profile, page),
+            **_target_key(target),
         }
     )
 
@@ -64,8 +73,10 @@ def judge_key(
     runs: Mapping[str, Mapping[str, str]],
     entries: Sequence[GlossaryEntry],
     cfg: JudgeConfig,
+    target: str = "en",
 ) -> str:
-    """Key of one region's judged line: its source, every run's candidate for it, glossary and judge."""
+    """Key of one region's judged line: its source, every run's candidate for it, glossary, judge and release
+    language."""
     return _digest(
         {
             "text": source_text(region),
@@ -76,5 +87,6 @@ def judge_key(
             ),
             "glossary": _terms(region, entries),
             "judge": cfg.model_dump(),
+            **_target_key(target),
         }
     )

@@ -16,8 +16,10 @@ from omniscan.translate.judge_prompts import JUDGE_SYSTEM, judge_system
 from omniscan.translate.languages import (
     SourceLanguage,
     chapter_language,
+    honorifics,
     region_language,
     source_language,
+    target_language,
 )
 from omniscan.translate.prompts import (
     CHAT_JSON_SYSTEM,
@@ -126,10 +128,13 @@ def test_source_language_values_follow_the_card_definitions() -> None:
     zh, en = source_language("zh"), source_language("en")
     assert all(isinstance(sl, SourceLanguage) for sl in (ko, ja, zh, en))
     assert (ko.code, ko.name, ko.work) == ("ko", "Korean", "manhwa")
-    assert ko.honorifics.endswith("unless that reads badly in English. ")
+    english = target_language("en")
+    assert honorifics(ko, english).endswith("unless that reads badly in English. ")
     assert ko.particle_hint == " (with or without a particle such as 이/가/은/는/을/를/의)"
     assert (ja.code, ja.name, ja.work) == ("ja", "Japanese", "manga")
-    assert ja.honorifics.endswith("unless that reads badly in English. ") and "-san" in ja.honorifics
+    assert (
+        honorifics(ja, english).endswith("unless that reads badly in English. ") and "-san" in ja.honorifics
+    )
     assert ja.particle_hint == " (with or without a particle such as は/が/を/に/の)"
     assert (zh.code, zh.name, zh.work) == ("zh", "Chinese", "manhua")
     assert (en.code, en.name, en.work) == ("en", "English", "comic")

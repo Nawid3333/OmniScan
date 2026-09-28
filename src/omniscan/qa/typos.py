@@ -1,4 +1,5 @@
-"""Typos in the English lines: words an English dictionary does not know (pyspellchecker, offline).
+"""Typos in the translated lines: words the release language's dictionary does not know (pyspellchecker, offline;
+English, German or Spanish after the series' `[translate] target_lang`).
 
 The words of the series' glossary targets and character names (voices.toml) count as known, and so do the words
 the editor marked "not a typo" (`typo_words.txt` in the series' library folder, one word per line). Sound effects
@@ -15,6 +16,7 @@ from functools import cache
 
 from spellchecker import SpellChecker
 
+from omniscan.core.config import SeriesConfigError, get_config, series_config
 from omniscan.core.paths import SeriesPaths
 from omniscan.qa.consistency import Line, glossary
 from omniscan.translate.voices import load_voices
@@ -23,6 +25,7 @@ WORDS_FILE = "typo_words.txt"
 MAX_SUGGESTIONS = 3
 
 _WORD = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)*")
+_LETTERS_WORD = re.compile(r"[^\W\d_]+(?:'[^\W\d_]+)*")  # other releases: any letters (ä, ß, ñ, é ...)
 _STRETCHED = re.compile(r"([a-z])\1\1")  # "Nooo", "Ahhh": drawn out on purpose
 _SENTENCE_END = frozenset(".!?…")
 _OPENERS = "\"'“”‘’([{-–—*~ \t\n"  # what may stand before a sentence's first word
@@ -76,14 +79,19 @@ class SeriesTypo:
 
 
 @cache
-def _dictionary() -> SpellChecker:
-    """The English dictionary, loaded once (a few MB of word frequencies)."""
-    return SpellChecker(language="en", distance=1)
+def _dictionary(language: str = "en") -> SpellChecker:
+    """The release language's dictionary, loaded once per language (a few MB of word frequencies)."""
+    return SpellChecker(language=language, distance=1)
 
 
-def _words_of(text: str) -> set[str]:
+def _word_pattern(language: str) -> re.Pattern[str]:
+    """What a word is in lines of `language`: ASCII letters in English, any letters otherwise."""
+    return _WORD if language == "en" else _LETTERS_WORD
+
+
+def _words_of(text: str, language: str = "en") -> set[str]:
     """The lower-cased words of a phrase ("Kim Dokja" -> kim, dokja)."""
-    return {word.casefold() for word in _WORD.findall(text.replace("’", "'"))}
+    return {word.lower() for word in _word_pattern(language).findall(text.replace("’", "'"))}
 
 
 def _starts_sentence(text: str, start: int) -> bool:
@@ -95,11 +103,13 @@ def _starts_sentence(text: str, start: int) -> bool:
 class TypoChecker:
     """Finds the words of English lines that neither the dictionary nor the allowed words know."""
 
-    def __init__(self, allowed: Iterable[str] = ()) -> None:
-        """`allowed`: extra known words (any case; phrases are split into words)."""
+    def __init__(self, allowed: Iterable[str] = (), language: str = "en") -> None:
+        """`allowed`: extra known words (any case; phrases are split into words); `language`: the release's."""
+        self._language = language
+        self._word = _word_pattern(language)
         self._allowed = set(DEFAULT_WORDS)
         for phrase in allowed:
-            self._allowed |= _words_of(phrase)
+            self._allowed |= _words_of(phrase, language)
         self._verdicts: dict[str, bool] = {}
 
     def _known(self, word: str) -> bool:
@@ -113,7 +123,7 @@ class TypoChecker:
     def _judge(self, word: str) -> bool:
         if word in self._allowed or word in _IRREGULAR or _STRETCHED.search(word):
             return True
-        dictionary = _dictionary()
+        dictionary = _dictionary(self._language)
         if dictionary.known([word]):
             return True
         if "'" not in word:
@@ -131,9 +141,9 @@ class TypoChecker:
         shouting = text.upper() == text  # an all-caps line: its capitals say nothing about names
         seen: set[str] = set()
         typos: list[Typo] = []
-        for match in _WORD.finditer(text):
+        for match in self._word.finditer(text):
             word = match.group()
-            key = word.casefold()
+            key = word.lower()
             if len(word) < 2 or key in seen:
                 continue
             capital = not shouting and word[0].isupper()
@@ -146,7 +156,7 @@ class TypoChecker:
 
     def suggestions(self, word: str) -> tuple[str, ...]:
         """The dictionary's closest words to `word`, most common first (at most MAX_SUGGESTIONS)."""
-        dictionary = _dictionary()
+        dictionary = _dictionary(self._language)
         candidates = (dictionary.candidates(word) or set()) - {word}
         ranked = sorted(candidates, key=lambda c: (-dictionary.word_usage_frequency(c), c))
         return tuple(ranked[:MAX_SUGGESTIONS])
@@ -158,14 +168,14 @@ def series_words(series: SeriesPaths) -> list[str]:
     if not path.is_file():
         return []
     lines = (line.strip() for line in path.read_text(encoding="utf-8").splitlines())
-    return sorted({line.casefold() for line in lines if line and not line.startswith("#")})
+    return sorted({line.lower() for line in lines if line and not line.startswith("#")})
 
 
 def allow_word(series: SeriesPaths, word: str) -> list[str]:
     """Mark a word "not a typo" for the whole series and return the series' list; ValueError for no single word.
     The series' library folder must exist (FileNotFoundError otherwise: never creates a series)."""
-    words = _words_of(word)
-    if len(words) != 1 or _WORD.fullmatch(word.strip().replace("’", "'")) is None:
+    words = _words_of(word, "any")  # a word of any release language (Straße, año)
+    if len(words) != 1 or _LETTERS_WORD.fullmatch(word.strip().replace("’", "'")) is None:
         raise ValueError(f"not a single word: {word!r}")
     wanted = sorted(set(series_words(series)) | words)
     path = series.library_dir / WORDS_FILE
@@ -190,9 +200,18 @@ def allowed_words(series: SeriesPaths) -> set[str]:
     return allowed
 
 
+def release_language(series: SeriesPaths) -> str:
+    """The series' release language (`[translate] target_lang`); English when its series.toml is broken (the
+    stages report that)."""
+    try:
+        return series_config(get_config(), series.library_dir).translate.target_lang
+    except SeriesConfigError:
+        return "en"
+
+
 def checker_for(series: SeriesPaths) -> TypoChecker:
-    """A checker that knows the series' own words (allowed_words)."""
-    return TypoChecker(allowed_words(series))
+    """A checker in the series' release language that knows the series' own words (allowed_words)."""
+    return TypoChecker(allowed_words(series), release_language(series))
 
 
 def series_typos(lines: Sequence[Line], checker: TypoChecker) -> list[SeriesTypo]:

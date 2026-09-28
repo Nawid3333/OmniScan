@@ -17,6 +17,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, SecretStr, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from omniscan.core.schemas import TargetLang
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 USER_CONFIG_DIR = Path.home() / ".config" / "omniscan"
 DEFAULT_TOML = REPO_ROOT / "config" / "default.toml"
@@ -124,6 +126,12 @@ class OcrConfig(BaseModel):
     )
     crop_batch_size: int = 16  # region crops per forward pass of a crop-reading engine
     vl_max_new_tokens: int = 192  # paddleocr_vl: longest text it may generate for one region
+
+
+class TranslateConfig(BaseModel):
+    """The release: which language the translation, the judge and the lettering are in (X5 in docs/ROADMAP.md)."""
+
+    target_lang: TargetLang = "en"
 
 
 class InpaintConfig(BaseModel):
@@ -237,6 +245,7 @@ class Config(BaseSettings):
     detect: DetectConfig = DetectConfig()
     ollama: OllamaConfig = OllamaConfig()
     ocr: OcrConfig = OcrConfig()
+    translate: TranslateConfig = TranslateConfig()
     inpaint: InpaintConfig = InpaintConfig()
     typeset: TypesetConfig = TypesetConfig()
     sfx: SfxConfig = SfxConfig()
@@ -302,6 +311,7 @@ SERIES_SECTIONS = (
     "slicer",
     "detect",
     "ocr",
+    "translate",
     "inpaint",
     "typeset",
     "sfx",

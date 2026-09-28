@@ -8,14 +8,16 @@ from collections.abc import Sequence
 from pathlib import Path
 
 
-def _comic_info_xml(page_count: int, *, title: str | None, series: str | None, number: str | None) -> bytes:
+def _comic_info_xml(
+    page_count: int, *, title: str | None, series: str | None, number: str | None, language: str = "en"
+) -> bytes:
     """Serialise a ComicInfo.xml with the given metadata (PageCount and LanguageISO are always present)."""
     root = ET.Element("ComicInfo")
     for tag, value in (("Title", title), ("Series", series), ("Number", number)):
         if value is not None:
             ET.SubElement(root, tag).text = value
     ET.SubElement(root, "PageCount").text = str(page_count)
-    ET.SubElement(root, "LanguageISO").text = "en"
+    ET.SubElement(root, "LanguageISO").text = language
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
 
@@ -26,6 +28,7 @@ def pack_cbz(
     title: str | None = None,
     series: str | None = None,
     number: str | None = None,
+    language: str = "en",
 ) -> None:
     """Write a CBZ (a zip file, stored WITHOUT compression: zipfile.ZIP_STORED — JPEGs are already compressed).
     Entries, in this order: every image as f"{i:04d}{path.suffix.lower()}" for i = 1..N in the order given (never
@@ -33,7 +36,7 @@ def pack_cbz(
     xml.etree.ElementTree and serialised with ET.tostring(root, encoding="utf-8", xml_declaration=True); root tag
     "ComicInfo"; children in exactly this order, each only if applicable: "Title" (if title is not None),
     "Series" (if series is not None), "Number" (if number is not None), "PageCount" (always, text = str(N)),
-    "LanguageISO" (always, text = "en").
+    "LanguageISO" (always, text = `language`: the release language's ISO 639-1 code).
     Raises ValueError("no images to pack") if images is empty (dest is not created). Creates dest.parent if
     missing. Atomic: write to dest.with_suffix(dest.suffix + ".tmp"), then Path.replace(dest); on ANY exception
     remove the .tmp file (if it exists) and re-raise, leaving no partial dest."""
@@ -47,7 +50,7 @@ def pack_cbz(
                 zf.write(image, f"{i:04d}{image.suffix.lower()}")
             zf.writestr(
                 "ComicInfo.xml",
-                _comic_info_xml(len(images), title=title, series=series, number=number),
+                _comic_info_xml(len(images), title=title, series=series, number=number, language=language),
             )
         tmp.replace(dest)
     except BaseException:

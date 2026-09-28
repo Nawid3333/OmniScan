@@ -31,13 +31,15 @@ def judge_chapter(
     story_summary: str | None = None,
     rate_limit_fallback: bool = False,
     reuse: bool = False,
+    target: str = "en",
 ) -> tuple[Literal["done", "skipped"], FinalArtifact | None, JudgeStats | None]:
     """Judge one chapter's candidate runs into `final.json` (skipped when it exists, unless forced); the
     returned artifact is final.json's, hand-written lines included.
 
     Every line is stamped with its key (translate/incremental.py). With `reuse`, the judge's previous line
     of a region whose key still matches — same source, same candidates, same glossary, same judge — is
-    kept, and only the other regions are judged (`stats.reused` counts the kept ones)."""
+    kept, and only the other regions are judged (`stats.reused` counts the kept ones). `target` is the release
+    language (`[translate] target_lang`)."""
     output = paths.artifact("final.json")
     if output.is_file() and not force:
         return "skipped", None, None
@@ -47,7 +49,7 @@ def judge_chapter(
     runs = _load_runs(paths, run_ids)
     artifact = RegionsArtifact.load(ocr_path)
     targets = translatable(artifact.regions)
-    keys = {region.id: judge_key(region, runs, entries, cfg) for region in targets}
+    keys = {region.id: judge_key(region, runs, entries, cfg, target) for region in targets}
     kept = _reusable(paths, keys) if reuse else {}
     lines, stats = judge_regions(
         client,
@@ -57,6 +59,7 @@ def judge_chapter(
         entries,
         story_summary=story_summary,
         rate_limit_fallback=rate_limit_fallback,
+        target=target,
     )
     judged = {line.region_id: line for line in lines}
     lines = [
