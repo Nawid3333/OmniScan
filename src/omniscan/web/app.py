@@ -44,6 +44,7 @@ from omniscan.core.schemas import (
     RegionsArtifact,
     SeriesMemory,
     SlicesArtifact,
+    TermType,
 )
 from omniscan.detect.on_demand import Found, find_on_page_now
 from omniscan.edits import store as edit_store
@@ -51,6 +52,7 @@ from omniscan.edits.replace import FindReplace, apply_changes
 from omniscan.edits.replace import plan as replace_plan
 from omniscan.export.segments import cut_crossings
 from omniscan.filter.decide import effective_decision, restore
+from omniscan.glossary import edit as glossary_edit
 from omniscan.glossary.match import find_terms, term_present
 from omniscan.glossary.store import GlossaryStore
 from omniscan.inpaint.patches import load_patches
@@ -94,6 +96,28 @@ class RuleBody(Model):
     """Body of the learned-rule switch PUT request."""
 
     enabled: bool
+
+
+class TermBody(Model):
+    """Body of the glossary POST request: a term typed by hand."""
+
+    source: str
+    target: str
+    type: TermType = "other"
+    status: Literal["proposed", "locked", "rejected"] = "locked"
+    notes: str | None = None
+    aliases: list[str] = Field(default_factory=list)
+
+
+class TermChangeBody(Model):
+    """Body of the glossary PATCH request: every field left out stays; notes "" clears them."""
+
+    source: str | None = None
+    target: str | None = None
+    type: TermType | None = None
+    status: Literal["proposed", "locked", "rejected"] | None = None
+    notes: str | None = None
+    aliases: list[str] | None = None
 
 
 class TranslateBody(Model):
@@ -1075,6 +1099,45 @@ def create_app(
     def get_glossary(series: str) -> list[dict[str, object]]:
         """Every glossary entry of the series in store order ([] when series.db is missing)."""
         return [entry.model_dump(mode="json") for entry in glossary_entries(series_paths(series))]
+
+    @app.post("/api/series/{series}/glossary", status_code=201)
+    async def post_glossary(series: str, request: Request) -> dict[str, object]:
+        """Add a term by hand (locked unless the body says otherwise); 409 when its source is already in the
+        glossary, 422 for empty words, 404 for a series not in the library."""
+        body = await json_body(request, TermBody)
+        try:
+            entry = glossary_edit.add_term(series_paths(series), **body.model_dump())
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except glossary_edit.DuplicateTermError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except glossary_edit.TermError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return entry.model_dump(mode="json")
+
+    @app.patch("/api/series/{series}/glossary/{entry_id}")
+    async def patch_glossary(series: str, entry_id: int, request: Request) -> dict[str, object]:
+        """Correct, lock or reject an entry (new words make it the user's); 404 for no such entry, 409/422 as
+        for adding."""
+        body = await json_body(request, TermChangeBody)
+        try:
+            entry = glossary_edit.update_term(series_paths(series), entry_id, **body.model_dump())
+        except (FileNotFoundError, KeyError) as exc:
+            raise HTTPException(status_code=404, detail=f"no glossary entry {entry_id}") from exc
+        except glossary_edit.DuplicateTermError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except glossary_edit.TermError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return entry.model_dump(mode="json")
+
+    @app.delete("/api/series/{series}/glossary/{entry_id}")
+    def delete_glossary(series: str, entry_id: int) -> dict[str, object]:
+        """Delete an entry and return what it was; 404 for no such entry."""
+        try:
+            entry = glossary_edit.remove_term(series_paths(series), entry_id)
+        except (FileNotFoundError, KeyError) as exc:
+            raise HTTPException(status_code=404, detail=f"no glossary entry {entry_id}") from exc
+        return entry.model_dump(mode="json")
 
     @app.get("/api/series/{series}/chapters/{chapter}/glossary-hits")
     def get_glossary_hits(series: str, chapter: str) -> dict[str, dict[str, list[dict[str, object]]]]:

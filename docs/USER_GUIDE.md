@@ -599,7 +599,8 @@ patterns = [
 
 ### `omniscan glossary list`
 
-Print the glossary of a series as a table (source, target, type, status, count).
+Print the glossary of a series as a table (id, source, target, type, status, count). The id is what
+`glossary set`, `lock`, `reject` and `remove` take (they also take the exact source text).
 
 | Argument/option | Meaning |
 |---|---|
@@ -612,6 +613,35 @@ what creates it.
 ```bash
 uv run omniscan glossary list DemoSeries
 ```
+
+### `omniscan glossary add` / `set` / `lock` / `reject` / `remove`
+
+Change the glossary by hand, one term at a time, without the `glossary.yaml` round trip. The web UI's
+**Glossary** view does the same (see "Web UI").
+
+```bash
+uv run omniscan glossary add DemoSeries 성진우 "Sung Jinwoo" --type person --alias 진우
+uv run omniscan glossary add DemoSeries 게이트 Gate --proposed          # a suggestion, not binding
+uv run omniscan glossary set DemoSeries 헌터 --target Hunters --notes "always plural"
+uv run omniscan glossary lock DemoSeries 헌터 12                        # ids or source texts, several at once
+uv run omniscan glossary reject DemoSeries 7
+uv run omniscan glossary remove DemoSeries 게이트
+```
+
+| Command | What it does |
+|---|---|
+| `add SERIES SOURCE TARGET` | a new term, **locked** (every translation and the judge must use its English) unless `--proposed`; `--type`, `--notes`, `--alias` (repeatable: other spellings of the source) |
+| `set SERIES TERM` | correct an entry: `--source`, `--target`, `--type`, `--notes` (`""` clears), `--alias` (replaces the list; `--alias ""` clears it) |
+| `lock SERIES TERM...` | make entries binding, e.g. after reviewing `glossary propose`'s suggestions |
+| `reject SERIES TERM...` | keep entries out of every prompt; `propose` and `reference` never suggest them again |
+| `remove SERIES TERM` | delete an entry; a later `propose` may suggest it again, which `reject` prevents |
+
+`TERM` is an id from `glossary list` or the entry's exact source text. Words typed by hand make the entry
+yours (`origin = "user"`): a later `propose` or `reference` run never overwrites them and reports a
+disagreement as a conflict instead. Locking or rejecting alone keeps the entry's origin. Every change
+re-exports `glossary.yaml`, so an older copy of it cannot undo the change on the next `glossary import`.
+The next `translate`/`judge` redoes just the lines holding a changed term. Exit 2 for an empty source or
+English, a source already in the glossary, an unknown term or a series not in the library.
 
 ### `omniscan glossary export`
 
@@ -1873,7 +1903,9 @@ together. Open the local URL Vite prints and pick a series and chapter.
 The chapter views (Studio, Slicer, OCR, Translation, Reader, Inpaint, Layout, Edit) need a chapter; the
 **Filtered** view only needs a series and shows its every chapter that has filtered items; the **Learned**
 view only needs a series too (see "Learning from your corrections"), and so does the **Consistency** view (the
-report of `omniscan consistency`; each place opens the Studio on that region). The **Studio**
+report of `omniscan consistency`; each place opens the Studio on that region), and the **Glossary** view: the
+series' terms with a status filter and a search box, a form to add a term (locked unless you untick it), and
+Edit / Lock / Reject / Propose / Remove on each row, the same changes as `omniscan glossary add|set|lock|reject|remove`. The **Studio**
 is the editor (see "Studio: editing by hand"); the other views are for checking one stage's output.
 
 The Slicer view stacks the raw pages and overlays:
@@ -1934,10 +1966,10 @@ filtered. Restore appends a `restored` decision to the chapter's `filter.json` �
 restored item can be re-filtered only by re-running `omniscan filter run`. The row turns green without
 a refetch when the restore succeeds; a failure shows the API's error next to the button.
 
-Only the Studio, the Edit view, the run buttons, the Filtered view's Restore button and the Learned view's
-rule switches write anything: edits go to `edits.json` (and are applied to `ocr.json`/`final.json`), a
-restore appends to `filter.json`, a rule switch to the series' `memory.json`, and a run button queues
-pipeline stages.
+Only the Studio, the Edit view, the run buttons, the Filtered view's Restore button, the Learned view's
+rule switches and the Glossary view write anything: edits go to `edits.json` (and are applied to
+`ocr.json`/`final.json`), a restore appends to `filter.json`, a rule switch to the series' `memory.json`, a
+glossary change to `series.db` (and `glossary.yaml`), and a run button queues pipeline stages.
 
 ## Resuming and re-running
 
