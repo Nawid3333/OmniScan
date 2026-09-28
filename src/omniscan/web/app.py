@@ -24,12 +24,14 @@ from PIL import Image
 from pydantic import Field, ValidationError
 
 from omniscan.cleanup import store as cleanup_store
+from omniscan.cleanup.lama_now import clean_with_lama
 from omniscan.core.config import Config, LearnConfig, SeriesConfigError, get_secrets, series_config
 from omniscan.core.paths import IMAGE_SUFFIXES, ChapterPaths, SeriesPaths, list_images, natural_key
 from omniscan.core.schemas import (
     RGB,
     BBox,
     CleanupMethod,
+    CleanupPatch,
     FilterArtifact,
     FilterDecision,
     FinalArtifact,
@@ -230,6 +232,7 @@ def create_app(
     run_worker: bool = False,
     chat_client: Callable[[Config], ChatClient] = ollama_client,
     ui_dir: Path | None = None,
+    lama_cleaner: Callable[..., CleanupPatch] = clean_with_lama,
 ) -> FastAPI:
     """Build the debug API app: series/chapter browsing + ingest/slices artifacts + raw pages.
 
@@ -237,8 +240,9 @@ def create_app(
     a background thread that drains `queue.db`, so `POST .../run` requests actually execute instead of
     only ever sitting queued; tests and other embedders that just want to read existing artifacts
     should leave it `False` (the default here) to avoid touching the GPU/queue at all. `chat_client`
-    builds the LLM client of the on-demand translation route (tests pass a fake). `ui_dir` (the built web UI,
-    see `built_ui`) is served at `/`, so the API and the Studio share one address.
+    builds the LLM client of the on-demand translation route (tests pass a fake), `lama_cleaner` cleans a
+    "lama" brush stroke (cleanup/lama_now.py; tests pass a fake). `ui_dir` (the built web UI, see `built_ui`)
+    is served at `/`, so the API and the Studio share one address.
     """
 
     @asynccontextmanager
@@ -705,16 +709,25 @@ def create_app(
 
     @app.post("/api/series/{series}/chapters/{chapter}/cleanup", status_code=201)
     async def add_cleanup(series: str, chapter: str, request: Request) -> dict[str, object]:
-        """Clean one brush stroke (fill, inpaint, clone or restore); export applies it after every automatic
-        patch. Returns the new patch."""
+        """Clean one brush stroke (fill, inpaint, clone, restore or lama); export applies it after every automatic
+        patch. Returns the new patch. "lama" loads the LaMa model for the stroke (503 when it cannot)."""
         body = await json_body(request, CleanupBody)
         paths = chapter_paths(series, chapter)
+        mask = run_edit(lambda: decode_mask(body.mask, body.box))
+        if body.method == "lama":
+            try:
+                patch = await run_in_threadpool(
+                    run_edit, lambda: lama_cleaner(paths, cfg, page=body.page, box=body.box, mask=mask)
+                )
+            except (ImportError, RuntimeError, OSError) as exc:  # no torch, a failed download, no GPU
+                raise HTTPException(status_code=503, detail=f"LaMa is not available: {exc}") from exc
+            return patch.model_dump(mode="json")
         patch = run_edit(
             lambda: cleanup_store.add_patch(
                 paths,
                 page=body.page,
                 box=body.box,
-                mask=decode_mask(body.mask, body.box),
+                mask=mask,
                 method=body.method,
                 color=body.color,
                 offset=body.offset,

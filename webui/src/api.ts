@@ -586,7 +586,7 @@ export async function translateRegions(
   });
 }
 
-export type CleanupMethod = "fill" | "inpaint" | "clone" | "restore";
+export type CleanupMethod = "fill" | "inpaint" | "clone" | "restore" | "lama";
 
 export interface CleanupPatch {
   id: string;
