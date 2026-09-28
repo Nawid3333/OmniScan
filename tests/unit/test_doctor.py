@@ -408,6 +408,16 @@ def test_torch_build_names_the_installed_backend(monkeypatch: pytest.MonkeyPatch
 
 @pytest.mark.gpu
 def test_torch_gpu_real() -> None:
+    import torch
+
+    from omniscan.core.config import get_config
+    from omniscan.gpu.device import resolve_device
+    from tests.gpu_helpers import device_name
+
     result = doctor.check_torch_gpu()
     assert result.status == "OK"
-    assert "gfx1201" in result.detail
+    device = resolve_device(get_config().gpu.device)
+    if device.type in ("cuda", "xpu"):  # the configured card, not the integrated GPU enumerated first
+        assert device_name(device) in result.detail
+    if torch.version.hip:  # AMD also names the architecture (the reference PC: gfx1201)
+        assert torch.cuda.get_device_properties(device).gcnArchName in result.detail

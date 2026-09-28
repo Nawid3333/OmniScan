@@ -19,6 +19,7 @@ from omniscan.detect.model import Detector
 from omniscan.gpu.device import resolve_device
 from omniscan.models.catalog import ModelEntry
 from omniscan.models.store import MARKER_NAME
+from tests.gpu_helpers import empty_cache, synchronize
 
 _CATALOG_SHA = "b" * 64
 
@@ -314,8 +315,6 @@ def test_load_without_models_dir_keeps_hub_behaviour_and_no_warning(
 
 @pytest.mark.gpu
 def test_real_detector_detects_on_gpu() -> None:
-    if not torch.cuda.is_available():
-        pytest.skip("no GPU")
     device = resolve_device()
     detector = Detector.load(DetectConfig(), device)
     # fp32 on every device: MIOpen's fp16 conv fails at small batch sizes on this stack
@@ -339,14 +338,14 @@ def test_real_detector_detects_on_gpu() -> None:
     # throughput for the report (printed, not asserted)
     batch = [torch.randint(0, 256, (3, 1000, 1000), dtype=torch.uint8, device=device) for _ in range(8)]
     detector.detect(batch)  # warm-up
-    torch.cuda.synchronize(device)
+    synchronize(device)
     t0 = time.perf_counter()
     detector.detect(batch)
-    torch.cuda.synchronize(device)
+    synchronize(device)
     dt = time.perf_counter() - t0
     print(f"\ndetect fp32: batch of 8: {8 / dt:.1f} tiles/s ({dt * 1000:.0f} ms)")
     # release the cached blocks so later GPU tests (e.g. the VRAM manager's free-memory check) start clean
-    torch.cuda.empty_cache()
+    empty_cache(device)
 
 
 @pytest.mark.gpu

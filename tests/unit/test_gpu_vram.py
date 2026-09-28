@@ -232,9 +232,8 @@ def test_evicts_ollama_only_below_the_load_margin() -> None:
 
 
 @pytest.mark.gpu
+@pytest.mark.gpu_backend("cuda", "xpu")  # MPS reports no free memory (unified memory)
 def test_real_gpu_release_returns_memory() -> None:
-    if not torch.cuda.is_available():
-        pytest.skip("no GPU")
     vm = VramManager(resolve_device(), ollama_url=None)
     vm.register("big", lambda d: {"t": torch.empty(2 * 2**30, dtype=torch.uint8, device=d)}, est_gib=2)
     before = vm.free_gib()

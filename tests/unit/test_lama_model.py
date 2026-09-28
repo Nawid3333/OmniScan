@@ -15,6 +15,7 @@ from omniscan.core.config import InpaintConfig
 from omniscan.inpaint.lama import LamaInpainter
 from omniscan.inpaint.lama_pipeline import dilate_mask, window_origin
 from tests.fixtures.korean_pages import make_korean_page
+from tests.gpu_helpers import empty_cache, synchronize
 
 PAGE = (800, 1400)
 
@@ -121,9 +122,9 @@ def test_real_lama_removes_text_on_a_gradient_page(lama_models_dir: Path) -> Non
     print(f"\nLaMa mean abs diff inside the mask: {value:.2f} (of 255)")
     assert value < 15.0
 
-    torch.cuda.synchronize(device)
+    synchronize(device)
     t0 = time.perf_counter()
     inpainter.inpaint(window, mask)
-    torch.cuda.synchronize(device)
+    synchronize(device)
     print(f"LaMa steady state: {(time.perf_counter() - t0) * 1000:.0f} ms per 512x512 call")
-    torch.cuda.empty_cache()
+    empty_cache(device)

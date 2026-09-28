@@ -82,7 +82,8 @@ Each one ends in something a user can run. Card IDs follow the existing scheme (
   lower Ollama thread/GPU-layer settings per level, and a tray icon to switch levels while a run is going.
 - Next inside X1: other AMD cards (RDNA2/RDNA3 on Linux through PyTorch's ROCm index, other `device-gfx*` extras
   from AMD's index on Windows), and real-hardware smoke runs on NVIDIA/Intel/Apple machines when someone has one
-  (the `gpu`-marked tests still assume a `cuda` device).
+  (the `gpu`-marked tests run on any `cuda`/`xpu`/`mps` device since #39; `gpu_backend(...)` limits the few that
+  need one backend).
 
 ### X2 — Installers and first run
 - One installer per OS (PyInstaller first, Nuitka evaluated): Windows `.exe`, macOS `.dmg` (signed later), Linux

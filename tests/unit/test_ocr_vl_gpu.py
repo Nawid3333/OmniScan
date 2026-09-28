@@ -18,6 +18,7 @@ from omniscan.core.config import OcrConfig
 from omniscan.gpu.device import resolve_device
 from omniscan.models.resolve import local_model_source
 from omniscan.ocr.crop_readers import PaddleOcrVlReader
+from tests.gpu_helpers import empty_cache
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _REPO = "PaddlePaddle/PaddleOCR-VL-1.6"
@@ -79,7 +80,7 @@ def test_paddleocr_vl_reads_rendered_english_crops() -> None:
         wanted = [c.lower() for c in truth if c.isalnum()]
         found = sum(1 for c in wanted if c in text.lower())
         assert found >= 0.6 * len(wanted), f"{text!r} vs {truth!r}: {found}/{len(wanted)} characters"
-    torch.cuda.empty_cache()
+    empty_cache(device)
 
 
 _BATCH_TEXTS = (
@@ -124,4 +125,4 @@ def test_paddleocr_vl_batched_read_matches_and_times_chunk_size_one() -> None:
         assert 0.0 < batch_score <= 1.0 and 0.0 < score <= 1.0
         ratio = SequenceMatcher(None, batch_text, text).ratio()
         assert ratio >= 0.8, f"batched {batch_text!r} vs chunk size 1 {text!r} (similarity {ratio:.2f})"
-    torch.cuda.empty_cache()
+    empty_cache(device)

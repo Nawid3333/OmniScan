@@ -31,11 +31,10 @@ WARMUP, MEASURED = "Chapter 1", "Chapter 2"
 
 
 def test_no_stage_got_slower(tmp_path: Path, request: pytest.FixtureRequest) -> None:
-    import torch  # deferred: the perf tests need the GPU stack
-
-    from omniscan.gpu.device import resolve_device
+    from omniscan.gpu.device import resolve_device  # deferred: the perf tests need the GPU stack
     from omniscan.gpu.groups import build_vram_manager
     from omniscan.pipeline.runner import run_pipeline
+    from tests.gpu_helpers import device_name
 
     root = tmp_path
     cfg = Config(
@@ -67,7 +66,7 @@ def test_no_stage_got_slower(tmp_path: Path, request: pytest.FixtureRequest) -> 
     assert not result.failed, f"pipeline failures: {result.failed}"
     measured = {outcome.stage: outcome.seconds for outcome in result.outcomes[MEASURED]}
     device = resolve_device("auto")
-    key = f"{device.type}:{torch.cuda.get_device_name(device)}" if device.type == "cuda" else device.type
+    key = f"{device.type}:{device_name(device)}" if device.type in ("cuda", "xpu") else device.type
     baseline = load_baselines().get(key, {})
     print("\n" + report(key, measured, baseline))
     if request.config.getoption("--perf-update"):

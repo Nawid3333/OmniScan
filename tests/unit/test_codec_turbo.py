@@ -8,6 +8,7 @@ import torch
 from omniscan.gpu.codec.turbo import TurboCodec
 from omniscan.gpu.device import resolve_device
 from tests.fixtures.images import plain_jpeg, rotated_jpeg
+from tests.gpu_helpers import synchronize
 
 pytest.importorskip("torch")
 
@@ -130,7 +131,7 @@ def test_decode_into_gpu_strip_keeps_large_pages_apart(tmp_path) -> None:
     out = torch.zeros((3, height * len(colors), width), dtype=torch.uint8, device=device)
 
     TurboCodec(device).decode_into(datas, out, [height * i for i in range(len(colors))])
-    torch.cuda.synchronize(device)
+    synchronize(device)
 
     for i, color in enumerate(colors):
         page = out[:, height * i : height * (i + 1)].float()
