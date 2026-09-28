@@ -17,6 +17,7 @@ from omniscan.core.config import OcrConfig
 from omniscan.gpu.device import resolve_device
 from omniscan.models.resolve import local_model_source
 from omniscan.ocr.crop_readers import MangaOcrReader
+from tests.gpu_helpers import empty_cache
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _REPO = "jzhang533/manga-ocr-base-2025"
@@ -89,4 +90,4 @@ def test_manga_ocr_reads_rendered_japanese_crops() -> None:
         wanted = [c for c in truth if not c.isspace()]
         found = sum(1 for c in wanted if c in text)
         assert found >= len(wanted) / 2, f"{text!r} vs {truth!r}: {found}/{len(wanted)} characters"
-    torch.cuda.empty_cache()
+    empty_cache(device)

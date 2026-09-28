@@ -3,7 +3,6 @@
 import time
 
 import pytest
-import torch
 
 from omniscan.core.config import SlicerConfig
 from omniscan.core.schemas import SourceFile
@@ -12,6 +11,7 @@ from omniscan.slicer.bands import find_uniform_bands, row_stats
 from omniscan.slicer.cuts import plan_cuts
 from omniscan.slicer.slice import slice_strip
 from tests.fixtures.strips import art, bubble, solid, stack
+from tests.gpu_helpers import max_memory_allocated, reset_peak_memory, synchronize
 
 W = 720
 
@@ -80,23 +80,22 @@ def test_source_files_overlap() -> None:
 
 @pytest.mark.gpu
 def test_gpu_performance() -> None:
-    if not torch.cuda.is_available():
-        pytest.skip("no GPU")
     cfg = SlicerConfig()
     blocks = []
     for k in range(60):
         blocks.append(art(2420, W, seed=k))
         blocks.append(solid(80, W, (255, 255, 255)))
-    strip = stack(*blocks).to(resolve_device())
+    device = resolve_device()
+    strip = stack(*blocks).to(device)
     assert strip.shape[1] == 150_000
 
     slice_strip(strip, cfg)  # warm-up
-    torch.cuda.synchronize()
-    torch.cuda.reset_peak_memory_stats()
+    synchronize(device)
+    reset_peak_memory(device)
     t0 = time.perf_counter()
     slice_strip(strip, cfg)
-    torch.cuda.synchronize()
+    synchronize(device)
     elapsed = time.perf_counter() - t0
-    peak = torch.cuda.max_memory_allocated()
+    peak = max_memory_allocated(device)
     assert elapsed < 3.0
-    assert peak < 2.5 * 2**30
+    assert peak is None or peak < 2.5 * 2**30  # MPS keeps no peak counter

@@ -87,8 +87,6 @@ def test_deterministic() -> None:
 
 @pytest.mark.gpu
 def test_cuts_on_gpu_match_cpu() -> None:
-    if not torch.cuda.is_available():
-        pytest.skip("no GPU")
     cfg = SlicerConfig()
     strip = stack(
         art(3000, W, 21),

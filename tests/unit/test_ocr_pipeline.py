@@ -16,6 +16,7 @@ from omniscan.gpu.device import resolve_device
 from omniscan.ocr.lines import LineBox
 from omniscan.ocr.model import LineDetector, LineRecognizer
 from omniscan.ocr.pipeline import read_region_crops, read_regions
+from tests.gpu_helpers import empty_cache
 
 
 def region(rid: str, box: tuple[int, int, int, int]) -> Region:
@@ -289,8 +290,6 @@ def _report(
 def test_real_ocr_reads_a_korean_page() -> None:
     from tests.fixtures.korean_pages import make_korean_page, to_regions_artifact
 
-    if not torch.cuda.is_available():
-        pytest.skip("no GPU")
     device = resolve_device()
     detector = LineDetector.load(OcrConfig(), device)
     recognizer = LineRecognizer.load(OcrConfig(), device)
@@ -328,15 +327,13 @@ def test_real_ocr_reads_a_korean_page() -> None:
         engine="test",
     )
     _report("Gaegu", gaegu_truth, gaegu_out, gaegu_metrics, time.perf_counter() - t0)
-    torch.cuda.empty_cache()  # release the cached blocks so later GPU tests start clean
+    empty_cache(device)  # release the cached blocks so later GPU tests start clean
 
 
 @pytest.mark.gpu
 def test_real_ocr_robustness() -> None:
     from tests.fixtures.korean_pages import make_korean_page, to_regions_artifact
 
-    if not torch.cuda.is_available():
-        pytest.skip("no GPU")
     device = resolve_device()
     detector = LineDetector.load(OcrConfig(), device)
     recognizer = LineRecognizer.load(OcrConfig(), device)
@@ -359,4 +356,4 @@ def test_real_ocr_robustness() -> None:
         engine="e",
     )
     assert metrics2["regions_empty"] == metrics2["regions"]  # no text drawn: nothing to read
-    torch.cuda.empty_cache()
+    empty_cache(device)

@@ -29,6 +29,7 @@ from omniscan.inpaint.patches import load_patches, save_patches
 from omniscan.inpaint.stage import InpaintStage
 from tests.fixtures import images
 from tests.fixtures.korean_pages import make_korean_page, to_regions_artifact
+from tests.gpu_helpers import empty_cache
 
 SERIES = "S"
 CHAPTER = "Chapter 1"
@@ -260,4 +261,4 @@ def test_lama_stage_full_path_on_a_korean_page(tmp_path: Path) -> None:
         f"\nLaMa full path: {bad}/{total} truth text pixels differ from clean by > 60 ({100.0 * bad / total:.2f}%)"
     )
     assert bad / total <= 0.05
-    torch.cuda.empty_cache()
+    empty_cache(device)

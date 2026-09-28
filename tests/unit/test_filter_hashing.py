@@ -134,11 +134,9 @@ def test_dhash_tensor_device_independent() -> None:
 
 
 @pytest.mark.gpu
-def test_dhash_tensor_cuda_matches_cpu() -> None:
-    if not torch.cuda.is_available():
-        pytest.skip("no GPU")
+def test_dhash_tensor_gpu_matches_cpu(gpu_device: torch.device) -> None:
     image = torch.randint(0, 256, (3, 200, 400), dtype=torch.uint8)
-    assert dhash_tensor(image) == dhash_tensor(image.to("cuda"))
+    assert dhash_tensor(image) == dhash_tensor(image.to(gpu_device))
 
 
 def test_dhash_tensor_one_row_or_column() -> None:
@@ -159,17 +157,12 @@ def test_dhash_tensor_matches_dhash_on_full_page_crops() -> None:
 
 
 @pytest.mark.gpu
-def test_dhash_tensor_full_page_crop_cuda_matches_cpu() -> None:
+def test_dhash_tensor_full_page_crop_gpu_matches_cpu(gpu_device: torch.device) -> None:
     """Regression (director review): a full-page crop crashed ROCm's antialiased interpolate
     ('Too much shared memory required'); the staged path must run on the GPU and match the CPU."""
-    if not torch.cuda.is_available():
-        pytest.skip("no GPU")
-    from omniscan.gpu.device import resolve_device
-
-    device = resolve_device("auto")
     gen = torch.Generator().manual_seed(5)
     image = torch.randint(0, 256, (3, 2934, 800), dtype=torch.uint8, generator=gen)
-    assert dhash_tensor(image) == dhash_tensor(image.to(device))
+    assert dhash_tensor(image) == dhash_tensor(image.to(gpu_device))
 
 
 def test_dhash_tensor_rejects_wrong_shape() -> None:
