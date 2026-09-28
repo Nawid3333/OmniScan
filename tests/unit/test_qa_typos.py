@@ -101,7 +101,7 @@ def series(cfg: Config) -> SeriesPaths:
     series = SeriesPaths.from_config(cfg, "S")
     paths = series.chapter("Chapter 1")
     paths.raw_dir.mkdir(parents=True)
-    rows = [
+    rows: list[tuple[str, RegionKind, str]] = [
         ("r0001", "bubble_text", "Igris! Grab teh sword"),
         ("r0002", "bubble_text", "Hwaiting!"),
         ("r0003", "sfx", "KRZZHT"),
