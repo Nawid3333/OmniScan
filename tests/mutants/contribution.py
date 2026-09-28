@@ -6,6 +6,31 @@ C = "src/omniscan/share/contribution.py"
 MUTANTS = [
     (
         C,
+        "        if not any(_corrected(region) or region.checked for region in regions):",
+        "        if not any(_corrected(region) for region in regions):",
+        "a page whose lines were only checked is left out",
+    ),
+    (
+        C,
+        "        or not ingest_path.is_file()\n",
+        "        or not ingest_path.is_file() or not (chapter_edits.regions or chapter_edits.translations)\n",
+        "a chapter with only checks is left out",
+    ),
+    (
+        C,
+        '    checked = {region_id for region_id, status in line_statuses(paths).items() if status == "checked"}',
+        "    checked = {check.region_id for check in chapter_edits.checked}",
+        "a stale check counts as verified",
+    ),
+    (C, "        checked=sum(1 for r in regions if r.checked),\n", "", "checked lines not counted"),
+    (
+        "src/omniscan/share/cli.py",
+        '    checked = f"{summary.checked} line(s) checked as right" if summary.checked else ""',
+        '    checked = ""',
+        "the consent line hides the checked lines",
+    ),
+    (
+        C,
         "y0=min(max(box.y0 - page.y0, 0), height),",
         "y0=min(max(box.y0, 0), height),",
         "boxes not moved onto the page",
@@ -142,7 +167,7 @@ MUTANTS = [
     ),
     (
         C,
-        "        if not any(_corrected(region) for region in regions):\n            continue\n",
+        "        if not any(_corrected(region) or region.checked for region in regions):\n            continue\n",
         "",
         "uncorrected pages contributed",
     ),

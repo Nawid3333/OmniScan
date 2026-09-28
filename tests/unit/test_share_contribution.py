@@ -328,6 +328,10 @@ def test_contribute_export_on_the_command_line(
         " 1 OCR text, 1 region type, 1 added box, 1 deleted box, 2 English lines, 1 lettering,"
         " 1 other region edit\n"
     )
+    store.set_checked(series.chapter("Chapter 4"), ["r0002"])  # beside the speaker already set on page 0
+    assert runner.invoke(share_cli.contribute_app, ["export", "S", "--dry-run"]).output.endswith(
+        " 1 other region edit; 1 line(s) checked as right\n"
+    )
     assert not list(tmp_path.glob("*.zip"))
     done = runner.invoke(share_cli.contribute_app, ["export", "S", "-c", "Chapter 1"])
     default = tmp_path / f"omniscan-contribution-{digest('S', install_salt(cfg.paths.work_root))}.zip"
@@ -352,3 +356,33 @@ def test_contribute_export_on_the_command_line(
     (series.library_dir / "series.toml").write_text("[share]\nenabled = false\n", encoding="utf-8")
     out = runner.invoke(share_cli.contribute_app, ["export", "S", "-o", "y.zip"])
     assert out.exit_code == 2 and "opted out of sharing" in out.output and not Path("y.zip").exists()
+
+
+def test_checked_lines_are_contributed_as_verified(cfg: Config) -> None:
+    six = make_chapter(cfg, "Chapter 6")
+    store.set_checked(six, ["r0003"])  # a proofreader approved page 1's first line as it is
+    series = SeriesPaths.from_config(cfg, "S")
+    contribution, pages = build(series, cfg, ["Chapter 6"])
+    (chapter,) = contribution.chapters
+    assert [page.index for page in chapter.pages] == [1] and len(pages) == 1  # checked only, and still in
+    assert [(r.id, r.checked, r.edited, r.english_from) for r in chapter.pages[0].regions] == [
+        ("r0003", True, False, "machine"),
+        ("r0004", False, False, "machine"),
+    ]
+    summary = summarize(contribution)
+    assert (summary.checked, summary.english, summary.ocr_fixes) == (1, 0, 0)
+    assert share_cli.describe(summary) == (
+        "1 chapter(s), 1 page(s), 2 region(s) and 0 glossary term(s); 1 line(s) checked as right"
+    )
+
+
+def test_a_stale_check_does_not_count(cfg: Config) -> None:
+    seven = make_chapter(cfg, "Chapter 7")
+    store.set_checked(seven, ["r0001"])
+    rejudged = FinalArtifact(  # a judge re-run gives r0001 another line: the check no longer holds
+        judge_model="judge",
+        lines=[FinalLine(region_id=rid, text=f"New {rid}", decision="pick") for rid in ("r0001", "r0002")],
+    )
+    store.write_final(seven, rejudged, store.current_regions(seven))
+    contribution, pages = build(SeriesPaths.from_config(cfg, "S"), cfg, ["Chapter 7"])
+    assert contribution.chapters == [] and pages == []

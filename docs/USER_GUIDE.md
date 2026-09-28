@@ -1807,11 +1807,13 @@ there is no upload service yet (it waits for decisions on hosting, the licence o
 `docs/OPEN_QUESTIONS.md` X1-X3).
 
 What the archive holds (`contribution.json` plus JPEG pages):
-- only the pages that carry a hand correction, as the pipeline saw them (the raw page at strip width);
+- only the pages that carry a hand correction or a line you marked checked, as the pipeline saw them (the raw
+  page at strip width) — a checked line says the machine's reading and English were right, which is worth as
+  much to the models as a fix; a check that no longer holds (the text or English changed since) does not count;
 - every region on those pages with the pipeline's output next to yours: the OCR's reading and your text, the
   region type, boxes you added, deleted or redrew (a detected box you drew a new one over is kept, paired with
   your box), the judge's English and your line (typed, a suggestion you kept, or a line you cleared), the
-  speaker, and lettering you set by hand (fonts by file name only);
+  speaker, lettering you set by hand (fonts by file name only), and which lines are checked;
 - the series' locked glossary terms.
 
 What it never holds: file or folder names, paths, the pages' camera or editing metadata (they are re-encoded),

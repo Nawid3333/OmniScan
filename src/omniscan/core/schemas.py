@@ -583,7 +583,8 @@ class ContributionRegion(Model):
     hand, a line never judged); `kind`, `text` and `english` are after the hand edits. A `deleted` region was
     found by the pipeline and removed by hand (a false detection), or replaced by a box drawn over it by hand
     (`replaced_by` names that box: the detector's box was wrong); its fields are the pipeline's. An `english_from`
-    of "typed" with no `english` is a line cleared by hand.
+    of "typed" with no `english` is a line cleared by hand. A `checked` region's line was approved by a
+    proofreader as it is (its LineCheck still holds): the pipeline's output confirmed right.
     """
 
     id: str
@@ -599,6 +600,7 @@ class ContributionRegion(Model):
     deleted: bool = False
     replaced_by: str | None = None  # a deleted region: the id of the hand-drawn box that replaced it
     edited: bool = False  # a hand edit changed the region's box, kind, text or speaker
+    checked: bool = False  # a proofreader approved its source text and English as they are (edits.json)
     machine_english: str | None = None
     english: str | None = None
     english_from: Literal["machine", "suggestion", "typed"] | None = (

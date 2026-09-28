@@ -104,8 +104,8 @@ speaker, so unassigned lines keep their keys. `voices.toml` is an input of the t
 improve, for now as a local zip archive. `build` walks a series' chapters: each current region is paired with the
 pipeline's output (`ocr_auto.json` / `final_auto.json`, or the reading an edit recorded in `auto_text`) and its
 hand edits (matched like the stages re-apply them), deleted pipeline regions — and detections a hand-drawn box
-replaced (`replaced_by`) — are added back as `deleted`, and only pages holding a correction are kept, in page
-pixels (strip resolution). `write_archive` re-encodes those pages from the raw files (Pillow, like the PSD export:
+replaced (`replaced_by`) — are added back as `deleted`, and only pages holding a correction or a still-valid
+line check (`checked`) are kept, in page pixels (strip resolution). `write_archive` re-encodes those pages from the raw files (Pillow, like the PSD export:
 no metadata) and gives every entry the same fixed timestamp; `contribution.json` holds no date. Names never leave
 the machine: the series and chapters are HMAC-SHA256 ids keyed with a random per-install salt
 (`<work_root>/contribution-salt`), fonts are file names. `[share] enabled` (`ShareConfig`) gates `build`: false in

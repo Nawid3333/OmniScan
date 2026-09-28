@@ -1,9 +1,9 @@
 """Contribution archives: a series' hand corrections with the pages they were made on (X4 in docs/ROADMAP.md).
 
 A contribution is what a user shares so the models, glossaries and defaults get better. For each page that
-carries a hand correction it holds the raw page (strip resolution, re-encoded, so no file name, folder path or
-image metadata survives) and every region on it with the pipeline's output next to the editor's
-(`core.schemas.Contribution`), plus the series' locked glossary terms. `build` collects it from the chapters'
+carries a hand correction or a checked line (a proofreader's "this is right") it holds the raw page (strip
+resolution, re-encoded, so no file name, folder path or image metadata survives) and every region on it with the
+pipeline's output next to the editor's (`core.schemas.Contribution`), plus the series' locked glossary terms. `build` collects it from the chapters'
 edits.json and the pipeline's own artifacts (ocr_auto.json, final_auto.json); `write_archive` writes
 contribution.json and the page images into one zip file whose entries all carry the same fixed timestamp, and
 contribution.json holds no date. Series and chapters are named by ids salted with a random value kept in this
@@ -49,7 +49,7 @@ from omniscan.core.schemas import (
     TranslationEdit,
 )
 from omniscan.edits.apply import MATCH_IOU, match_layout_edits, match_region_edits, match_translation_edits
-from omniscan.edits.store import auto_regions, current_regions, judged_lines, load_edits
+from omniscan.edits.store import auto_regions, current_regions, judged_lines, line_statuses, load_edits
 from omniscan.glossary.store import GlossaryStore
 from omniscan.learn.harvest import norm
 from omniscan.translate.on_demand import english_lines
@@ -92,6 +92,7 @@ class Summary:
     other: int  # region edits that change neither text nor type (a moved box, a speaker)
     terms: int
     redrawn: int = 0  # detected boxes replaced by a box drawn over them by hand
+    checked: int = 0  # lines a proofreader approved as they are
 
 
 def install_salt(work_root: Path) -> bytes:
@@ -227,8 +228,10 @@ def _region(
     edits: _Edits,
     judged: dict[str, str],
     english: dict[str, str],
+    checked: bool = False,
 ) -> ContributionRegion:
-    """One current region of the chapter, the pipeline's output next to the hand edits."""
+    """One current region of the chapter, the pipeline's output next to the hand edits (`checked`: its line
+    check still holds)."""
     edit = edits.regions.get(region.id)
     added = edit is not None and edit.added
     line_edit = edits.translations.get(region.id)
@@ -253,23 +256,30 @@ def _region(
         english_from=_english_from(line, line_edit),
         speaker=region.speaker,
         lettering=_lettering(layout, page, width) if layout is not None else None,
+        checked=checked,
     )
 
 
 def _corrected(region: ContributionRegion) -> bool:
-    """Whether a region carries a hand correction (the reason its page is contributed)."""
+    """Whether a region carries a hand correction."""
     return region.edited or region.english_from in ("suggestion", "typed") or region.lettering is not None
 
 
 def build_chapter(
     paths: ChapterPaths, order: int, salt: bytes
 ) -> tuple[ContributionChapter | None, list[PageSource]]:
-    """One chapter's contributed pages (those with a hand correction) and where their pixels come from; None
-    when the chapter has no hand edit or no ingest.json to place its regions on pages."""
+    """One chapter's contributed pages (those with a hand correction or a checked line: a proofreader's "this
+    is right" is the other half of what a model learns from) and where their pixels come from; None when the
+    chapter has no hand edit or check, or no ingest.json to place its regions on pages."""
     chapter_edits = load_edits(paths)
     ingest_path = paths.artifact("ingest.json")
     if (
-        not (chapter_edits.regions or chapter_edits.translations or chapter_edits.layout)
+        not (
+            chapter_edits.regions
+            or chapter_edits.translations
+            or chapter_edits.layout
+            or chapter_edits.checked
+        )
         or not ingest_path.is_file()
     ):
         return None, []
@@ -280,6 +290,7 @@ def build_chapter(
     current = current_regions(paths)
     edits = _Edits.of(chapter_edits, auto, current)
     judged, english = judged_lines(paths), english_lines(paths)
+    checked = {region_id for region_id, status in line_statuses(paths).items() if status == "checked"}
     by_page: dict[int, list[ContributionRegion]] = {}
     files: dict[int, SourceFile] = {}
     for region in current:
@@ -296,6 +307,7 @@ def build_chapter(
                 edits=edits,
                 judged=judged,
                 english=english,
+                checked=region.id in checked,
             )
         )
     for region, replaced_by in edits.removed:
@@ -312,7 +324,7 @@ def build_chapter(
     sources: list[PageSource] = []
     for index in sorted(by_page):
         regions = by_page[index]
-        if not any(_corrected(region) for region in regions):
+        if not any(_corrected(region) or region.checked for region in regions):
             continue
         member = f"pages/{chapter_id}/{index:04d}.jpg"
         file = files[index]
@@ -394,6 +406,7 @@ def summarize(contribution: Contribution) -> Summary:
         ),
         terms=len(contribution.glossary),
         redrawn=redrawn,
+        checked=sum(1 for r in regions if r.checked),
     )
 
 

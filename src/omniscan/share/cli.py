@@ -51,9 +51,11 @@ def describe(summary: Summary) -> str:
         )
         if count
     )
+    checked = f"{summary.checked} line(s) checked as right" if summary.checked else ""
     return (
         f"{summary.chapters} chapter(s), {summary.pages} page(s), {summary.regions} region(s) and"
-        f" {summary.terms} glossary term(s); corrections: {fixes}"
+        f" {summary.terms} glossary term(s); "
+        + "; ".join(part for part in (f"corrections: {fixes}" if fixes else "", checked) if part)
     )
 
 
