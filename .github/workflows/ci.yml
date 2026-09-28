@@ -36,8 +36,9 @@ permissions:
 env:
   # a stale uv.lock fails the sync instead of being re-resolved on the runner
   UV_LOCKED: "1"
-  # pytest-xdist runs the suite on every core; pinned here, not in uv.lock: the lock cannot be
-  # regenerated off the owner's machine (AMD's ROCm index), and CI is the only place it runs.
+  # pytest-xdist runs the suite on every core. Pinned here rather than in the dev group only because
+  # the session that added it could not reach AMD's ROCm index to regenerate uv.lock (GitHub's runners
+  # and the owner's PC can); move it into [dependency-groups] dev with the next `uv lock`.
   XDIST: pytest-xdist==3.8.0
 
 jobs:
