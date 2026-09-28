@@ -69,7 +69,8 @@ def plan_import(source: Path, *, series: str | None = None, chapter: str | None 
 
     Folder sources: three shapes, decided by `source`'s immediate children — a single chapter folder
     (all image files), a folder of chapter folders (all children are directories naming chapters),
-    or a flat dump of images whose filenames carry the chapter number.
+    or a flat dump of images whose filenames carry the chapter number. A folder of chapter folders
+    written by manhwa-manga-downloader is recognised by its `num<N>_` names (`importer/downloader.py`).
     """
     source = Path(source)
     if source.suffix.lower() in ARCHIVE_SUFFIXES:
@@ -103,6 +104,13 @@ def _plan_folder(source: Path, *, series: str | None, chapter: str | None) -> Im
             f"image file(s) {[f.name for f in loose_images]} — import either a single chapter "
             "folder, a folder of chapter folders, or a flat folder of images"
         )
+    from omniscan.importer.downloader import (
+        is_downloader_series,
+        plan_downloader_series,
+    )  # imports this module
+
+    if is_downloader_series(dirs):
+        return plan_downloader_series(source, dirs, files, series=series, chapter=chapter)
     if dirs:
         return _plan_folder_of_folders(source, dirs, series=series, chapter=chapter, warnings=warnings)
     return _plan_flat(source, list_images(source), series=series, chapter=chapter, warnings=warnings)

@@ -224,6 +224,20 @@ uv run omniscan import ~/Downloads/DemoSeries --dry-run
 uv run omniscan import ~/Downloads/DemoSeries.zip
 ```
 
+**Series from manhwa-manga-downloader.** Point `import` at a series folder the downloader wrote
+(`downloads/<site>/<series>/`). Its chapter folders (`num12_Chapter 12`, `num45_chapter`,
+`num5.5_Chapter 5.5`) become `Chapter 12`, `Chapter 45`, `Chapter 5.5`. The downloader's own records
+decide what is finished: a chapter listed in `incomplete_chapters.json`, one with a leftover `.part`
+file, or one with fewer pages than `chapter_manifest.json` recorded is left out with a warning.
+Re-run the downloader to finish it, then import again (chapters already imported are skipped as
+duplicates). Folders the downloader could not number (`num0_<slug>`, `numunknown_chapter`) are left
+out too; import one on its own with `--series` and `--chapter`. wfwf504 names the series folder
+after the site's numeric id, so pass `--series` there.
+
+```bash
+uv run omniscan import ../manhwa-manga-downloader/downloads/wfwf504/1234 --series "Solo Leveling" --dry-run
+```
+
 The standalone GUI import page (`ImportView`, demoed by `scripts/gui_import_demo.py`) wraps the
 same pipeline with a plan preview you can fix before committing: rename the series, move or
 reorder pages, rename/merge/split chapters, see exactly which files will be converted, then
