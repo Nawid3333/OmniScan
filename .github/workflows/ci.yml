@@ -89,15 +89,6 @@ jobs:
 
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0 (no floating major tags since v8: pinned)
 
-      - name: TEMP print the uv lock diff (PR #51, reverted before merge)
-        run: |
-          uv lock
-          echo "LOCKDIFF-BEGIN"
-          git --no-pager diff --no-color uv.lock
-          echo "LOCKDIFF-END"
-          sha256sum uv.lock
-          git checkout uv.lock
-
       - name: uv.lock is up to date
         run: uv lock --check
 
