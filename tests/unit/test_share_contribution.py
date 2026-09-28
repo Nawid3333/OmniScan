@@ -301,6 +301,39 @@ def test_redrawn_boxes_cleared_lines_and_repeated_chapters(cfg: Config) -> None:
     assert (summary.redrawn, summary.deleted, summary.added, summary.english) == (1, 0, 2, 1)
 
 
+def test_checked_lines_are_verified_data(cfg: Config) -> None:
+    six = make_chapter(cfg, "Chapter 6")
+    assert store.set_checked(six, ["r0001", "r0003"]) == ["r0001", "r0003"]  # one line on each page
+    judged = FinalArtifact.load(six.artifact("final.json"))  # a judge re-run changes page 1's English after
+    judged.lines[2] = judged.lines[2].model_copy(update={"text": "Line 3, judged again"})  # its check
+    store.write_final(six, judged, store.current_regions(six))
+    contribution, pages = build(SeriesPaths.from_config(cfg, "S"), cfg)
+    (chapter,) = contribution.chapters
+    assert [page.index for page in chapter.pages] == [0] and len(pages) == 1  # the stale check doesn't count
+    checked, other = chapter.pages[0].regions
+    assert (checked.id, checked.checked, checked.edited, checked.english_from) == (
+        "r0001",
+        True,
+        False,
+        "machine",
+    )
+    assert (other.id, other.checked) == ("r0002", False)
+    summary = summarize(contribution)
+    assert (summary.pages, summary.regions, summary.checked, summary.english, summary.other) == (
+        1,
+        2,
+        1,
+        0,
+        0,
+    )
+    assert share_cli.describe(summary) == (
+        "1 chapter(s), 1 page(s), 2 region(s) and 0 glossary term(s); 1 checked line"
+    )
+    store.update_region(six, "r0002", direction="ltr", kind="sfx")  # a correction beside the check
+    both = share_cli.describe(summarize(build(SeriesPaths.from_config(cfg, "S"), cfg)[0]))
+    assert both.endswith("; corrections: 1 region type; 1 checked line")
+
+
 def test_a_salt_another_export_just_made_is_kept(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     made = install_salt(tmp_path)
     read = Path.read_text
@@ -340,7 +373,9 @@ def test_contribute_export_on_the_command_line(
         "x.zip"
     ).stat().st_size
     nothing = runner.invoke(share_cli.contribute_app, ["export", "S", "-c", "Chapter 3"])
-    assert nothing.output == "contribute: S has no hand corrections to share; nothing exported\n"
+    assert nothing.output == (
+        "contribute: S has no hand corrections or checked lines to share; nothing exported\n"
+    )
     unknown = runner.invoke(share_cli.contribute_app, ["export", "S", "-c", "Chapter 9"])
     assert unknown.exit_code == 2 and "no chapter 'Chapter 9' in S" in unknown.output
     typo = runner.invoke(share_cli.contribute_app, ["export", "Sx"])

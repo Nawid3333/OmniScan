@@ -22,6 +22,7 @@ from omniscan.cleanup.store import add_patch, load_ingest, page_to_strip
 from omniscan.core.config import Config, InpaintConfig
 from omniscan.core.paths import ChapterPaths
 from omniscan.core.schemas import BBox, CleanupPatch, InpaintArtifact, InpaintItem
+from omniscan.pipeline.on_demand import group_models
 
 _STROKE = "stroke"  # the one region lama_regions sees
 
@@ -69,22 +70,12 @@ class LamaRebuild:
 
 @contextmanager
 def lama_model(cfg: Config) -> Iterator[LamaRebuild]:
-    """The LaMa model for one on-demand clean, with exclusive GPU access; everything is released after."""
+    """The LaMa model for one on-demand clean (the inpaint group, pipeline/on_demand.py)."""
     from omniscan.gpu.device import resolve_device
-    from omniscan.gpu.groups import INPAINT_GROUP, build_vram_manager
-    from omniscan.gpu.lock import acquire_gpu_lock, release_gpu_lock
+    from omniscan.gpu.groups import INPAINT_GROUP
 
-    lock = acquire_gpu_lock() if cfg.gpu.device != "cpu" else None
-    try:
-        manager = build_vram_manager(cfg)
-        try:
-            models = manager.acquire(INPAINT_GROUP)
-            yield LamaRebuild(models["lama"], cfg.inpaint, resolve_device(cfg.gpu.device))
-        finally:
-            manager.release()
-    finally:
-        if lock is not None:
-            release_gpu_lock(lock)
+    with group_models(cfg, INPAINT_GROUP) as models:
+        yield LamaRebuild(models["lama"], cfg.inpaint, resolve_device(cfg.gpu.device))
 
 
 def clean_with_lama(

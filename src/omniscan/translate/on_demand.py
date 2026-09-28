@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 from omniscan.core.config import Config
 from omniscan.core.paths import ChapterPaths, SeriesPaths
-from omniscan.core.schemas import FinalArtifact, FinalLine
+from omniscan.core.schemas import FinalLine
 from omniscan.edits import store as edit_store
 from omniscan.learn.apply import translation_hints
 from omniscan.learn.memory import current_memory
@@ -46,17 +46,10 @@ def pick_profiles(known: Mapping[str, TranslationProfile], name: str | None) -> 
 
 def english_lines(paths: ChapterPaths) -> dict[str, str]:
     """region id -> the chapter's current English line (final.json); {} when it is missing or unreadable."""
-    path = paths.artifact("final.json")
-    if not path.is_file():
-        return {}
     try:
-        final = FinalArtifact.load(path)
+        return edit_store.final_lines(paths)
     except OSError, ValueError:
         return {}
-    lines: dict[str, str] = {}
-    for line in final.lines:
-        lines.setdefault(line.region_id, line.text)
-    return lines
 
 
 def translate_now(
