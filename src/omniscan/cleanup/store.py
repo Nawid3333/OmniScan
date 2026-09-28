@@ -14,6 +14,7 @@ import tempfile
 import threading
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Protocol
 
 import numpy as np
 from PIL import Image
@@ -41,6 +42,19 @@ CONTEXT_PX = 24  # inpainting sees this much of the page around the stroke
 _LOCK = threading.RLock()  # one cleanup edit at a time (read-modify-write of both files)
 
 Arrays = dict[str, tuple[np.ndarray | None, np.ndarray]]  # patch id -> (pixels or None for restore, mask)
+
+
+class Rebuild(Protocol):
+    """A model that rebuilds the masked pixels of a crop (the "lama" method; cleanup/lama_now.py)."""
+
+    @property
+    def context_px(self) -> int:
+        """How much of the page around a stroke it wants to see."""
+        ...
+
+    def __call__(self, context: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        """`context` (uint8 [h, w, 3]) with the pixels under `mask` (bool [h, w]) rebuilt."""
+        ...
 
 
 def load_ingest(paths: ChapterPaths) -> IngestArtifact:
@@ -203,12 +217,14 @@ def add_patch(
     method: CleanupMethod,
     color: RGB | None = None,
     offset: tuple[int, int] | None = None,
+    lama: Rebuild | None = None,
 ) -> CleanupPatch:
     """Clean a brush stroke painted on page `page` (page pixels) and append it to the chapter's cleanup.
 
     "fill" uses `color` or the median colour around the stroke; "inpaint" rebuilds it from the surrounding
     page; "clone" copies the page `offset` (page pixels, source minus destination) away; "restore" shows the
-    raw page again. ValueError for a bad stroke, a clone source outside the strip or a missing offset."""
+    raw page again; "lama" has the model `lama` rebuild it from the page around it. ValueError for a bad
+    stroke, a clone source outside the strip, a missing offset or a missing model."""
     with _LOCK:
         ingest = load_ingest(paths)
         sbox, smask = page_to_strip(ingest, page, box, mask)
@@ -247,6 +263,12 @@ def add_patch(
             if src.x0 < 0 or src.y0 < 0 or src.x1 > ingest.strip_width or src.y1 > ingest.strip_height:
                 raise ValueError("the clone source lies outside the strip")
             pixels = current_crop(paths, ingest, src)
+        elif method == "lama":
+            if lama is None:
+                raise ValueError("lama needs the LaMa model (cleanup/lama_now.py: clean_with_lama)")
+            context_box = _grow(sbox, lama.context_px, ingest)
+            rebuilt = lama(current_crop(paths, ingest, context_box), _placed(smask, sbox, context_box))
+            pixels = _cut(rebuilt, context_box, sbox)
         patch = CleanupPatch(
             id=patch_id,
             box=sbox,

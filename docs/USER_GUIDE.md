@@ -1380,7 +1380,8 @@ pipeline stages for the chapter; and the editing endpoints behind the Studio (se
 `PUT …/final/{id}` (optional `suggested_by`) and `POST …/final/{id}/revert`; plus on-demand translation:
 `GET /api/translation-profiles` and `POST …/translate` (`{"region_ids": [...], "profile": null, "apply": false}`,
 returns every profile's suggestion); hand cleanup: `GET …/cleanup`, `POST …/cleanup` (one brush stroke:
-`{"page", "box", "mask" (base64 PNG), "method", "color"?, "offset"?}`), `DELETE …/cleanup/{id}` and
+`{"page", "box", "mask" (base64 PNG), "method", "color"?, "offset"?}`; `method`: fill, inpaint, clone, restore
+or lama), `DELETE …/cleanup/{id}` and
 `GET …/cleanup/{id}.png`; lettering: `GET /api/fonts`, `GET …/layout/live`, `PUT …/layout/{id}` (the
 region's whole hand lettering: `font`, `size_px`, `color`, `stroke_px`, `stroke_color`, `align`, `angle`,
 `box`, `lines`, `hidden`), `DELETE …/layout/{id}` and `GET …/preview/{page}.png` (the rendered page). Every
@@ -1689,7 +1690,10 @@ shows one raw page at a time with every text region as a box:
 - **Clean by hand.** **C** (or *Clean*) turns the mouse into a brush (**[** / **]** change its size).
   Paint over leftover lettering, a stray mark or a watermark — or over art the automatic cleaning
   damaged — then *Apply* (Enter; Esc discards the strokes). What the painted pixels become:
-  *inpaint* rebuilds them from their surroundings (OpenCV), *fill* paints one colour (by default the
+  *inpaint* rebuilds them from their surroundings (OpenCV), *LaMa* has the inpainting model redraw them
+  (the model the `inpaint_lama` stage uses, with a window of page around the stroke: better on art,
+  screentone and gradients; it loads for the stroke through the VRAM manager, 10-25 s the first time, and
+  answers 503 when it cannot — no torch, weights not downloadable), *fill* paints one colour (by default the
   median colour just around the stroke), *clone* copies the page from the spot you Alt+clicked (the
   offset stays fixed for the next strokes), *restore* brings back the raw page. Strokes are computed from
   the page as it currently looks — raw page, automatic cleaning, your earlier patches — so inpainting next

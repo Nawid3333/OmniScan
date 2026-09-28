@@ -33,7 +33,7 @@ to the common strip width. Integers, half-open ranges `[x0, x1)`, `[y0, y1)`. A 
 | `final_auto.json` | `FinalArtifact` (the judge's own lines, before hand edits) | judge |
 | `edits.json` | `ChapterEdits` (hand edits: regions, English lines, lettering, checked lines) | editing tools only (`edits/store.py`) |
 | `edits_history.json` | `EditsHistory` (earlier states of `edits.json`, for undo and redo) | editing tools only (`edits/store.py`) |
-| `cleanup.json` + `cleanup.npz` | `CleanupArtifact` + npz (hand-painted cleanup patches: masks, pixels) | editing tools only (`cleanup/store.py`); applied last by export |
+| `cleanup.json` + `cleanup.npz` | `CleanupArtifact` + npz (hand-painted cleanup patches: masks, pixels) | editing tools only (`cleanup/store.py`; a "lama" stroke is rebuilt by `cleanup/lama_now.py` through `inpaint/lama_pipeline.lama_regions`, the model loaded on demand from the VRAM manager's inpaint group); applied last by export |
 | `inpaint.json` + `patches.npz` | `InpaintArtifact` + npz (cleaned crops and masks per region) | inpaint |
 | `layout.json` | `LayoutArtifact` (hand lettering applied) | typeset |
 | `export.json` | `ExportArtifact` (files written to `output_root/<Series>/<Chapter>/`) | export |

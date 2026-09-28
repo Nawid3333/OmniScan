@@ -767,12 +767,13 @@
     <button class:active={showReplace} onclick={() => (showReplace = !showReplace)} title="find and replace in the English lines or source texts of this chapter or the whole series">Find &amp; replace</button>
     <span class="sep"></span>
     <RunButton {series} {chapter} through="export" startStage="inpaint" label="Render (inpaint → export)" onDone={refresh} />
-    {#if translating}<span class="muted">translating…</span>{:else if busy}<span class="muted">saving…</span>{/if}
+    {#if translating}<span class="muted">translating…</span>{:else if busy}<span class="muted">{tool === "clean" && cleanMethod === "lama" ? "LaMa is cleaning…" : "saving…"}</span>{/if}
   </div>
   {#if tool === "clean"}
     <div class="toolbar cleanbar">
       <select bind:value={cleanMethod} onchange={blurControl} title="what the painted pixels become">
         <option value="inpaint">inpaint (rebuild from the surroundings)</option>
+        <option value="lama">LaMa (the inpainting model; slower, for art and gradients)</option>
         <option value="fill">fill with a colour</option>
         <option value="clone">clone (Alt+click the source first)</option>
         <option value="restore">restore the raw page</option>
@@ -1103,8 +1104,10 @@
           <h3>Clean page {pageIndex + 1}</h3>
           <p class="muted">
             Paint over leftover lettering or damaged art, then <b>Apply</b> (Enter). <i>inpaint</i> rebuilds the
-            pixels from what surrounds them, <i>fill</i> paints one colour (by default the colour around the
-            stroke), <i>clone</i> copies from the spot you Alt+clicked, <i>restore</i> brings back the raw page
+            pixels from what surrounds them, <i>LaMa</i> has the inpainting model redraw them (better on art,
+            screentone and gradients; the model loads first, which takes a while the first time), <i>fill</i>
+            paints one colour (by default the colour around the stroke), <i>clone</i> copies from the spot you
+            Alt+clicked, <i>restore</i> brings back the raw page
             where the automatic cleaning went too far. <b>[</b> and <b>]</b> change the brush. Your patches go on
             after the automatic cleaning at export; use Render to see them in the finished pages.
           </p>
