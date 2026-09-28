@@ -1102,6 +1102,8 @@ uv run omniscan edit english "Solo Leveling" "Chapter 1" r0003 "Jinwoo, run!"
 uv run omniscan edit translate "Solo Leveling" "Chapter 1" r0003 r0004 --apply
 uv run omniscan edit ocr "Solo Leveling" "Chapter 1" m0001            # read a hand-drawn box with the OCR
 uv run omniscan edit ocr "Solo Leveling" "Chapter 1" r0003 --apply    # and keep the reading as its source text
+uv run omniscan edit find "Solo Leveling" "Chapter 1" 4                # text the detector missed on page 4
+uv run omniscan edit find "Solo Leveling" "Chapter 1" 4 --threshold 0.15 --add   # fainter text, added as boxes
 uv run omniscan edit revert "Solo Leveling" "Chapter 1" r0003 --english
 uv run omniscan edit cuts "Solo Leveling" "Chapter 1" 2400 4800
 uv run omniscan edit cuts "Solo Leveling" "Chapter 1" --reset
@@ -1124,6 +1126,7 @@ uv run omniscan edit redo "Solo Leveling" "Chapter 1"
 | `english` | write a region's English line |
 | `translate` | translate regions now with every enabled profile (`--profile` for one, a disabled one too) and print the suggestions; `--apply` keeps each first suggestion |
 | `ocr` | read one region again with the series' OCR engine (its models load for this read) and print it; `--apply` keeps a non-empty reading as the source text; exit 1 when the OCR cannot run (no models, no torch backend) |
+| `find` | run the detector again on one page (counted from 1 as the Studio shows it; `--threshold` for fainter text) and list the text areas no region covers, with what the OCR reads there; `--add` adds them all as hand-drawn regions, one undo step; exit 1 when the models cannot run |
 | `revert` | drop a region's hand edits (a drawn region is removed), or with `--english` its hand-written line |
 | `cuts` | show or set where the exported images split; `--reset` goes back to one image per slice |
 | `replace` | find and replace across the English lines of the whole series (`--chapter` for some chapters; `--source` for the source texts); `--word` whole words, `--ignore-case` any case (the replacement takes each match's case: JINWOO → JIN-WOO), `--regex` a regular expression (`\1` … in the replacement), `--dry-run` lists the changes only; every change is a hand edit, one undo step per chapter |
@@ -1673,6 +1676,12 @@ shows one raw page at a time with every text region as a box:
   just this box with the series' OCR engine — after moving a box or drawing one the detector missed — and
   shows the reading with a *use* link; nothing changes until you *Save source*. The first read loads the
   OCR models (a few seconds) and needs the GPU for that moment (it waits while a run holds it).
+- **Find missed text.** With nothing selected, the page panel's *Find missed text* runs the detector again
+  on this page — at the series' threshold, or a lower one you type for faint text such as small signs — and
+  the OCR reads every box no region covers. The finds show as orange dashed boxes (+1, +2, …) with their
+  text; *add* (or *Add all*) makes them hand-drawn regions with that text, undoable like any edit. Nothing
+  else changes: the pipeline's own boxes stay, so your edits and the finished stages are untouched. Like
+  *Read again*, the first search loads the detector and OCR models.
 - **English.** Write or correct the region's English line and *Save English* (Ctrl+Enter). A region
   with no English line yet is labelled *untranslated*; a hand-written line whose source text was fixed
   afterwards is labelled *source changed* (and flagged `source_changed` in `final.json`).

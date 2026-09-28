@@ -559,6 +559,31 @@ export async function readRegionAgain(
   });
 }
 
+/** A text area the detector found on a page that no region covers, with what the OCR reads there. */
+export interface FoundText {
+  kind: RegionKind;
+  bbox: BBox;
+  bubble_bbox: BBox | null;
+  score: number; // the detector's
+  text: string;
+  confidence: number; // the OCR's
+}
+
+/** Run the detector again on raw page `page` (SourceFile.index), optionally at another score threshold, and
+ *  return the text areas no region covers — suggestions to add with `addRegion`; nothing is written. */
+export async function findMissedText(
+  series: string,
+  chapter: string,
+  page: number,
+  threshold: number | null = null,
+): Promise<FoundText[]> {
+  const result = await postJson<{ found: FoundText[] }>(
+    `${chapterBase(series, chapter)}/pages/${page}/find`,
+    threshold === null ? {} : { threshold },
+  );
+  return result.found;
+}
+
 /** Add a hand-drawn region (strip-space box); the server gives it an m-prefixed id. */
 export async function addRegion(
   series: string,

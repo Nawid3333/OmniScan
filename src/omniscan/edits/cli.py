@@ -17,7 +17,8 @@ from rich.table import Table
 
 from omniscan.core.config import Config, SeriesConfigError, get_config, get_secrets, series_config
 from omniscan.core.paths import ChapterPaths, SeriesPaths
-from omniscan.core.schemas import BBox, RegionKind
+from omniscan.core.schemas import BBox, IngestArtifact, RegionKind
+from omniscan.detect.on_demand import Found, find_on_page_now
 from omniscan.edits import store
 from omniscan.edits.replace import FindReplace, apply_changes, plan
 from omniscan.llm.ollama import OllamaClient, OllamaError
@@ -399,6 +400,70 @@ def edit_ocr(
         typer.echo(f"edit: {region} source text saved")
     elif apply:
         typer.echo(f"edit: nothing read; {region} keeps its source text")
+
+
+def find_missed(paths: ChapterPaths, page: int, cfg: Config, threshold: float | None) -> list[Found]:
+    """The searcher of `edit find` (tests replace this to fake the detector and OCR models)."""
+    return find_on_page_now(paths, page, cfg, threshold)
+
+
+@edit_app.command("find")
+def edit_find(
+    series: Series,
+    chapter: Chapter,
+    page: Annotated[int, typer.Argument(min=1, help="The raw page, counted from 1 as the Studio shows it.")],
+    threshold: Annotated[
+        float | None,
+        typer.Option(
+            "--threshold",
+            min=0.01,
+            max=0.99,
+            help="The detector's score threshold (default: detect.threshold).",
+        ),
+    ] = None,
+    add: Annotated[bool, typer.Option("--add", help="Add every box found as a hand-drawn region.")] = False,
+) -> None:
+    """Run the detector again on one page and list the text areas no region covers, with what the OCR reads
+    there (the models are loaded for this search); --add adds them all as hand-drawn regions, one undo step."""
+    scfg, _series, paths = _chapter(series, chapter)
+    try:
+        ingest_path = paths.artifact("ingest.json")
+        if not ingest_path.is_file():
+            raise FileNotFoundError("ingest.json missing — run the slice stage first")
+        files = IngestArtifact.load(ingest_path).files
+        if page > len(files):
+            raise ValueError(f"the chapter has {len(files)} page(s), not {page}")
+        found = find_missed(paths, files[page - 1].index, scfg, threshold)
+    except (FileNotFoundError, ValueError) as exc:  # no page layout or page file, no such page
+        raise _fail(str(exc)) from exc
+    except (ImportError, OSError, RuntimeError) as exc:  # no torch backend, no models, no GPU
+        typer.echo(f"edit: the detector could not run: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    if not found:
+        typer.echo(f"edit: nothing missed on page {page}")
+        return
+    for item in found:
+        box = item.bbox
+        typer.echo(
+            f"edit: {item.kind} at {box.x0},{box.y0},{box.x1},{box.y1} ({item.score:.2f}): {item.text or '(nothing read)'}"
+        )
+    if add:
+        with store.edit_group(paths):  # one undo step
+            added = [
+                _run(
+                    lambda item=item: store.add_region(
+                        paths,
+                        item.bbox,
+                        direction=scfg.detect.reading_direction,
+                        kind=item.kind,
+                        text=item.text,
+                        bubble_bbox=item.bubble_bbox,
+                        lang=scfg.ocr.lang,
+                    )
+                )
+                for item in found
+            ]
+        typer.echo(f"edit: added {', '.join(region.id for region in added)}")
 
 
 def _history(paths: ChapterPaths) -> str:
