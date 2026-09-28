@@ -11,6 +11,7 @@
     deleteRegion,
     getCleanup,
     getEdits,
+    setChecked,
     stepEdits,
     getFinal,
     getIngest,
@@ -25,6 +26,8 @@
     previewUrl,
     putLayout,
     putFinalLine,
+    readRegionAgain,
+    findMissedText,
     revertFinalLine,
     revertRegion,
     translateRegions,
@@ -39,6 +42,8 @@
     LayoutEdit,
     LayoutFields,
     LayoutItem,
+    OcrReading,
+    FoundText,
     Region,
     RegionKind,
     SourceFile,
@@ -117,6 +122,12 @@
   let profiles = $state<TranslationProfile[]>([]);
   let profileChoice = $state(""); // "" = every enabled profile
   let suggestions = $state<Suggestion[]>([]);
+  let ocrReading = $state<OcrReading | null>(null);
+  let rereading = $state(false);
+  let found = $state<FoundText[]>([]); // missed text found on page `foundPage` (SourceFile.index)
+  let foundPage = $state<number | null>(null);
+  let finding = $state(false);
+  let findThreshold = $state<number | null>(null); // null = the series' detect.threshold
   let kept = $state<Suggestion | null>(null); // the suggestion the English draft was taken from
   let translating = $state(false);
   let cleanups = $state<CleanupPatch[]>([]);
@@ -142,6 +153,7 @@
 
   let page = $derived(files[pageIndex] ?? null);
   let onPage = $derived(page ? pageRegions(page, regions) : []);
+  let foundOnPage = $derived(page !== null && foundPage === page.index ? found : []);
   let lineById = $derived(new Map(lines.map((line) => [line.region_id, line])));
   let selected = $derived(regions.find((region) => region.id === selectedId) ?? null);
   let selectedLine = $derived(selected ? lineById.get(selected.id) : undefined);
@@ -259,6 +271,7 @@
   function select(id: string | null): void {
     selectedId = id;
     suggestions = [];
+    ocrReading = null;
     kept = null;
     resetLetterDraft(id);
     const region = regions.find((r) => r.id === id);
@@ -527,6 +540,14 @@
     }, NUDGE_COMMIT_MS);
   }
 
+  /** Mark the selected region's line checked (its source and English as they are now), or unmark it. */
+  async function toggleSelectedChecked(): Promise<void> {
+    if (selected === null || selectedStatus === null) return;
+    const id = selected.id;
+    const checked = !selectedStatus.checked;
+    await act(() => setChecked(series, chapter, [id], checked));
+  }
+
   /** Undo the last hand edit or redo the last undone one, then show the chapter as it is now. */
   async function stepHistory(step: "undo" | "redo"): Promise<void> {
     const left = step === "undo" ? edits?.history?.undo : edits?.history?.redo;
@@ -590,6 +611,55 @@
     const by = kept !== null && kept.text === translationDraft ? kept.profile : undefined;
     const line = await act(() => putFinalLine(series, chapter, selected!.id, translationDraft, by));
     if (line !== null) translationDraft = line.text;
+  }
+
+  /** Run the detector again on this page and list the text areas no region covers (nothing is saved). */
+  async function findMissed(): Promise<void> {
+    if (page === null) return;
+    const index = page.index;
+    finding = true;
+    actionError = "";
+    try {
+      const result = await findMissedText(series, chapter, index, findThreshold);
+      found = result;
+      foundPage = index;
+    } catch (e) {
+      actionError = e instanceof Error ? e.message : String(e);
+    } finally {
+      finding = false;
+    }
+  }
+
+  /** Add found boxes as hand-drawn regions with the text the OCR read (one request each). */
+  async function addFound(items: FoundText[]): Promise<void> {
+    for (const item of items) {
+      const region = await act(() =>
+        addRegion(series, chapter, {
+          bbox: item.bbox,
+          kind: item.kind,
+          text: item.text,
+          ...(item.bubble_bbox !== null ? { bubble_bbox: item.bubble_bbox } : {}),
+        }),
+      );
+      if (region === null) return;
+      found = found.filter((other) => other !== item);
+    }
+  }
+
+  /** Read the selected region again with the OCR (nothing is saved until Save source). */
+  async function readSelectedAgain(): Promise<void> {
+    if (selected === null) return;
+    const id = selected.id;
+    rereading = true;
+    actionError = "";
+    try {
+      const result = await readRegionAgain(series, chapter, id);
+      if (selectedId === id) ocrReading = result;
+    } catch (e) {
+      actionError = e instanceof Error ? e.message : String(e);
+    } finally {
+      rereading = false;
+    }
   }
 
   /** Ask the translation profiles for the selected region (nothing is saved until Save English). */
@@ -737,12 +807,13 @@
     <button class:active={showReplace} onclick={() => (showReplace = !showReplace)} title="find and replace in the English lines or source texts of this chapter or the whole series">Find &amp; replace</button>
     <span class="sep"></span>
     <RunButton {series} {chapter} through="export" startStage="inpaint" label="Render (inpaint → export)" onDone={refresh} />
-    {#if translating}<span class="muted">translating…</span>{:else if busy}<span class="muted">saving…</span>{/if}
+    {#if translating}<span class="muted">translating…</span>{:else if busy}<span class="muted">{tool === "clean" && cleanMethod === "lama" ? "LaMa is cleaning…" : "saving…"}</span>{/if}
   </div>
   {#if tool === "clean"}
     <div class="toolbar cleanbar">
       <select bind:value={cleanMethod} onchange={blurControl} title="what the painted pixels become">
         <option value="inpaint">inpaint (rebuild from the surroundings)</option>
+        <option value="lama">LaMa (the inpainting model; slower, for art and gradients)</option>
         <option value="fill">fill with a colour</option>
         <option value="clone">clone (Alt+click the source first)</option>
         <option value="restore">restore the raw page</option>
@@ -866,6 +937,11 @@
                 {/if}
               {/each}
             {/if}
+            {#each foundOnPage as item, i (i)}
+              {@const rect = stripToPage(page, item.bbox)}
+              <rect x={rect.x} y={rect.y} width={rect.width} height={rect.height} fill="#f59e0b" fill-opacity="0.12" stroke="#f59e0b" stroke-width={2 / zoom} stroke-dasharray="{6 / zoom} {3 / zoom}" pointer-events="none" />
+              <text x={rect.x + 2 / zoom} y={rect.y - 3 / zoom} fill="#b45309" font-size={12 / zoom} pointer-events="none">+{i + 1}</text>
+            {/each}
             {#if tool === "select"}
               {#each letteringOnPage as item (item.region_id)}
                 {@const rect = stripToPage(page, letteringBoxOf(item))}
@@ -941,7 +1017,9 @@
             <button class="link" onclick={() => select(null)}>close</button>
           </h3>
           {#if statusLabels(selectedStatus).length > 0}
-            <p class="labels">{statusLabels(selectedStatus).join(" · ")}</p>
+            <p class="labels">
+              {#each statusLabels(selectedStatus) as label, i (label)}{#if i > 0}{" · "}{/if}<span class:ok={label === "checked"}>{label}</span>{/each}
+            </p>
           {/if}
           <label>
             kind
@@ -969,7 +1047,20 @@
               <button class="link" onclick={() => (sourceDraft = selected!.ocr_alt ?? sourceDraft)}>use</button>
             </p>
           {/if}
+          {#if ocrReading !== null}
+            <p class="muted">
+              OCR reads ({ocrReading.engine}, {ocrReading.confidence.toFixed(2)}): {ocrReading.text || "nothing"}
+              {#if ocrReading.text.trim() !== ""}
+                <button class="link" onclick={() => (sourceDraft = ocrReading?.text ?? sourceDraft)}>use</button>
+              {/if}
+            </p>
+          {/if}
           <button onclick={() => void saveSource()} disabled={busy || sourceDraft === selected.text}>Save source</button>
+          <button
+            onclick={() => void readSelectedAgain()}
+            disabled={busy || rereading}
+            title="Read this box again with the OCR (after moving or drawing it); the first read loads the OCR models"
+          >{rereading ? "Reading…" : "Read again (OCR)"}</button>
           <label>
             English <span class="muted">(Ctrl+Enter saves)</span>
             <textarea rows="3" bind:value={translationDraft} onkeydown={(e) => saveOnCtrlEnter(e, saveTranslation)} lang="en"></textarea>
@@ -994,6 +1085,11 @@
             </ul>
           {/if}
           <div class="actions">
+            <button
+              onclick={() => void toggleSelectedChecked()}
+              disabled={busy}
+              title="A checked line is approved; changing its source or English unchecks it"
+            >{selectedStatus.checked ? "Uncheck line" : "Mark line checked"}</button>
             {#if selectedStatus.manualTranslation}
               <button onclick={() => void revertSelectedTranslation()} disabled={busy}>Revert English</button>
             {/if}
@@ -1053,8 +1149,10 @@
           <h3>Clean page {pageIndex + 1}</h3>
           <p class="muted">
             Paint over leftover lettering or damaged art, then <b>Apply</b> (Enter). <i>inpaint</i> rebuilds the
-            pixels from what surrounds them, <i>fill</i> paints one colour (by default the colour around the
-            stroke), <i>clone</i> copies from the spot you Alt+clicked, <i>restore</i> brings back the raw page
+            pixels from what surrounds them, <i>LaMa</i> has the inpainting model redraw them (better on art,
+            screentone and gradients; the model loads first, which takes a while the first time), <i>fill</i>
+            paints one colour (by default the colour around the stroke), <i>clone</i> copies from the spot you
+            Alt+clicked, <i>restore</i> brings back the raw page
             where the automatic cleaning went too far. <b>[</b> and <b>]</b> change the brush. Your patches go on
             after the automatic cleaning at export; use Render to see them in the finished pages.
           </p>
@@ -1097,12 +1195,46 @@
                 <span class="texts">
                   <span lang={region.lang}>{snippet(region.text) || "—"}</span>
                   <span class="en">{snippet(line?.text ?? "") || "—"}</span>
-                  {#if labels.length > 0}<span class="labels">{labels.join(" · ")}</span>{/if}
+                  {#if labels.length > 0}
+                    <span class="labels">
+                      {#each labels as label, i (label)}{#if i > 0}{" · "}{/if}<span class:ok={label === "checked"}>{label}</span>{/each}
+                    </span>
+                  {/if}
                 </span>
               </button>
             </li>
           {/each}
         </ol>
+      </section>
+      <section>
+        <h4>Missed text</h4>
+        <p class="muted">
+          Run the detector again on this page (the first search loads the models) and list text areas no box covers,
+          read by the OCR. A lower threshold finds fainter text.
+        </p>
+        <label title="the detector's score threshold; empty = the series' setting">
+          threshold
+          <input type="number" min="0.05" max="0.95" step="0.05" placeholder="series" bind:value={findThreshold} />
+        </label>
+        <button onclick={() => void findMissed()} disabled={busy || finding || page === null}>
+          {finding ? "Searching…" : "Find missed text"}
+        </button>
+        {#if page !== null && foundPage === page.index}
+          {#if foundOnPage.length === 0}
+            <p class="muted">no missed text left on this page</p>
+          {:else}
+            <ol class="list">
+              {#each foundOnPage as item, i (i)}
+                <li>
+                  <span class="muted">+{i + 1}</span>
+                  <span>{snippet(item.text) || "(nothing read)"}</span>
+                  <button class="link" onclick={() => void addFound([item])} disabled={busy}>add</button>
+                </li>
+              {/each}
+            </ol>
+            <button onclick={() => void addFound([...foundOnPage])} disabled={busy}>Add all</button>
+          {/if}
+        {/if}
       </section>
       {#if deletedOnPage.length > 0}
         <section>
@@ -1245,6 +1377,9 @@
   .labels {
     color: #9a3412;
     font-size: 12px;
+  }
+  .labels .ok {
+    color: #15803d; /* a checked line is good news, not a warning */
   }
   .muted {
     color: #6b7280;

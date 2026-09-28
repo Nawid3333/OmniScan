@@ -31,15 +31,16 @@ to the common strip width. Integers, half-open ranges `[x0, x1)`, `[y0, y1)`. A 
 | `translations/<run_id>.json` | `CandidateRun` | each translation run |
 | `final.json` | `FinalArtifact` (hand-written lines applied) | judge (+ editing tools) |
 | `final_auto.json` | `FinalArtifact` (the judge's own lines, before hand edits) | judge |
-| `edits.json` | `ChapterEdits` (hand edits: regions, English lines, lettering) | editing tools only (`edits/store.py`) |
+| `edits.json` | `ChapterEdits` (hand edits: regions, English lines, lettering, checked lines) | editing tools only (`edits/store.py`) |
 | `edits_history.json` | `EditsHistory` (earlier states of `edits.json`, for undo and redo) | editing tools only (`edits/store.py`) |
-| `cleanup.json` + `cleanup.npz` | `CleanupArtifact` + npz (hand-painted cleanup patches: masks, pixels) | editing tools only (`cleanup/store.py`); applied last by export |
+| `cleanup.json` + `cleanup.npz` | `CleanupArtifact` + npz (hand-painted cleanup patches: masks, pixels) | editing tools only (`cleanup/store.py`; a "lama" stroke is rebuilt by `cleanup/lama_now.py` through `inpaint/lama_pipeline.lama_regions`, the model loaded on demand from the VRAM manager's inpaint group); applied last by export |
 | `inpaint.json` + `patches.npz` | `InpaintArtifact` + npz (cleaned crops and masks per region) | inpaint |
 | `layout.json` | `LayoutArtifact` (hand lettering applied) | typeset |
 | `export.json` | `ExportArtifact` (files written to `output_root/<Series>/<Chapter>/`) | export |
 | `qa.json` | `QaArtifact` (regions whose original text is still readable on the exported pages) | `qa` stage (`omniscan qa`, not part of `omniscan run`) |
 | `manifest.json` | `Manifest` of `StageRecord`s | stage runner |
 | `<series>/memory.json` | `SeriesMemory` (learned rules + translation memory of the whole series) | `learn/memory.py`, rebuilt from every `edits.json` when one changes; only rule switches are set by hand |
+| contribution archive (`.zip`, anywhere) | `Contribution` in `contribution.json` + `pages/<chapter id>/<page>.jpg` (hand corrections with the pages they were made on) | `share/contribution.py` (`omniscan contribute export`); never read by the pipeline |
 Save/load only through `Artifact.save()` (atomic tmp+rename) and `Model.load(path)`.
 
 **Hand edits** (`edits/`): `edits.json` is user-owned — only the editing tools write it (web Studio, via
@@ -60,6 +61,11 @@ per-chapter `plan`, and `apply_changes` through the same store operations (one `
 changes in memory and saves them through the same `edits/store.py` operations (the web Studio and `omniscan edit`
 call those directly).
 
+**Per-line status** (`edits/store.py::line_statuses`): a `LineCheck` in `edits.json` records a proofreader
+approving a line — the region's source text and English at that moment, matched to its region like the other
+edits (`apply.match_checks`). A line is `checked` while both still equal the check, else `edited` when it carries
+a region edit or a hand-written line, else `todo`; a stale check stays recorded (an undo can make it hold again).
+
 **Learning** (`learn/`): `learn/harvest.py` compares every edit with the pipeline text it records
 (`RegionEdit.auto_text`, `TranslationEdit.auto_text`, set when the edit is first made) — OCR fixes,
 deletions, watermark/sfx labels, English lines, rewritten words. `learn/memory.py` turns a series'
@@ -74,23 +80,68 @@ from it through the optional `input_extra(ctx)` hook (`core/stage.py`, hashed wi
 this chapter's lines (`remembered_lines`). A switched-off rule re-runs the OCR; a new hand translation re-runs
 only the chapters holding that line, and an exact memory line wins over a reused candidate.
 
+**Page images** (`translate/images.py`): a `chat_json` profile with `images = true` attaches the page tiles its
+request's regions sit on (`PageImages`: read from the raw pages with Pillow; each slice scaled so the strip width
+fits `image_side` and cut into tiles at most `image_side` px tall (`tiles_of`), so a webtoon slice keeps its
+detail; base64 JPEG in the Ollama message's `images`). Each region carries `image` and `box` in its tile's pixels
+(the tile holding its vertical centre), `run.py::_chunks` cuts requests at `images_per_request` images, and a
+repair round sends only the missing regions' tiles. The stage builds one `PageImages` for all its profiles.
+`translation_key` adds the image size and the tile's identity (its rows and the sha256 of the raw pages under
+it, from ingest.json) only for a line actually sent with its image (`PageImages.sent`), so profiles without
+images keep their keys, a replaced page re-translates the lines it shows, and a line sent text-only is sent
+again once its page can be read. The stage hash sees the image settings only when they are on
+(`stage_profile`), and with images the stage's inputs add ingest.json, slices.json and the raw pages. Local
+models get a token per 28 px patch of each image added to `num_ctx`, which never shrinks between image requests
+of one model (no reload per request). Unreadable pages degrade to a text-only request (logged once).
+
 **Speakers and voices** (`translate/voices.py`): `Region.speaker` is set by hand (a `RegionEdit.speaker`, applied
 like every region edit); a series' hand-written `voices.toml` (library dir, next to `series.toml`) describes how
 each character talks. The chat_json prompt carries each region's speaker and the voices of the characters who
 speak or are named in the request; `translation_key` includes a region's speaker and voice only when it has a
 speaker, so unassigned lines keep their keys. `voices.toml` is an input of the translate stage.
 
+**Contributions** (`share/contribution.py`, X4 in `docs/ROADMAP.md`): what a user shares so the models and defaults
+improve, for now as a local zip archive. `build` walks a series' chapters: each current region is paired with the
+pipeline's output (`ocr_auto.json` / `final_auto.json`, or the reading an edit recorded in `auto_text`) and its
+hand edits (matched like the stages re-apply them), deleted pipeline regions — and detections a hand-drawn box
+replaced (`replaced_by`) — are added back as `deleted`, and only pages holding a correction are kept, in page
+pixels (strip resolution). `write_archive` re-encodes those pages from the raw files (Pillow, like the PSD export:
+no metadata) and gives every entry the same fixed timestamp; `contribution.json` holds no date. Names never leave
+the machine: the series and chapters are HMAC-SHA256 ids keyed with a random per-install salt
+(`<work_root>/contribution-salt`), fonts are file names. `[share] enabled` (`ShareConfig`) gates `build`: false in
+config.toml opts out every series, false in a series.toml that series; no upload exists yet.
+
 **Consistency** (`qa/consistency.py`): a series-wide proofreading report, never a stage and never written to
 disk: `series_lines` reads every chapter's current regions and English lines, `divergences` groups repeated
 source lines with different English, `term_misses` checks locked glossary terms with `glossary/match.py`
 (served by `omniscan consistency` and `GET /api/series/{series}/consistency`).
+
+**Reading one region again** (`ocr/on_demand.py`): the Studio's *Read again* and `omniscan edit ocr` cut the
+region's box plus a 24 px margin from the raw pages (`cleanup/strip.py`, Pillow) and pass it to the `ocr`
+stage's own `read_regions` (ppocr: lines found inside the crop) or `read_region_crops` with the region's box
+in crop pixels; the models come from a VRAM manager's vision group under the GPU lock, for that one read. The
+reading is only returned; keeping it is a hand edit (`update_region(text=…)`). The module imports torch only
+inside `read_region`, so the web app and the CLI stay torch-free at import.
+
+**Finding missed text on one page** (`detect/on_demand.py`): the Studio's *Find missed text* and
+`omniscan edit find` crop one raw page's strip rows, run the `detect` stage's own tiling, merging and
+`build_regions` over it (optionally at another detector threshold, restored afterwards), drop every box a
+current region covers (the box mostly inside the region, or the region mostly inside the box), and read the
+rest with `ocr/on_demand.read_in` from the same crop, all under one vision-group load. The finds are returned
+as suggestions; adding one is `edits.store.add_region`, so `regions.json` / `ocr_auto.json` and the manifest
+never change.
 
 **Interchange** (`interchange/`): other tools' files in and out of a chapter, never a stage. Out: LabelPlus
 files (`labelplus.py`), layered PSD pages (`psd.py`) and BallonsTranslator projects (`ballons.py`), built from
 the chapter's artifacts on the CPU. In: LabelPlus labels (a point each) go to the region they point into
 (`labelplus.py::match_labels`); BallonsTranslator and manga-image-translator text blocks (`ballons.py`, `mit.py`,
 a box each in page pixels) go to the region they overlap most (`blocks.py::match_blocks`). Everything imported
-is recorded through `edits/store.py`, like any hand edit.
+is recorded through `edits/store.py`, like any hand edit. Between OmniScan users, a chapter travels as a project archive
+(`project.py`): `raw/`, `work/` (the whole chapter work dir), `series/` (series.toml, voices.toml) and optionally
+`output/`, listed with sha256 in a `ChapterProject` (`project.json`). Stage input hashes cover file names and
+contents, not locations, so an unpacked chapter's stages stay done. `unpack` checks the listing (only those
+parts, plain names, no duplicates up to case, a size cap), stages into hidden sibling folders, verifies every
+file's size and sha256, and only then moves the folders into place.
 
 ## Stages (`core/stage.py`)
 A stage is a class with `name`, `version`, `gpu_group` class vars and four methods:

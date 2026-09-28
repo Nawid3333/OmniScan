@@ -24,12 +24,14 @@ from PIL import Image
 from pydantic import Field, ValidationError
 
 from omniscan.cleanup import store as cleanup_store
+from omniscan.cleanup.lama_now import clean_with_lama
 from omniscan.core.config import Config, LearnConfig, SeriesConfigError, get_secrets, series_config
 from omniscan.core.paths import IMAGE_SUFFIXES, ChapterPaths, SeriesPaths, list_images, natural_key
 from omniscan.core.schemas import (
     RGB,
     BBox,
     CleanupMethod,
+    CleanupPatch,
     FilterArtifact,
     FilterDecision,
     FinalArtifact,
@@ -43,6 +45,7 @@ from omniscan.core.schemas import (
     SeriesMemory,
     SlicesArtifact,
 )
+from omniscan.detect.on_demand import Found, find_on_page_now
 from omniscan.edits import store as edit_store
 from omniscan.edits.replace import FindReplace, apply_changes
 from omniscan.edits.replace import plan as replace_plan
@@ -53,6 +56,7 @@ from omniscan.glossary.store import GlossaryStore
 from omniscan.inpaint.patches import load_patches
 from omniscan.learn.memory import current_memory, is_active, set_rule_enabled
 from omniscan.llm.ollama import OllamaClient, OllamaError, OllamaRateLimitError
+from omniscan.ocr.on_demand import Reading, read_region_now
 from omniscan.pipeline.stages import STAGE_ORDER
 from omniscan.qa.consistency import divergences, series_lines, term_misses
 from omniscan.queue.store import QueueStore, queue_db_path
@@ -98,6 +102,20 @@ class TranslateBody(Model):
     region_ids: list[str] = Field(min_length=1, max_length=60)
     profile: str | None = None  # one profile by name (enabled or not); None = every enabled profile
     apply: bool = False  # keep each region's first suggestion as its English line
+
+
+class OcrBody(Model):
+    """Body of the one-region OCR POST request."""
+
+    apply: bool = False  # keep a non-empty reading as the region's source text (a hand edit)
+
+
+class FindBody(Model):
+    """Body of the find-missed-text POST request."""
+
+    threshold: float | None = Field(
+        default=None, gt=0.0, lt=1.0
+    )  # the detector's score threshold; None = the series'
 
 
 class LayoutBody(Model):
@@ -158,6 +176,13 @@ def built_ui(folder: Path = UI_DIST) -> Path | None:
 def ollama_client(cfg: Config) -> ChatClient:
     """The chat client for on-demand translation (the configured Ollama daemon)."""
     return OllamaClient(cfg.ollama, get_secrets())
+
+
+class CheckedBody(Model):
+    """Body of the per-line status POST request: which regions' lines to mark checked, or unchecked."""
+
+    region_ids: list[str] = Field(min_length=1)
+    checked: bool = True
 
 
 class ReplaceBody(Model):
@@ -229,7 +254,12 @@ def create_app(
     cors_origins: Sequence[str] = ("http://localhost:5173",),
     run_worker: bool = False,
     chat_client: Callable[[Config], ChatClient] = ollama_client,
+    ocr_reader: Callable[[ChapterPaths, str, Config], Reading] = read_region_now,
+    page_finder: Callable[
+        [ChapterPaths, int, Config, float | None], list[Found]
+    ] = find_on_page_now,  # tests fake it
     ui_dir: Path | None = None,
+    lama_cleaner: Callable[..., CleanupPatch] = clean_with_lama,  # cleans a "lama" stroke; tests pass a fake
 ) -> FastAPI:
     """Build the debug API app: series/chapter browsing + ingest/slices artifacts + raw pages.
 
@@ -237,7 +267,8 @@ def create_app(
     a background thread that drains `queue.db`, so `POST .../run` requests actually execute instead of
     only ever sitting queued; tests and other embedders that just want to read existing artifacts
     should leave it `False` (the default here) to avoid touching the GPU/queue at all. `chat_client`
-    builds the LLM client of the on-demand translation route (tests pass a fake). `ui_dir` (the built web UI,
+    builds the LLM client of the on-demand translation route (tests pass a fake), `ocr_reader` reads one region
+    again for the OCR route (tests pass a fake). `ui_dir` (the built web UI,
     see `built_ui`) is served at `/`, so the API and the Studio share one address.
     """
 
@@ -550,6 +581,80 @@ def create_app(
             "applied": [line.model_dump(mode="json") for line in result.applied],
         }
 
+    def ocr_body(series: str, chapter: str, region_id: str, body: OcrBody) -> dict[str, object]:
+        """Read one region again (sync, runs in a worker thread); with `apply` keep a non-empty reading."""
+        paths = chapter_paths(series, chapter)
+        try:
+            scfg = series_config(cfg, series_paths(series).library_dir)
+        except SeriesConfigError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        try:
+            reading = ocr_reader(paths, region_id, scfg)
+        except (edit_store.EditNotFoundError, FileNotFoundError) as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (ImportError, OSError, RuntimeError, ValueError) as exc:  # no torch backend, no models, no GPU
+            raise HTTPException(status_code=503, detail=f"the OCR could not run: {exc}") from exc
+        applied = body.apply and bool(reading.text.strip())
+        if applied:
+            run_edit(
+                lambda: edit_store.update_region(
+                    paths, region_id, direction=scfg.detect.reading_direction, text=reading.text
+                )
+            )
+        return {
+            "region_id": reading.region_id,
+            "text": reading.text,
+            "confidence": reading.confidence,
+            "engine": reading.engine,
+            "applied": applied,
+        }
+
+    @app.post("/api/series/{series}/chapters/{chapter}/regions/{region_id}/ocr")
+    async def ocr_region(series: str, chapter: str, region_id: str, request: Request) -> dict[str, object]:
+        """Read one region again with the series' OCR engine (its models are loaded for this read, with
+        exclusive GPU access) and return the reading; with `apply` a non-empty reading becomes the region's
+        source text, a hand edit. 404 for an unknown region, 503 when the OCR cannot run."""
+        body = await json_body(request, OcrBody)
+        return await run_in_threadpool(ocr_body, series, chapter, region_id, body)
+
+    def find_body(series: str, chapter: str, page: int, body: FindBody) -> dict[str, object]:
+        """Search one page for missed text (sync, runs in a worker thread)."""
+        paths = chapter_paths(series, chapter)
+        try:
+            scfg = series_config(cfg, series_paths(series).library_dir)
+        except SeriesConfigError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        try:
+            found = page_finder(paths, page, scfg, body.threshold)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except (ImportError, OSError, RuntimeError) as exc:  # no torch backend, no models, no GPU
+            raise HTTPException(status_code=503, detail=f"the detector could not run: {exc}") from exc
+        return {
+            "found": [
+                {
+                    "kind": item.kind,
+                    "bbox": item.bbox.model_dump(),
+                    "bubble_bbox": None if item.bubble_bbox is None else item.bubble_bbox.model_dump(),
+                    "score": item.score,
+                    "text": item.text,
+                    "confidence": item.confidence,
+                }
+                for item in found
+            ]
+        }
+
+    @app.post("/api/series/{series}/chapters/{chapter}/pages/{page}/find")
+    async def find_on_page(series: str, chapter: str, page: int, request: Request) -> dict[str, object]:
+        """Run the detector again on raw page `page` (SourceFile.index; optionally at another score threshold) and
+        return the text areas no current region covers, with what the OCR reads there — suggestions to add as
+        hand-drawn regions (POST …/regions); nothing is written. 404 without the page layout or a page file, 422
+        for no such page, 503 when the models cannot run."""
+        body = await json_body(request, FindBody)
+        return await run_in_threadpool(find_body, series, chapter, page, body)
+
     @app.post("/api/series/{series}/chapters/{chapter}/translate")
     async def translate_regions(series: str, chapter: str, request: Request) -> dict[str, object]:
         """Translate a few regions now (neighbouring lines as context, glossary and story applied) and return
@@ -573,18 +678,30 @@ def create_app(
     @app.get("/api/series/{series}/chapters/{chapter}/edits")
     def get_edits(series: str, chapter: str) -> dict[str, object]:
         """The chapter's hand edits (edits.json; empty lists when none), the regions they deleted, which current
-        regions carry a region edit or a hand-written line, and how many steps can be undone and redone."""
+        regions carry a region edit or a hand-written line, whose lines are checked, and how many steps can be
+        undone and redone."""
         paths = chapter_paths(series, chapter)
         edits = edit_store.load_edits(paths)
         edited, translated = edit_store.edited_ids(paths)
         back, forward = edit_store.history_steps(paths)
+        status = edit_store.line_statuses(paths, {*edited, *translated})
         return {
             **edits.model_dump(mode="json"),
             "deleted_regions": [r.model_dump(mode="json") for r in edit_store.deleted_regions(paths)],
             "edited_region_ids": edited,
             "manual_translation_ids": translated,
+            "checked_region_ids": [region_id for region_id, value in status.items() if value == "checked"],
             "history": {"undo": back, "redo": forward},
         }
+
+    @app.post("/api/series/{series}/chapters/{chapter}/checked")
+    async def set_checked(series: str, chapter: str, request: Request) -> dict[str, object]:
+        """Mark regions' lines checked (their source and English as they are now) or unchecked, one undo step;
+        returns the edits as GET does. 404 for an unknown region."""
+        body = await json_body(request, CheckedBody)
+        paths = chapter_paths(series, chapter)
+        run_edit(lambda: edit_store.set_checked(paths, body.region_ids, checked=body.checked))
+        return get_edits(series, chapter)
 
     @app.post("/api/series/{series}/replace")
     async def replace_text(series: str, request: Request) -> dict[str, object]:
@@ -705,16 +822,25 @@ def create_app(
 
     @app.post("/api/series/{series}/chapters/{chapter}/cleanup", status_code=201)
     async def add_cleanup(series: str, chapter: str, request: Request) -> dict[str, object]:
-        """Clean one brush stroke (fill, inpaint, clone or restore); export applies it after every automatic
-        patch. Returns the new patch."""
+        """Clean one brush stroke (fill, inpaint, clone, restore or lama); export applies it after every automatic
+        patch. Returns the new patch. "lama" loads the LaMa model for the stroke (503 when it cannot)."""
         body = await json_body(request, CleanupBody)
         paths = chapter_paths(series, chapter)
+        mask = run_edit(lambda: decode_mask(body.mask, body.box))
+        if body.method == "lama":
+            try:
+                patch = await run_in_threadpool(
+                    run_edit, lambda: lama_cleaner(paths, cfg, page=body.page, box=body.box, mask=mask)
+                )
+            except (ImportError, RuntimeError, OSError) as exc:  # no torch, a failed download, no GPU
+                raise HTTPException(status_code=503, detail=f"LaMa is not available: {exc}") from exc
+            return patch.model_dump(mode="json")
         patch = run_edit(
             lambda: cleanup_store.add_patch(
                 paths,
                 page=body.page,
                 box=body.box,
-                mask=decode_mask(body.mask, body.box),
+                mask=mask,
                 method=body.method,
                 color=body.color,
                 offset=body.offset,

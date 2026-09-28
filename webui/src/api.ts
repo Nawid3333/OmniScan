@@ -455,13 +455,23 @@ export interface EditHistory {
   redo: number;
 }
 
+/** One line a proofreader approved: its source text and English when it was checked (edits.json). */
+export interface LineCheck {
+  region_id: string;
+  anchor: BBox;
+  source: string;
+  english: string;
+}
+
 export interface ChapterEdits {
   regions: RegionEdit[];
   translations: TranslationEdit[];
   layout?: LayoutEdit[];
+  checked?: LineCheck[]; // the raw checks; `checked_region_ids` says which still hold
   deleted_regions: Region[];
   edited_region_ids: string[];
   manual_translation_ids: string[];
+  checked_region_ids?: string[]; // lines a proofreader approved (their source and English unchanged since)
   history?: EditHistory;
 }
 
@@ -508,6 +518,16 @@ export async function stepEdits(series: string, chapter: string, step: "undo" | 
   return postJson<ChapterEdits>(`${chapterBase(series, chapter)}/edits/${step}`, {});
 }
 
+/** Mark regions' lines checked (their source and English as they are now) or unchecked; one undo step. */
+export async function setChecked(
+  series: string,
+  chapter: string,
+  regionIds: string[],
+  checked: boolean,
+): Promise<ChapterEdits> {
+  return postJson<ChapterEdits>(`${chapterBase(series, chapter)}/checked`, { region_ids: regionIds, checked });
+}
+
 /** Change a region's kind, text box, bubble box and/or source text (recorded in edits.json). */
 export async function patchRegion(
   series: string,
@@ -516,6 +536,52 @@ export async function patchRegion(
   patch: RegionPatch,
 ): Promise<Region> {
   return patchJson<Region>(`${chapterBase(series, chapter)}/regions/${encodeURIComponent(regionId)}`, patch);
+}
+
+/** What the OCR read when one region was read again. */
+export interface OcrReading {
+  region_id: string;
+  text: string;
+  confidence: number;
+  engine: string;
+  applied: boolean;
+}
+
+/** Read one region again with the series' OCR engine; with `apply` a non-empty reading becomes its source text. */
+export async function readRegionAgain(
+  series: string,
+  chapter: string,
+  regionId: string,
+  apply = false,
+): Promise<OcrReading> {
+  return postJson<OcrReading>(`${chapterBase(series, chapter)}/regions/${encodeURIComponent(regionId)}/ocr`, {
+    ...(apply ? { apply: true } : {}),
+  });
+}
+
+/** A text area the detector found on a page that no region covers, with what the OCR reads there. */
+export interface FoundText {
+  kind: RegionKind;
+  bbox: BBox;
+  bubble_bbox: BBox | null;
+  score: number; // the detector's
+  text: string;
+  confidence: number; // the OCR's
+}
+
+/** Run the detector again on raw page `page` (SourceFile.index), optionally at another score threshold, and
+ *  return the text areas no region covers — suggestions to add with `addRegion`; nothing is written. */
+export async function findMissedText(
+  series: string,
+  chapter: string,
+  page: number,
+  threshold: number | null = null,
+): Promise<FoundText[]> {
+  const result = await postJson<{ found: FoundText[] }>(
+    `${chapterBase(series, chapter)}/pages/${page}/find`,
+    threshold === null ? {} : { threshold },
+  );
+  return result.found;
 }
 
 /** Add a hand-drawn region (strip-space box); the server gives it an m-prefixed id. */
@@ -586,7 +652,7 @@ export async function translateRegions(
   });
 }
 
-export type CleanupMethod = "fill" | "inpaint" | "clone" | "restore";
+export type CleanupMethod = "fill" | "inpaint" | "clone" | "restore" | "lama";
 
 export interface CleanupPatch {
   id: string;

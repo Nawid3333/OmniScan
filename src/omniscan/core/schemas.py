@@ -350,6 +350,29 @@ class ReaderSeries(Artifact):
     updated_at: datetime = Field(default_factory=utcnow)
 
 
+# ---------------------------------------------------------------- chapter projects (between OmniScan users)
+
+
+class ProjectFile(Model):
+    """One file of a chapter project archive, with what it must hash to after unpacking."""
+
+    path: str  # archive member: raw/…, work/…, series/… or output/…
+    sha256: str
+    bytes: int = Field(ge=0)
+
+
+class ChapterProject(Artifact):
+    """project.json in a chapter project archive (interchange/project.py): one chapter's raw pages and all its work
+    — stage artifacts, hand edits, cleanup, undo history — so another OmniScan user continues where it was left
+    (a group passing a chapter from translator to proofreader to typesetter)."""
+
+    format: Literal["omniscan-chapter-project"] = "omniscan-chapter-project"
+    app_version: str
+    series: str
+    chapter: str
+    files: list[ProjectFile]
+
+
 # ---------------------------------------------------------------- quality check
 
 
@@ -431,6 +454,17 @@ class LayoutEdit(Model):
     hidden: bool = False  # no English lettering for this region at all
 
 
+class LineCheck(Model):
+    """A region's line marked checked by hand (edits.json): a proofreader approved its source text and English as
+    they were then. A later change to either makes the line unchecked again; matched to its region like the other
+    edits (the same id still overlapping `anchor`, else the best-overlapping region)."""
+
+    region_id: str
+    anchor: BBox  # the region's text box when the line was checked
+    source: str  # the region's source text when checked (whitespace collapsed)
+    english: str  # its English line when checked, whitespace collapsed ("" for a region without one)
+
+
 class ChapterEdits(Artifact):
     """edits.json in the chapter work dir: every hand edit of the chapter. Written only by the editing tools
     (web studio, CLI); the stages read it and re-apply it to what they produce, so edits survive re-runs."""
@@ -438,6 +472,7 @@ class ChapterEdits(Artifact):
     regions: list[RegionEdit] = Field(default_factory=list)
     translations: list[TranslationEdit] = Field(default_factory=list)
     layout: list[LayoutEdit] = Field(default_factory=list)
+    checked: list[LineCheck] = Field(default_factory=list)  # lines a proofreader approved (per-line status)
     # Output cuts: the strip rows where the exported images split, set by hand (sorted, inside the strip);
     # None = one image per slice. Filtered slices stay out of the output either way.
     cuts: list[int] | None = None
@@ -453,7 +488,7 @@ class EditsHistory(Artifact):
 
 # ---------------------------------------------------------------- hand cleanup
 
-CleanupMethod = Literal["fill", "inpaint", "clone", "restore"]
+CleanupMethod = Literal["fill", "inpaint", "clone", "restore", "lama"]
 
 
 class CleanupPatch(Model):
@@ -462,8 +497,8 @@ class CleanupPatch(Model):
     The mask — and, except for "restore", the pixels — live in cleanup.npz as `<id>.mask` (bool [h, w]) and
     `<id>.pixels` (uint8 [h, w, 3]), both exactly the size of `box`. "restore" puts the raw page back under
     its mask (undoing an automatic clean there); the other methods replace the masked pixels with the stored
-    ones: a flat colour ("fill"), inpainting from the surroundings ("inpaint"), or the raw page `offset` away
-    ("clone").
+    ones: a flat colour ("fill"), inpainting from the surroundings ("inpaint"), the raw page `offset` away
+    ("clone"), or the LaMa model's rebuild ("lama").
     """
 
     id: str  # "c0001", "c0002", … in painting order
@@ -521,6 +556,95 @@ class SeriesMemory(Artifact):
 
     rules: list[LearnedRule] = Field(default_factory=list)
     translations: list[MemoryEntry] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------- shared data (contributions)
+
+
+class ContributionLettering(Model):
+    """A hand-set lettering (a LayoutEdit) in page pixels; the font is a file name only, never a path."""
+
+    font: str | None = None
+    size_px: int | None = None
+    color: RGB | None = None
+    stroke_px: int | None = None
+    stroke_color: RGB | None = None
+    align: Literal["center", "left", "right"] | None = None
+    angle: float | None = None
+    box: BBox | None = None
+    lines: list[str] | None = None
+    hidden: bool = False
+
+
+class ContributionRegion(Model):
+    """One text region of a contributed page: what the pipeline produced next to what the editor made of it.
+
+    `auto_kind`, `ocr_text` and `machine_english` are the pipeline's (None where it had none: a region added by
+    hand, a line never judged); `kind`, `text` and `english` are after the hand edits. A `deleted` region was
+    found by the pipeline and removed by hand (a false detection), or replaced by a box drawn over it by hand
+    (`replaced_by` names that box: the detector's box was wrong); its fields are the pipeline's. An `english_from`
+    of "typed" with no `english` is a line cleared by hand.
+    """
+
+    id: str
+    box: BBox  # the text area, page pixels
+    bubble_box: BBox | None = None
+    reading_order: int = 0
+    lang: Lang
+    kind: RegionKind
+    auto_kind: RegionKind | None = None
+    ocr_text: str | None = None
+    text: str
+    added: bool = False
+    deleted: bool = False
+    replaced_by: str | None = None  # a deleted region: the id of the hand-drawn box that replaced it
+    edited: bool = False  # a hand edit changed the region's box, kind, text or speaker
+    machine_english: str | None = None
+    english: str | None = None
+    english_from: Literal["machine", "suggestion", "typed"] | None = (
+        None  # None: the region has no English line
+    )
+    speaker: str | None = None
+    lettering: ContributionLettering | None = None
+
+
+class ContributionPage(Model):
+    """One contributed page: its image in the archive (strip resolution, no metadata) and its regions."""
+
+    index: int  # the page's SourceFile.index in its chapter
+    image: str  # archive member, e.g. "pages/<chapter id>/0003.jpg"
+    width: int
+    height: int
+    regions: list[ContributionRegion]
+
+
+class ContributionChapter(Model):
+    """The contributed pages of one chapter: only pages that carry a hand correction."""
+
+    id: str  # hash of the series and chapter names (the names themselves are never shared)
+    order: int  # the chapter's position in the series' reading order
+    pages: list[ContributionPage]
+
+
+class ContributionTerm(Model):
+    """A locked glossary term of the series."""
+
+    source: str
+    target: str
+    type: TermType = "other"
+    aliases: list[str] = Field(default_factory=list)
+
+
+class Contribution(Artifact):
+    """contribution.json inside a contribution archive (share/): a series' hand corrections with the pages they
+    were made on, shared to improve the models and defaults. Carries no file names, folder paths, image metadata
+    or date; built only for series that have not opted out (`[share] enabled`)."""
+
+    app_version: str
+    series_id: str  # salted hash of the series name (the salt never leaves this install)
+    target_lang: Lang = "en"
+    chapters: list[ContributionChapter]
+    glossary: list[ContributionTerm] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------- manifest

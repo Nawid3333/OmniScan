@@ -10,9 +10,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from omniscan.core.paths import ChapterPaths, SeriesPaths
-from omniscan.core.schemas import FinalArtifact, RegionKind
+from omniscan.core.schemas import RegionKind
 from omniscan.edits.apply import match_region_edits, match_translation_edits
-from omniscan.edits.store import FINAL_AUTO_FILE, auto_regions, current_regions, load_edits
+from omniscan.edits.store import auto_regions, current_regions, judged_lines, load_edits
 
 
 def norm(text: str) -> str:
@@ -66,12 +66,7 @@ def harvest_chapter(paths: ChapterPaths) -> Corrections:
             found.ocr_fixes.append((before, text))
         if edit.kind in ("sfx", "watermark") and text:
             found.kinds.append((text, edit.kind))
-    final_auto = paths.artifact(FINAL_AUTO_FILE)
-    judged = (
-        {line.region_id: line.text for line in FinalArtifact.load(final_auto).lines}
-        if final_auto.is_file()
-        else {}
-    )
+    judged = judged_lines(paths)
     claims = match_translation_edits(current_regions(paths), edits)
     for index, edit in enumerate(edits.translations):
         typed = edit.suggested_by is None

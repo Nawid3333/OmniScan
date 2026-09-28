@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import shutil
 import threading
-from collections.abc import Iterator, Mapping
+from collections.abc import Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Literal
@@ -28,6 +28,7 @@ from omniscan.core.schemas import (
     FinalLine,
     Lang,
     LayoutEdit,
+    LineCheck,
     Region,
     RegionEdit,
     RegionKind,
@@ -39,11 +40,13 @@ from omniscan.edits.apply import (
     ADDED_PREFIX,
     apply_region_edits,
     apply_translation_edits,
+    match_checks,
     match_layout_edits,
     match_region_edits,
     match_translation_edits,
 )
 from omniscan.export.segments import output_segments
+from omniscan.translate.prompts import source_text
 
 EDITS_FILE = "edits.json"
 HISTORY_FILE = "edits_history.json"  # earlier states of edits.json, for undo and redo
@@ -54,6 +57,7 @@ MANUAL_JUDGE = "manual"  # FinalArtifact.judge_model of a final.json no judge ha
 MIN_BOX_PX = 2  # a hand-drawn box narrower or lower than this (after clamping to the strip) is refused
 
 Direction = Literal["ltr", "rtl"]
+LineStatus = Literal["todo", "edited", "checked"]  # a line's review state (`line_statuses`)
 
 # One edit at a time in this process: the web server runs its handlers on a thread pool, and every
 # operation is a read-modify-write of edits.json, ocr.json and final.json.
@@ -276,14 +280,31 @@ def _layout_edit_of(paths: ChapterPaths, edits: ChapterEdits, region_id: str) ->
     return next((i for i, claimed in claims.items() if claimed == region_id), None)
 
 
-def _reanchor(edits: ChapterEdits, indices: tuple[int | None, int | None], box: BBox) -> None:
-    """Move the anchors of a region's hand-written line and hand-set lettering (`indices` into
-    `edits.translations` and `edits.layout`) to its new box, so both follow a moved region."""
-    line_index, layout_index = indices
+def _check_of(paths: ChapterPaths, edits: ChapterEdits, region_id: str) -> int | None:
+    """Index in `edits.checked` of the check of the region shown as `region_id`, or None."""
+    claims = match_checks(current_regions(paths), edits)
+    return next((i for i, claimed in claims.items() if claimed == region_id), None)
+
+
+def _followers(paths: ChapterPaths, edits: ChapterEdits, region_id: str) -> tuple[int | None, ...]:
+    """Indices of the edits anchored on a region's box: its hand-written line, lettering and check."""
+    return (
+        _translation_edit_of(paths, edits, region_id),
+        _layout_edit_of(paths, edits, region_id),
+        _check_of(paths, edits, region_id),
+    )
+
+
+def _reanchor(edits: ChapterEdits, indices: tuple[int | None, ...], box: BBox) -> None:
+    """Move the anchors of a region's hand-written line, hand-set lettering and check (`indices` into
+    `edits.translations`, `edits.layout` and `edits.checked`) to its new box, so they follow a moved region."""
+    line_index, layout_index, check_index = indices
     if line_index is not None:
         edits.translations[line_index] = edits.translations[line_index].model_copy(update={"anchor": box})
     if layout_index is not None:
         edits.layout[layout_index] = edits.layout[layout_index].model_copy(update={"anchor": box})
+    if check_index is not None:
+        edits.checked[check_index] = edits.checked[check_index].model_copy(update={"anchor": box})
 
 
 def update_region(
@@ -316,7 +337,7 @@ def update_region(
         if speaker is not None:
             changes["speaker"] = speaker.strip()
         edits = load_edits(paths)
-        followers = (_translation_edit_of(paths, edits, region.id), _layout_edit_of(paths, edits, region.id))
+        followers = _followers(paths, edits, region.id)
         index = _region_edit_of(paths, edits, region.id)
         if index is None:
             edits.regions.append(
@@ -379,6 +400,9 @@ def delete_region(paths: ChapterPaths, region_id: str, *, direction: Direction) 
         _ensure_auto(paths)
         region = _find(current_regions(paths), region_id)
         edits = load_edits(paths)
+        check = _check_of(paths, edits, region.id)
+        if check is not None:  # else it could claim an overlapping neighbour before that one's own check
+            del edits.checked[check]
         index = _region_edit_of(paths, edits, region.id)
         if index is not None and edits.regions[index].added:
             del edits.regions[index]
@@ -401,11 +425,13 @@ def revert_region(paths: ChapterPaths, region_id: str, *, direction: Direction) 
         index = _region_edit_of(paths, edits, region_id)
         if index is None:
             raise EditNotFoundError(f"region {region_id!r} has no edit to revert")
-        followers = (_translation_edit_of(paths, edits, region_id), _layout_edit_of(paths, edits, region_id))
+        followers = _followers(paths, edits, region_id)
         del edits.regions[index]
         restored = next((region for region in auto_regions(paths) if region.id == region_id), None)
         if restored is not None:
             _reanchor(edits, followers, restored.bbox)
+        elif followers[2] is not None:  # a hand-added region goes, and its check with it
+            del edits.checked[followers[2]]
         save_edits(paths, edits)
         regions = rebuild(paths, edits, direction=direction)
         return next((region for region in regions if region.id == region_id), None)
@@ -433,7 +459,7 @@ def edited_ids(paths: ChapterPaths) -> tuple[list[str], list[str]]:
     )
 
 
-def _judged_lines(paths: ChapterPaths) -> dict[str, str]:
+def judged_lines(paths: ChapterPaths) -> dict[str, str]:
     """The judge's own English lines (final_auto.json) by region id; {} when it has none."""
     path = paths.artifact(FINAL_AUTO_FILE)
     if not path.is_file():
@@ -460,7 +486,7 @@ def set_translations(
             _find(current, region_id)
         edits = load_edits(paths)
         index_of = {region_id: i for i, region_id in match_translation_edits(current, edits).items()}
-        judged = _judged_lines(paths)
+        judged = judged_lines(paths)
         for region_id, text in lines.items():
             region, index = regions[region_id], index_of.get(region_id)
             first = edits.translations[index].auto_text if index is not None else None
@@ -554,6 +580,91 @@ def hand_lettered_ids(paths: ChapterPaths) -> list[str]:
     current = current_regions(paths)
     claimed = set(match_layout_edits(current, load_edits(paths)).values())
     return [region.id for region in current if region.id in claimed]
+
+
+def _norm(text: str) -> str:
+    """An English line with every run of whitespace collapsed to one space (sources: `source_text`)."""
+    return " ".join(text.split())
+
+
+def _current_english(paths: ChapterPaths) -> dict[str, str]:
+    """The chapter's English lines as they will be lettered (final.json) by region id; {} when it has none."""
+    path = paths.artifact("final.json")
+    lines: dict[str, str] = {}
+    if path.is_file():
+        for line in FinalArtifact.load(path).lines:
+            lines.setdefault(line.region_id, line.text)
+    return lines
+
+
+def _line_check(region: Region, english: Mapping[str, str]) -> LineCheck:
+    """A check of `region`'s line as it is now: its source text and English."""
+    return LineCheck(
+        region_id=region.id,
+        anchor=region.bbox,
+        source=source_text(region),
+        english=_norm(english.get(region.id, "")),
+    )
+
+
+def _holds(check: LineCheck, region: Region, english: Mapping[str, str]) -> bool:
+    """Whether `check` still approves `region`'s line: neither its source text nor its English changed."""
+    now = _line_check(region, english)
+    return (check.source, check.english) == (now.source, now.english)
+
+
+def set_checked(paths: ChapterPaths, region_ids: Sequence[str], *, checked: bool = True) -> list[str]:
+    """Mark regions' lines checked — their source text and English as they are now, so a later change to either
+    unchecks them — or unchecked, as one undo step; returns the ids whose lines changed state (a line checked as
+    it is, or one without a check, is left alone: no undo step when nothing changed). EditNotFoundError for a
+    region the chapter does not have."""
+    with _LOCK:
+        _ensure_auto(paths)
+        regions = current_regions(paths)
+        wanted = {region_id: _find(regions, region_id) for region_id in region_ids}
+        edits = load_edits(paths)
+        index_of = {region_id: i for i, region_id in match_checks(regions, edits).items()}
+        english = _current_english(paths)
+        checks: list[LineCheck | None] = list(edits.checked)
+        changed: list[str] = []
+        for region_id, region in wanted.items():
+            index = index_of.get(region_id)
+            if not checked:
+                if index is not None:
+                    checks[index] = None
+                    changed.append(region_id)
+            elif index is None:
+                checks.append(_line_check(region, english))
+                changed.append(region_id)
+            elif not _holds(edits.checked[index], region, english):
+                checks[index] = _line_check(region, english)  # re-checked where it was: the order stays
+                changed.append(region_id)
+        if changed:
+            kept = [check for check in checks if check is not None]
+            save_edits(paths, edits.model_copy(update={"checked": kept}))
+        return changed
+
+
+def line_statuses(paths: ChapterPaths, touched: Collection[str] | None = None) -> dict[str, LineStatus]:
+    """Each current region's line status: `checked` while a check still matches its source text and English,
+    else `edited` when it carries a region edit or a hand-written line (`touched`: those ids, when the caller
+    has them from `edited_ids`), else `todo`."""
+    regions = current_regions(paths)
+    edits = load_edits(paths)
+    english = _current_english(paths)
+    by_id = {region.id: region for region in regions}
+    held = {
+        region_id
+        for i, region_id in match_checks(regions, edits).items()
+        if _holds(edits.checked[i], by_id[region_id], english)
+    }
+    if touched is None:
+        edited, translated = edited_ids(paths)
+        touched = {*edited, *translated}
+    return {
+        region.id: "checked" if region.id in held else "edited" if region.id in touched else "todo"
+        for region in regions
+    }
 
 
 def set_cuts(

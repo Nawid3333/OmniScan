@@ -134,6 +134,7 @@ Every key in `config/default.toml`:
 | `learn.enabled` | apply what the series' hand corrections taught to its later chapters (see "Learning from your corrections") | yes (`omniscan ocr`, `translate`, Studio *Translate*) |
 | `learn.min_count` | a word fix, a preferred wording or a deletion acts after this many matching corrections | yes |
 | `learn.examples` | how many similar lines of the translation memory each translation request shows the model | yes |
+| `share.enabled` | whether the series' hand corrections may be shared to improve OmniScan (on by default; see "Contributing corrections") | yes (`omniscan contribute export`) |
 | `ollama.local_url` | local Ollama base URL | yes (`doctor`) |
 | `ollama.cloud_url` | Ollama cloud base URL | yes (`doctor`) |
 | `ollama.request_timeout_s` | per-request timeout | used by the LLM client module (no pipeline stage yet) |
@@ -775,7 +776,16 @@ Profiles live in `config/translation_profiles.toml`, overridden by
 `~/.config/omniscan/translation_profiles.toml` (a profile there replaces the same-named one here).
 One profile is one model plus a prompt style: `chat_json` (many regions per request, glossary in the
 prompt, JSON answer) or `translategemma` (one request per region, locked glossary terms
-pre-substituted). Interrupted or rate-limited runs keep a dot-prefixed partial file that the next
+pre-substituted). A `chat_json` profile with `images = true` also sends the page images the regions sit
+on, so a vision model sees who is speaking and what a line refers to; each region then says which image it
+is on and where. `image_side` (default 1280) is the most pixels an image has on either side — a page is
+scaled so its width fits and a tall webtoon slice is cut into tiles that size, so the text and faces stay
+readable — and `images_per_request` (default 3) how many images one request covers; requests are cut to fit.
+Only models that accept images can use it (Ollama answers with an error otherwise); turning it on
+re-translates that profile's lines once, other profiles are unaffected (not even re-run). A replaced raw page
+re-translates the lines it shows, and a line that had to go without its page (a missing page file) is sent
+again once the page is back. The Studio's *Translate* sends it too for those profiles. Interrupted or
+rate-limited runs keep a dot-prefixed partial file that the next
 invocation resumes; a finished run deletes it. Exit 2 for unknown profiles or chapters with no
 `ocr.json`-less series; a chapter without `ocr.json` fails that chapter but the rest still run (exit
 1). An Ollama rate limit stops everything immediately with exit 3 and keeps the partial results.
@@ -1080,7 +1090,7 @@ edit in the chapter's `edits.json` and applies it to `ocr.json` / `final.json` a
 Studio, so it survives every re-run (see "Studio: editing by hand"). Boxes and cuts are strip pixels.
 
 ```bash
-uv run omniscan edit show "Solo Leveling" "Chapter 1"            # regions: id, kind, source, English, edited
+uv run omniscan edit show "Solo Leveling" "Chapter 1"            # regions: id, kind, source, English, edited, status
 uv run omniscan edit show "Solo Leveling" "Chapter 1" --json
 uv run omniscan edit text "Solo Leveling" "Chapter 1" r0003 "진우야, 도망쳐!"
 uv run omniscan edit kind "Solo Leveling" "Chapter 1" r0007 watermark
@@ -1090,11 +1100,18 @@ uv run omniscan edit add "Solo Leveling" "Chapter 1" 300 1200 420 1260 --kind sf
 uv run omniscan edit delete "Solo Leveling" "Chapter 1" r0009
 uv run omniscan edit english "Solo Leveling" "Chapter 1" r0003 "Jinwoo, run!"
 uv run omniscan edit translate "Solo Leveling" "Chapter 1" r0003 r0004 --apply
+uv run omniscan edit ocr "Solo Leveling" "Chapter 1" m0001            # read a hand-drawn box with the OCR
+uv run omniscan edit ocr "Solo Leveling" "Chapter 1" r0003 --apply    # and keep the reading as its source text
+uv run omniscan edit find "Solo Leveling" "Chapter 1" 4                # text the detector missed on page 4
+uv run omniscan edit find "Solo Leveling" "Chapter 1" 4 --threshold 0.15 --add   # fainter text, added as boxes
 uv run omniscan edit revert "Solo Leveling" "Chapter 1" r0003 --english
 uv run omniscan edit cuts "Solo Leveling" "Chapter 1" 2400 4800
 uv run omniscan edit cuts "Solo Leveling" "Chapter 1" --reset
 uv run omniscan edit replace "Solo Leveling" "Jinwoo" "Jin-Woo" --word --ignore-case --dry-run
 uv run omniscan edit replace "Solo Leveling" "Jinwoo" "Jin-Woo" --word --ignore-case --chapter "Chapter 1"
+uv run omniscan edit check "Solo Leveling" "Chapter 1" r0003 r0004
+uv run omniscan edit check "Solo Leveling" "Chapter 1" --all
+uv run omniscan edit check "Solo Leveling" "Chapter 1" r0004 --uncheck
 uv run omniscan edit undo "Solo Leveling" "Chapter 1"
 uv run omniscan edit redo "Solo Leveling" "Chapter 1"
 ```
@@ -1108,9 +1125,12 @@ uv run omniscan edit redo "Solo Leveling" "Chapter 1"
 | `delete` | remove a region (a false detection); `revert` brings it back |
 | `english` | write a region's English line |
 | `translate` | translate regions now with every enabled profile (`--profile` for one, a disabled one too) and print the suggestions; `--apply` keeps each first suggestion |
+| `ocr` | read one region again with the series' OCR engine (its models load for this read) and print it; `--apply` keeps a non-empty reading as the source text; exit 1 when the OCR cannot run (no models, no torch backend) |
+| `find` | run the detector again on one page (counted from 1 as the Studio shows it; `--threshold` for fainter text) and list the text areas no region covers, with what the OCR reads there; `--add` adds them all as hand-drawn regions, one undo step; exit 1 when the models cannot run |
 | `revert` | drop a region's hand edits (a drawn region is removed), or with `--english` its hand-written line |
 | `cuts` | show or set where the exported images split; `--reset` goes back to one image per slice |
 | `replace` | find and replace across the English lines of the whole series (`--chapter` for some chapters; `--source` for the source texts); `--word` whole words, `--ignore-case` any case (the replacement takes each match's case: JINWOO → JIN-WOO), `--regex` a regular expression (`\1` … in the replacement), `--dry-run` lists the changes only; every change is a hand edit, one undo step per chapter |
+| `check` | mark lines checked (`--all` every region, `--uncheck` to unmark): their source and English as they are now are approved, and a later change to either unchecks them; `show` lists each line's status (todo, edited, checked) |
 | `undo`, `redo` | take back the last hand edit of the chapter, or make the last undone one again (see "Undo and redo" in the Studio section) |
 
 A missing chapter artifact or region, a box outside the strip or a cut outside it exits 2 with the reason;
@@ -1160,6 +1180,35 @@ from `layout.json`, on a transparent layer). The file's composite image is the f
 layer support show the release. Hide `text` to letter by hand, or paint on `clean`. Default folder:
 `<output_root>/<series>/_psd/<chapter>/`. Pages are built on the CPU with the Studio preview's code; without a
 `layout.json` (typeset not run yet) the `text` layers are empty.
+
+### `omniscan project`
+
+Pass a chapter to another OmniScan user — the next person in a group (translator → proofreader → typesetter),
+or yourself on another computer. One `.omniscan` file holds the chapter's raw pages and all its work: every
+stage's output, your hand edits with their undo history, hand cleanup, and the series' `series.toml` and
+`voices.toml`. Unpacked, every stage already done stays done (the stages compare file contents, which travel
+unchanged) and every hand edit can still be changed or undone.
+
+```bash
+uv run omniscan project pack "Solo Leveling" "Chapter 12"              # "Solo Leveling - Chapter 12.omniscan" here
+uv run omniscan project pack "Solo Leveling" "Chapter 12" -o ch12.omniscan --with-output   # plus the finished pages
+uv run omniscan project show ch12.omniscan                             # what it holds, without unpacking
+uv run omniscan project unpack ch12.omniscan                           # into your library and work folders
+uv run omniscan project unpack ch12.omniscan --force                   # replace your copy (raw, work, finished pages)
+uv run omniscan project unpack ch12.omniscan --series "SL" --chapter "Ch 12"   # under other names
+```
+
+Unpacking never overwrites: a chapter you already have (its raw pages, work or finished pages) is replaced only
+with `--force`, and the series files are added only where your series has none (your own `series.toml` /
+`voices.toml` stay). Of someone else's `series.toml` only numbers, switches and fixed choices are taken (sizes,
+thresholds, the source language, the lettering style); download addresses, file names, models, fonts and batch
+sizes are left out — they would make OmniScan fetch, load or write what the sender chose — and `unpack` names
+what it left out. A file from someone else is checked before anything is written: only files OmniScan writes,
+inside the chapter's folders, with names every system accepts (no `NUL` or `COM1.jpg`), each matching the sha256
+its `project.json` lists, and work files that name only files inside the chapter; a damaged, encrypted or
+tampered file is refused and leaves nothing behind. If moving the chapter into place fails (a file open in
+another program), your old copy is put back. The glossary is not included; pass it with
+`omniscan glossary export` / `import`.
 
 ### `omniscan ballons` and `omniscan mit`
 
@@ -1212,6 +1261,22 @@ uv run omniscan learn enable "Solo Leveling" 3f2a9c1e0b7d
 
 A rule's state is `active`, `off` (switched off) or `needs more` (fewer than `learn.min_count`
 corrections so far). An unknown rule id exits 2.
+
+### `omniscan contribute`
+
+Write a series' hand corrections, with the pages they were made on, to one archive you can share so OmniScan
+improves (see "Contributing corrections"). Nothing is uploaded.
+
+```bash
+uv run omniscan contribute export "Solo Leveling" --dry-run        # what the archive would hold
+uv run omniscan contribute export "Solo Leveling"                  # omniscan-contribution-<id>.zip in this folder
+uv run omniscan contribute export "Solo Leveling" -c "Chapter 12" -o fixes.zip
+uv run omniscan contribute export "Solo Leveling" --json           # the summary as JSON (path, bytes)
+```
+
+A series (or machine) that opted out (`[share] enabled = false`), an unknown series or chapter, and an archive
+that cannot be written (a page file gone, an `--output` that is a folder) exit 2 with the reason; a series without
+hand corrections writes nothing. A chapter given twice is exported once.
 
 ### `omniscan qa`
 
@@ -1318,7 +1383,8 @@ pipeline stages for the chapter; and the editing endpoints behind the Studio (se
 `PUT …/final/{id}` (optional `suggested_by`) and `POST …/final/{id}/revert`; plus on-demand translation:
 `GET /api/translation-profiles` and `POST …/translate` (`{"region_ids": [...], "profile": null, "apply": false}`,
 returns every profile's suggestion); hand cleanup: `GET …/cleanup`, `POST …/cleanup` (one brush stroke:
-`{"page", "box", "mask" (base64 PNG), "method", "color"?, "offset"?}`), `DELETE …/cleanup/{id}` and
+`{"page", "box", "mask" (base64 PNG), "method", "color"?, "offset"?}`; `method`: fill, inpaint, clone, restore
+or lama), `DELETE …/cleanup/{id}` and
 `GET …/cleanup/{id}.png`; lettering: `GET /api/fonts`, `GET …/layout/live`, `PUT …/layout/{id}` (the
 region's whole hand lettering: `font`, `size_px`, `color`, `stroke_px`, `stroke_color`, `align`, `angle`,
 `box`, `lines`, `hidden`), `DELETE …/layout/{id}` and `GET …/preview/{page}.png` (the rendered page). Every
@@ -1606,7 +1672,16 @@ shows one raw page at a time with every text region as a box:
   link. The *kind* menu turns a box into bubble text, free text, a sound effect or a watermark (a
   watermark is erased by inpaint and never translated).
 - **Source text.** The side panel shows the OCR reading; correct it and *Save source* (Ctrl+Enter). A
-  second-opinion reading, when the OCR had one, can be taken over with *use*.
+  second-opinion reading, when the OCR had one, can be taken over with *use*. *Read again (OCR)* reads
+  just this box with the series' OCR engine — after moving a box or drawing one the detector missed — and
+  shows the reading with a *use* link; nothing changes until you *Save source*. The first read loads the
+  OCR models (a few seconds) and needs the GPU for that moment (it waits while a run holds it).
+- **Find missed text.** With nothing selected, the page panel's *Find missed text* runs the detector again
+  on this page — at the series' threshold, or a lower one you type for faint text such as small signs — and
+  the OCR reads every box no region covers. The finds show as orange dashed boxes (+1, +2, …) with their
+  text; *add* (or *Add all*) makes them hand-drawn regions with that text, undoable like any edit. Nothing
+  else changes: the pipeline's own boxes stay, so your edits and the finished stages are untouched. Like
+  *Read again*, the first search loads the detector and OCR models.
 - **English.** Write or correct the region's English line and *Save English* (Ctrl+Enter). A region
   with no English line yet is labelled *untranslated*; a hand-written line whose source text was fixed
   afterwards is labelled *source changed* (and flagged `source_changed` in `final.json`).
@@ -1624,7 +1699,10 @@ shows one raw page at a time with every text region as a box:
 - **Clean by hand.** **C** (or *Clean*) turns the mouse into a brush (**[** / **]** change its size).
   Paint over leftover lettering, a stray mark or a watermark — or over art the automatic cleaning
   damaged — then *Apply* (Enter; Esc discards the strokes). What the painted pixels become:
-  *inpaint* rebuilds them from their surroundings (OpenCV), *fill* paints one colour (by default the
+  *inpaint* rebuilds them from their surroundings (OpenCV), *LaMa* has the inpainting model redraw them
+  (the model the `inpaint_lama` stage uses, with a window of page around the stroke: better on art,
+  screentone and gradients; it loads for the stroke through the VRAM manager, 10-25 s the first time, and
+  answers 503 when it cannot — no torch, weights not downloadable), *fill* paints one colour (by default the
   median colour just around the stroke), *clone* copies the page from the spot you Alt+clicked (the
   offset stays fixed for the next strokes), *restore* brings back the raw page. Strokes are computed from
   the page as it currently looks — raw page, automatic cleaning, your earlier patches — so inpainting next
@@ -1661,6 +1739,14 @@ shows one raw page at a time with every text region as a box:
   every change; *Replace all* (only after a preview of the same rule) records them as hand edits — kept by
   every re-run and learned from — as one undo step per chapter. Watermarks are never touched. Same as
   `omniscan edit replace`.
+- **Checked lines.** *Mark line checked* approves the selected line — its source text and English as they are
+  now — for proofreading: the region list shows it as `checked` (green). Changing either one (by hand, or a
+  re-run whose machine line differs) makes it unchecked again, so what is checked is always what will be
+  lettered; moving the box, setting a speaker or lettering keeps the check, and deleting the region drops it.
+  Every line is `todo`, `edited` (a hand edit since the last check) or `checked`; the same status is in
+  `omniscan edit show` / `check` and the desktop Studio. A check is an undo step like any edit; checking a line
+  that is already checked as it is, or unchecking one that is not, changes nothing (`edit check` counts only the
+  lines whose status changed).
 - **Undo and redo.** *↶ Undo* (Ctrl+Z) takes back the last edit of the chapter — a box, a source text, an
   English line, a kind, lettering, output cuts, a deletion or a restore — and *↷ Redo* (Ctrl+Shift+Z or
   Ctrl+Y) makes it again; inside a text field the keys undo your typing instead. The same history is shared
@@ -1711,6 +1797,32 @@ or is switched off (or a changed `[learn]` setting) re-runs the `ocr` stage, so 
 back once the rule is off; a line you translated by hand re-runs the `translate` stage only for the chapters
 that hold the same line, and the remembered English always wins over a line kept from an earlier run. Set
 `[learn] enabled = false` in a series' `series.toml` to switch learning off for that series.
+
+## Contributing corrections
+
+Your corrections can help everyone's OmniScan get better: better OCR, translation and lettering defaults and
+shared glossaries come from real pages with real fixes. Sharing is **on by default** with a clear opt-out, and
+for now it is only a file: `omniscan contribute export SERIES` writes a zip archive you can look at and send;
+there is no upload service yet (it waits for decisions on hosting, the licence of contributed data and accounts,
+`docs/OPEN_QUESTIONS.md` X1-X3).
+
+What the archive holds (`contribution.json` plus JPEG pages):
+- only the pages that carry a hand correction, as the pipeline saw them (the raw page at strip width);
+- every region on those pages with the pipeline's output next to yours: the OCR's reading and your text, the
+  region type, boxes you added, deleted or redrew (a detected box you drew a new one over is kept, paired with
+  your box), the judge's English and your line (typed, a suggestion you kept, or a line you cleared), the
+  speaker, and lettering you set by hand (fonts by file name only);
+- the series' locked glossary terms.
+
+What it never holds: file or folder names, paths, the pages' camera or editing metadata (they are re-encoded),
+untouched pages, or when and where you exported it (no date in `contribution.json`, and every archive entry has
+the same fixed date). The series and chapters are anonymous ids: hashes salted with a random value created on
+this computer (`contribution-salt` in your work folder, never shared), so nobody can find a title by hashing
+known names, while your later archives of the same series carry the same ids. Deleting that file gives your
+next archives new ids.
+
+To opt out, set `[share] enabled = false` in your `config.toml` (every series; a series' `series.toml` cannot
+switch it back on) or in a series' `series.toml` (that series); an opted-out series exports nothing.
 
 ## Speakers and character voices
 

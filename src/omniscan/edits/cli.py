@@ -17,10 +17,12 @@ from rich.table import Table
 
 from omniscan.core.config import Config, SeriesConfigError, get_config, get_secrets, series_config
 from omniscan.core.paths import ChapterPaths, SeriesPaths
-from omniscan.core.schemas import BBox, RegionKind
+from omniscan.core.schemas import BBox, IngestArtifact, RegionKind
+from omniscan.detect.on_demand import Found, find_on_page_now
 from omniscan.edits import store
 from omniscan.edits.replace import FindReplace, apply_changes, plan
 from omniscan.llm.ollama import OllamaClient, OllamaError
+from omniscan.ocr.on_demand import Reading, read_region_now
 from omniscan.translate.on_demand import english_lines, translate_now
 from omniscan.translate.profiles import default_profile_paths, load_profiles
 from omniscan.translate.run import ChatClient
@@ -81,12 +83,14 @@ def edit_show(
     chapter: Chapter,
     as_json: Annotated[bool, typer.Option("--json", help="Print the regions as JSON.")] = False,
 ) -> None:
-    """List the chapter's regions: id, kind, source text, English line and what was edited by hand."""
+    """List the chapter's regions: id, kind, source text, English line, what was edited by hand and each line's
+    status (todo, edited, checked)."""
     _cfg, _series, paths = _chapter(series, chapter)
     regions = store.current_regions(paths)
     english = english_lines(paths)
     edited, translated = (set(ids) for ids in store.edited_ids(paths))
     deleted = store.deleted_regions(paths)
+    status = store.line_statuses(paths, edited | translated)
     if as_json:
         rows = [
             {
@@ -97,6 +101,7 @@ def edit_show(
                 "speaker": r.speaker,
                 "edited": r.id in edited,
                 "hand_translated": r.id in translated,
+                "status": status[r.id],
             }
             for r in regions
         ]
@@ -104,14 +109,40 @@ def edit_show(
         typer.echo(json.dumps({"regions": rows, "deleted": gone}, ensure_ascii=False, indent=2))
         return
     table = Table(title=f"edit: {series} / {chapter} ({len(regions)} region(s))")
-    for column in ("Id", "Kind", "Speaker", "Source", "English", "Edited"):
+    for column in ("Id", "Kind", "Speaker", "Source", "English", "Edited", "Status"):
         table.add_column(column)
     for r in regions:
         marks = [label for label, ids in (("region", edited), ("English", translated)) if r.id in ids]
-        table.add_row(r.id, r.kind, r.speaker or "", r.text, english.get(r.id, ""), ", ".join(marks))
+        table.add_row(
+            r.id, r.kind, r.speaker or "", r.text, english.get(r.id, ""), ", ".join(marks), status[r.id]
+        )
     Console().print(table)
     if deleted:
         typer.echo("deleted by hand: " + ", ".join(f"{r.id} ({r.text})" for r in deleted))
+
+
+@edit_app.command("check")
+def edit_check(
+    series: Series,
+    chapter: Chapter,
+    regions: Annotated[list[str] | None, typer.Argument(help="Region ids as `edit show` lists them.")] = None,
+    every: Annotated[bool, typer.Option("--all", help="Every region of the chapter.")] = False,
+    uncheck: Annotated[bool, typer.Option("--uncheck", help="Unmark the lines instead.")] = False,
+) -> None:
+    """Mark lines checked: their source text and English as they are now are approved (a later change to either
+    unchecks them); with --uncheck unmark them. One undo step."""
+    _cfg, _series, paths = _chapter(series, chapter)
+    if every and regions:
+        raise _fail("name regions or pass --all, not both")
+    ids = [region.id for region in store.current_regions(paths)] if every else list(regions or [])
+    if not ids:
+        raise _fail("name the regions to check, or pass --all")
+    changed = _run(lambda: store.set_checked(paths, ids, checked=not uncheck))
+    status = store.line_statuses(paths)
+    done = sum(1 for value in status.values() if value == "checked")
+    typer.echo(
+        f"edit: {len(changed)} line(s) {'unchecked' if uncheck else 'checked'}; {done} of {len(status)} checked"
+    )
 
 
 @edit_app.command("text")
@@ -331,6 +362,108 @@ def edit_replace(
     typer.echo(
         f"replace: {verb} {total} {'source text' if source else 'English line'}(s) in {touched} chapter(s)"
     )
+
+
+def read_again(paths: ChapterPaths, region_id: str, cfg: Config) -> Reading:
+    """The reader of `edit ocr` (tests replace this to fake the OCR models)."""
+    return read_region_now(paths, region_id, cfg)
+
+
+@edit_app.command("ocr")
+def edit_ocr(
+    series: Series,
+    chapter: Chapter,
+    region: RegionId,
+    apply: Annotated[
+        bool, typer.Option("--apply", help="Keep the reading as the region's source text (a hand edit).")
+    ] = False,
+) -> None:
+    """Read one region again with the series' OCR engine (its models are loaded for this read) and print what
+    it reads; with --apply a non-empty reading becomes the region's source text."""
+    scfg, _series, paths = _chapter(series, chapter)
+    try:
+        reading = read_again(paths, region, scfg)
+    except (store.EditNotFoundError, FileNotFoundError) as exc:
+        raise _fail(str(exc)) from exc
+    except (ImportError, OSError, RuntimeError, ValueError) as exc:  # no torch backend, no models, no GPU
+        typer.echo(f"edit: the OCR could not run: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(
+        f"edit: {region} reads ({reading.engine}, {reading.confidence:.2f}): {reading.text or '(nothing)'}"
+    )
+    if apply and reading.text.strip():
+        _run(
+            lambda: store.update_region(
+                paths, region, direction=scfg.detect.reading_direction, text=reading.text
+            )
+        )
+        typer.echo(f"edit: {region} source text saved")
+    elif apply:
+        typer.echo(f"edit: nothing read; {region} keeps its source text")
+
+
+def find_missed(paths: ChapterPaths, page: int, cfg: Config, threshold: float | None) -> list[Found]:
+    """The searcher of `edit find` (tests replace this to fake the detector and OCR models)."""
+    return find_on_page_now(paths, page, cfg, threshold)
+
+
+@edit_app.command("find")
+def edit_find(
+    series: Series,
+    chapter: Chapter,
+    page: Annotated[int, typer.Argument(min=1, help="The raw page, counted from 1 as the Studio shows it.")],
+    threshold: Annotated[
+        float | None,
+        typer.Option(
+            "--threshold",
+            min=0.01,
+            max=0.99,
+            help="The detector's score threshold (default: detect.threshold).",
+        ),
+    ] = None,
+    add: Annotated[bool, typer.Option("--add", help="Add every box found as a hand-drawn region.")] = False,
+) -> None:
+    """Run the detector again on one page and list the text areas no region covers, with what the OCR reads
+    there (the models are loaded for this search); --add adds them all as hand-drawn regions, one undo step."""
+    scfg, _series, paths = _chapter(series, chapter)
+    try:
+        ingest_path = paths.artifact("ingest.json")
+        if not ingest_path.is_file():
+            raise FileNotFoundError("ingest.json missing — run the slice stage first")
+        files = IngestArtifact.load(ingest_path).files
+        if page > len(files):
+            raise ValueError(f"the chapter has {len(files)} page(s), not {page}")
+        found = find_missed(paths, files[page - 1].index, scfg, threshold)
+    except (FileNotFoundError, ValueError) as exc:  # no page layout or page file, no such page
+        raise _fail(str(exc)) from exc
+    except (ImportError, OSError, RuntimeError) as exc:  # no torch backend, no models, no GPU
+        typer.echo(f"edit: the detector could not run: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    if not found:
+        typer.echo(f"edit: nothing missed on page {page}")
+        return
+    for item in found:
+        box = item.bbox
+        typer.echo(
+            f"edit: {item.kind} at {box.x0},{box.y0},{box.x1},{box.y1} ({item.score:.2f}): {item.text or '(nothing read)'}"
+        )
+    if add:
+        with store.edit_group(paths):  # one undo step
+            added = [
+                _run(
+                    lambda item=item: store.add_region(
+                        paths,
+                        item.bbox,
+                        direction=scfg.detect.reading_direction,
+                        kind=item.kind,
+                        text=item.text,
+                        bubble_bbox=item.bubble_bbox,
+                        lang=scfg.ocr.lang,
+                    )
+                )
+                for item in found
+            ]
+        typer.echo(f"edit: added {', '.join(region.id for region in added)}")
 
 
 def _history(paths: ChapterPaths) -> str:

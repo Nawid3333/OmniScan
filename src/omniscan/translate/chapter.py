@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Literal
 
 from omniscan.core.paths import ChapterPaths
 from omniscan.core.schemas import Candidate, CandidateRun, GlossaryEntry, RegionsArtifact
+from omniscan.translate.images import PageImages
 from omniscan.translate.incremental import translation_key
 from omniscan.translate.profiles import TranslationProfile
 from omniscan.translate.prompts import translatable
@@ -28,13 +29,16 @@ def translate_chapter(
     reuse: bool = False,
     hints: TranslationHints | None = None,
     characters: Sequence[Character] = (),
+    images: PageImages | None = None,
 ) -> tuple[Literal["done", "skipped"], CandidateRun | None]:
     """Run one translation profile over a chapter; write `translations/<profile>.json` (skip if present).
 
     Every candidate is stamped with its key (translate/incremental.py). With `reuse`, the candidates of the
     existing run whose key still matches are kept and only the other regions are sent — the pipeline's
     way of re-translating just what a hand edit or a glossary change touched. `hints` is the series' learned
-    translation memory and preferred wording (learn/apply.py); `characters` its voices (translate/voices.py)."""
+    translation memory and preferred wording (learn/apply.py); `characters` its voices (translate/voices.py).
+    `images` (the chapter's pages, shared by the profiles of one stage run) go to a profile with `images = true`;
+    a line sent without its page image is keyed as sent without one."""
     output = paths.artifact(f"translations/{profile.name}.json")
     partial = paths.artifact(f"translations/.{profile.name}.partial.json")
     if output.is_file() and not force:
@@ -45,9 +49,14 @@ def translate_chapter(
     if force:
         partial.unlink(missing_ok=True)  # a leftover partial from another attempt is stale under --force
     artifact = RegionsArtifact.load(ocr_path)
+    pages = (images if images is not None else PageImages(paths)) if profile.images else None
+    side = profile.image_side
+    targets = translatable(artifact.regions)
     keys = {
-        region.id: translation_key(region, entries, profile, characters)
-        for region in translatable(artifact.regions)
+        region.id: translation_key(
+            region, entries, profile, characters, pages.page_id(region, side) if pages is not None else None
+        )
+        for region in targets
     }
     reused: dict[str, Candidate] = {}
     if reuse and output.is_file():
@@ -57,6 +66,8 @@ def translate_chapter(
             for c in previous.candidates
             if c.key is not None and c.key == keys.get(c.region_id)
         }
+    if pages is not None:
+        pages.begin()
     run = run_profile(
         client,
         profile,
@@ -67,7 +78,14 @@ def translate_chapter(
         reused=reused,
         hints=hints,
         characters=characters,
+        images=pages,
     )
+    if pages is not None:  # a line that went out without its page image says so in its key
+        keys |= {
+            region.id: translation_key(region, entries, profile, characters)
+            for region in targets
+            if region.id not in reused and region.id not in pages.sent
+        }
     run = run.model_copy(
         update={"candidates": [c.model_copy(update={"key": keys.get(c.region_id)}) for c in run.candidates]}
     )
