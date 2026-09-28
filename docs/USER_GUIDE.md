@@ -1620,7 +1620,12 @@ fills the chapter table with one row per chapter and one column per pipeline sta
 `export`), colored by state from the chapter's manifest: green `done` (recorded with its outputs on
 disk), yellow `stale` (recorded but its output is missing, or an earlier stage re-ran after it —
 the stage would re-run), red `failed`, gray `not run`. Double-click a chapter (or pick a series and
-switch pages) to open it in the Reader. Refresh re-reads the library.
+switch pages) to open it in the Reader. Refresh re-reads the library. The buttons under the table pass
+chapters between users and share corrections: **Open chapter project…** adds a `.omniscan` file someone sent
+you (asking before it replaces a chapter you already have), **Send chapter…** packs the selected chapter with
+all its work and edits into one (like `omniscan project pack`), and **Export contribution…** writes the
+series' corrections and checked lines to an archive (like `omniscan contribute export`; see "Contributing
+corrections").
 
 **Reader** is the side-by-side raw | output compare view: prev/next chapter buttons, a chapter
 switcher, zoom −/+ (`Fit width` resets), a `Sides` selector (`Both` / `Raw only` / `Output only`),
@@ -1865,7 +1870,8 @@ this computer (`contribution-salt` in your work folder, never shared), so nobody
 known names, while your later archives of the same series carry the same ids. Deleting that file gives your
 next archives new ids.
 
-To opt out, set `[share] enabled = false` in your `config.toml` (every series; a series' `series.toml` cannot
+To opt out, untick **Share corrections** on the desktop app's Settings page, or set `[share] enabled = false`
+in your `config.toml` (every series; a series' `series.toml` cannot
 switch it back on) or in a series' `series.toml` (that series); an opted-out series exports nothing.
 
 ## Speakers and character voices
