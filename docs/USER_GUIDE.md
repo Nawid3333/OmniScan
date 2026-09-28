@@ -1142,6 +1142,7 @@ uv run omniscan edit replace "Solo Leveling" "Jinwoo" "Jin-Woo" --word --ignore-
 uv run omniscan edit check "Solo Leveling" "Chapter 1" r0003 r0004
 uv run omniscan edit check "Solo Leveling" "Chapter 1" --all
 uv run omniscan edit check "Solo Leveling" "Chapter 1" r0004 --uncheck
+uv run omniscan edit problems "Solo Leveling" "Chapter 1" --unchecked   # what is left to fix
 uv run omniscan edit undo "Solo Leveling" "Chapter 1"
 uv run omniscan edit redo "Solo Leveling" "Chapter 1"
 ```
@@ -1161,6 +1162,7 @@ uv run omniscan edit redo "Solo Leveling" "Chapter 1"
 | `cuts` | show or set where the exported images split; `--reset` goes back to one image per slice |
 | `replace` | find and replace across the English lines of the whole series (`--chapter` for some chapters; `--source` for the source texts); `--word` whole words, `--ignore-case` any case (the replacement takes each match's case: JINWOO → JIN-WOO), `--regex` a regular expression (`\1` … in the replacement), `--dry-run` lists the changes only; every change is a hand edit, one undo step per chapter |
 | `check` | mark lines checked (`--all` every region, `--uncheck` to unmark): their source and English as they are now are approved, and a later change to either unchecks them; `show` lists each line's status (todo, edited, checked) |
+| `problems` | list what a proofreader looks at first, in reading order: lines with no English, source script left in the English, lettering that overflows its balloon, lines the judge was unsure of or that miss a locked glossary term, much too long lines, possible typos (the desktop Studio's checks), and what the last `omniscan qa` still read on the finished pages; `--unchecked` leaves out the lines already checked, `--json` for scripts. Nothing is changed |
 | `undo`, `redo` | take back the last hand edit of the chapter, or make the last undone one again (see "Undo and redo" in the Studio section) |
 
 A missing chapter artifact or region, a box outside the strip or a cut outside it exits 2 with the reason;
@@ -1912,7 +1914,10 @@ and says so. For working on the UI itself, run `npm run dev` in `webui/` instead
 server proxies `/api` to `http://localhost:8000`, so the defaults of both commands work
 together. Open the local URL Vite prints and pick a series and chapter.
 
-The chapter views (Studio, Slicer, OCR, Translation, Reader, Inpaint, Layout, Edit) need a chapter; the
+The chapter views (Studio, Slicer, OCR, Translation, Reader, Inpaint, Layout, Edit, Problems) need a chapter; the
+**Problems** view lists the same problems as `omniscan edit problems`, with a kind filter and *hide checked lines*
+(on by default); a line's id opens the Studio on it, and a possible typo has *not a typo*, as in the Consistency
+view. The
 **Filtered** view only needs a series and shows its every chapter that has filtered items; the **Learned**
 view only needs a series too (see "Learning from your corrections"), and so does the **Consistency** view (the
 report of `omniscan consistency`; each place opens the Studio on that region), and the **Glossary** view: the

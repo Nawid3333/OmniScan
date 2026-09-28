@@ -8,6 +8,7 @@
   import LayoutView from "./LayoutView.svelte";
   import LearnedView from "./LearnedView.svelte";
   import OcrView from "./OcrView.svelte";
+  import ProblemsView from "./ProblemsView.svelte";
   import ConsistencyView from "./ConsistencyView.svelte";
   import ReaderView from "./ReaderView.svelte";
   import SlicerView from "./SlicerView.svelte";
@@ -16,7 +17,7 @@
   import { listChapters, listSeries } from "./api";
 
   let view = $state<
-    "studio" | "slicer" | "ocr" | "translation" | "reader" | "inpaint" | "layout" | "edit" | "filtered" | "learned" | "consistency" | "glossary"
+    "studio" | "slicer" | "ocr" | "translation" | "reader" | "inpaint" | "layout" | "edit" | "problems" | "filtered" | "learned" | "consistency" | "glossary"
   >("studio");
   let series = $state("");
   let chapter = $state("");
@@ -84,6 +85,7 @@
         <button onclick={() => (view = "inpaint")} disabled={view === "inpaint"}>Inpaint</button>
         <button onclick={() => (view = "layout")} disabled={view === "layout"}>Layout</button>
         <button onclick={() => (view = "edit")} disabled={view === "edit"}>Edit</button>
+        <button onclick={() => (view = "problems")} disabled={view === "problems"}>Problems</button>
       {/if}
       <button onclick={() => (view = "filtered")} disabled={view === "filtered"}>Filtered</button>
       <button onclick={() => (view = "learned")} disabled={view === "learned"}>Learned</button>
@@ -111,6 +113,8 @@
         <LayoutView {series} {chapter} />
       {:else if view === "edit"}
         <EditView {series} {chapter} />
+      {:else if view === "problems"}
+        <ProblemsView {series} {chapter} onOpen={(id) => void openRegion(chapter, id)} />
       {:else if view === "reader"}
         <ReaderView {series} {chapter} />
       {:else}

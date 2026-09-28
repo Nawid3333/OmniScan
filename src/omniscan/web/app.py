@@ -60,6 +60,7 @@ from omniscan.llm.ollama import OllamaClient, OllamaError, OllamaRateLimitError
 from omniscan.ocr.on_demand import Reading, read_region_now
 from omniscan.pipeline.stages import STAGE_ORDER
 from omniscan.qa.consistency import divergences, series_lines, term_misses
+from omniscan.qa.problems import chapter_problems
 from omniscan.qa.typos import allow_word, checker_for, series_typos
 from omniscan.queue.store import QueueStore, queue_db_path
 from omniscan.queue.worker import run_queue
@@ -709,6 +710,13 @@ def create_app(
             "checked_region_ids": [region_id for region_id, value in status.items() if value == "checked"],
             "history": {"undo": back, "redo": forward},
         }
+
+    @app.get("/api/series/{series}/chapters/{chapter}/problems")
+    def get_problems(series: str, chapter: str) -> dict[str, object]:
+        """What a proofreader looks at first, in reading order (qa/problems.py): the desktop Studio's checks over
+        the chapter as saved, and what the last `omniscan qa` re-read still found on the finished pages; each with
+        its line's review state. None before detection."""
+        return {"problems": [asdict(problem) for problem in chapter_problems(chapter_paths(series, chapter))]}
 
     @app.post("/api/series/{series}/chapters/{chapter}/checked")
     async def set_checked(series: str, chapter: str, request: Request) -> dict[str, object]:

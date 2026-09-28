@@ -871,6 +871,23 @@ export async function getConsistency(series: string): Promise<ConsistencyReport>
   return getJson<ConsistencyReport>(`${BASE}/series/${encodeURIComponent(series)}/consistency`);
 }
 
+/** One problem of a chapter (GET …/problems; qa/problems.py). */
+export interface Problem {
+  region_id: string;
+  kind: string; // untranslated, source_left, overflow, uncertain, glossary, too_long, typo, watermark_left
+  message: string;
+  status: "todo" | "edited" | "checked";
+  finished_page: boolean; // found by the `omniscan qa` re-read of the exported page
+  word: string; // a typo's unknown word
+  read: string; // what the re-read saw on the finished page
+}
+
+/** What a proofreader looks at first, in reading order. */
+export async function getProblems(series: string, chapter: string): Promise<Problem[]> {
+  const result = await getJson<{ problems: Problem[] }>(`${chapterBase(series, chapter)}/problems`);
+  return result.problems;
+}
+
 /** POST /api/series/{series}/typo-words: accept a word as "not a typo" for the whole series. */
 export async function allowTypoWord(series: string, word: string): Promise<{ words: string[] }> {
   return postJson<{ words: string[] }>(`${BASE}/series/${encodeURIComponent(series)}/typo-words`, { word });
