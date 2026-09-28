@@ -11,6 +11,7 @@
     deleteRegion,
     getCleanup,
     getEdits,
+    readRegionAgain,
     stepEdits,
     getFinal,
     getIngest,
@@ -39,6 +40,7 @@
     LayoutEdit,
     LayoutFields,
     LayoutItem,
+    OcrReading,
     Region,
     RegionKind,
     SourceFile,
@@ -117,6 +119,8 @@
   let profiles = $state<TranslationProfile[]>([]);
   let profileChoice = $state(""); // "" = every enabled profile
   let suggestions = $state<Suggestion[]>([]);
+  let ocrReading = $state<OcrReading | null>(null);
+  let rereading = $state(false);
   let kept = $state<Suggestion | null>(null); // the suggestion the English draft was taken from
   let translating = $state(false);
   let cleanups = $state<CleanupPatch[]>([]);
@@ -259,6 +263,7 @@
   function select(id: string | null): void {
     selectedId = id;
     suggestions = [];
+    ocrReading = null;
     kept = null;
     resetLetterDraft(id);
     const region = regions.find((r) => r.id === id);
@@ -590,6 +595,22 @@
     const by = kept !== null && kept.text === translationDraft ? kept.profile : undefined;
     const line = await act(() => putFinalLine(series, chapter, selected!.id, translationDraft, by));
     if (line !== null) translationDraft = line.text;
+  }
+
+  /** Read the selected region again with the OCR (nothing is saved until Save source). */
+  async function readSelectedAgain(): Promise<void> {
+    if (selected === null) return;
+    const id = selected.id;
+    rereading = true;
+    actionError = "";
+    try {
+      const result = await readRegionAgain(series, chapter, id);
+      if (selectedId === id) ocrReading = result;
+    } catch (e) {
+      actionError = e instanceof Error ? e.message : String(e);
+    } finally {
+      rereading = false;
+    }
   }
 
   /** Ask the translation profiles for the selected region (nothing is saved until Save English). */
@@ -969,7 +990,20 @@
               <button class="link" onclick={() => (sourceDraft = selected!.ocr_alt ?? sourceDraft)}>use</button>
             </p>
           {/if}
+          {#if ocrReading !== null}
+            <p class="muted">
+              OCR reads ({ocrReading.engine}, {ocrReading.confidence.toFixed(2)}): {ocrReading.text || "nothing"}
+              {#if ocrReading.text.trim() !== ""}
+                <button class="link" onclick={() => (sourceDraft = ocrReading?.text ?? sourceDraft)}>use</button>
+              {/if}
+            </p>
+          {/if}
           <button onclick={() => void saveSource()} disabled={busy || sourceDraft === selected.text}>Save source</button>
+          <button
+            onclick={() => void readSelectedAgain()}
+            disabled={busy || rereading}
+            title="Read this box again with the OCR (after moving or drawing it); the first read loads the OCR models"
+          >{rereading ? "Reading…" : "Read again (OCR)"}</button>
           <label>
             English <span class="muted">(Ctrl+Enter saves)</span>
             <textarea rows="3" bind:value={translationDraft} onkeydown={(e) => saveOnCtrlEnter(e, saveTranslation)} lang="en"></textarea>

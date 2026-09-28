@@ -518,6 +518,27 @@ export async function patchRegion(
   return patchJson<Region>(`${chapterBase(series, chapter)}/regions/${encodeURIComponent(regionId)}`, patch);
 }
 
+/** What the OCR read when one region was read again. */
+export interface OcrReading {
+  region_id: string;
+  text: string;
+  confidence: number;
+  engine: string;
+  applied: boolean;
+}
+
+/** Read one region again with the series' OCR engine; with `apply` a non-empty reading becomes its source text. */
+export async function readRegionAgain(
+  series: string,
+  chapter: string,
+  regionId: string,
+  apply = false,
+): Promise<OcrReading> {
+  return postJson<OcrReading>(`${chapterBase(series, chapter)}/regions/${encodeURIComponent(regionId)}/ocr`, {
+    ...(apply ? { apply: true } : {}),
+  });
+}
+
 /** Add a hand-drawn region (strip-space box); the server gives it an m-prefixed id. */
 export async function addRegion(
   series: string,
