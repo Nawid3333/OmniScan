@@ -103,6 +103,13 @@ GLOBAL_FIELDS: tuple[SettingField, ...] = (
         label="Promo match strictness",
         help="Higher skips less",
     ),
+    SettingField(
+        "share",
+        "enabled",
+        "bool",
+        label="Share corrections",
+        help="Allow exporting your corrections and checked lines to improve OmniScan (off: no series exports)",
+    ),
 )
 
 SECTION_TITLES = {
@@ -111,6 +118,7 @@ SECTION_TITLES = {
     "ocr": "Text reading",
     "slicer": "Pages",
     "filter": "Promo filter",
+    "share": "Sharing",
 }
 
 

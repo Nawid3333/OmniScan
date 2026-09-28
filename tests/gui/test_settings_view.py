@@ -71,6 +71,18 @@ def test_global_commit_writes_the_toml_and_emits(qapp: QApplication, cfg: Config
     assert tomllib.loads(toml.read_text(encoding="utf-8"))["filter"]["threshold"] == 0.42
 
 
+def test_share_corrections_toggle_writes_the_machine_opt_out(
+    qapp: QApplication, cfg: Config, tmp_path: Path
+) -> None:
+    """The Sharing section's Share corrections box writes `[share] enabled` (on by default)."""
+    toml = tmp_path / "config.toml"
+    view = SettingsView(cfg, config_path=toml)
+    editor = cast(QCheckBox, view._editors[("share", "enabled")])
+    assert editor.isChecked()
+    editor.setChecked(False)
+    assert tomllib.loads(toml.read_text(encoding="utf-8"))["share"]["enabled"] is False
+
+
 def test_global_reject_shows_inline_and_reverts(qapp: QApplication, cfg: Config, tmp_path: Path) -> None:
     """A refused value shows the error inline and the editor keeps the last good value."""
     toml = tmp_path / "config.toml"
