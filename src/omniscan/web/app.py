@@ -232,7 +232,7 @@ def create_app(
     run_worker: bool = False,
     chat_client: Callable[[Config], ChatClient] = ollama_client,
     ui_dir: Path | None = None,
-    lama_cleaner: Callable[..., CleanupPatch] = clean_with_lama,
+    lama_cleaner: Callable[..., CleanupPatch] = clean_with_lama,  # cleans a "lama" stroke; tests pass a fake
 ) -> FastAPI:
     """Build the debug API app: series/chapter browsing + ingest/slices artifacts + raw pages.
 
@@ -240,9 +240,8 @@ def create_app(
     a background thread that drains `queue.db`, so `POST .../run` requests actually execute instead of
     only ever sitting queued; tests and other embedders that just want to read existing artifacts
     should leave it `False` (the default here) to avoid touching the GPU/queue at all. `chat_client`
-    builds the LLM client of the on-demand translation route (tests pass a fake), `lama_cleaner` cleans a
-    "lama" brush stroke (cleanup/lama_now.py; tests pass a fake). `ui_dir` (the built web UI, see `built_ui`)
-    is served at `/`, so the API and the Studio share one address.
+    builds the LLM client of the on-demand translation route (tests pass a fake). `ui_dir` (the built web UI,
+    see `built_ui`) is served at `/`, so the API and the Studio share one address.
     """
 
     @asynccontextmanager
