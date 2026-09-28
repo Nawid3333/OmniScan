@@ -1174,15 +1174,21 @@ uv run omniscan project pack "Solo Leveling" "Chapter 12"              # "Solo L
 uv run omniscan project pack "Solo Leveling" "Chapter 12" -o ch12.omniscan --with-output   # plus the finished pages
 uv run omniscan project show ch12.omniscan                             # what it holds, without unpacking
 uv run omniscan project unpack ch12.omniscan                           # into your library and work folders
-uv run omniscan project unpack ch12.omniscan --force                   # replace your copy of the chapter
+uv run omniscan project unpack ch12.omniscan --force                   # replace your copy (raw, work, finished pages)
 uv run omniscan project unpack ch12.omniscan --series "SL" --chapter "Ch 12"   # under other names
 ```
 
-Unpacking never overwrites: a chapter you already have is replaced only with `--force`, and the series files are
-added only where your series has none (your own `series.toml` / `voices.toml` stay). A file from someone else is
-checked before anything is written: only files OmniScan writes, inside the chapter's folders, each matching the
-sha256 its `project.json` lists — a damaged or tampered file is refused and leaves nothing behind. The glossary is
-not included; pass it with `omniscan glossary export` / `import`.
+Unpacking never overwrites: a chapter you already have (its raw pages, work or finished pages) is replaced only
+with `--force`, and the series files are added only where your series has none (your own `series.toml` /
+`voices.toml` stay). Of someone else's `series.toml` only numbers, switches and fixed choices are taken (sizes,
+thresholds, the source language, the lettering style); download addresses, file names, models, fonts and batch
+sizes are left out — they would make OmniScan fetch, load or write what the sender chose — and `unpack` names
+what it left out. A file from someone else is checked before anything is written: only files OmniScan writes,
+inside the chapter's folders, with names every system accepts (no `NUL` or `COM1.jpg`), each matching the sha256
+its `project.json` lists, and work files that name only files inside the chapter; a damaged, encrypted or
+tampered file is refused and leaves nothing behind. If moving the chapter into place fails (a file open in
+another program), your old copy is put back. The glossary is not included; pass it with
+`omniscan glossary export` / `import`.
 
 ### `omniscan ballons` and `omniscan mit`
 

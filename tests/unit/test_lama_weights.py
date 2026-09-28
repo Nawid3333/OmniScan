@@ -41,6 +41,20 @@ def test_lama_path_layout(tmp_path: Path) -> None:
     assert lama_path(tmp_path / "models", cfg()) == tmp_path / "models" / "lama" / "fake-lama.pt"
 
 
+@pytest.mark.parametrize("name", ["../../Startup/x.bat", "..\\x.bat", "/etc/x.pt", "C:x.pt", "..", ""])
+def test_a_lama_file_outside_the_models_folder_is_refused(tmp_path: Path, name: str) -> None:
+    bad = cfg().model_copy(update={"lama_file": name})
+    with pytest.raises(ValueError, match="plain file name"):
+        lama_path(tmp_path, bad)
+    client = httpx.Client(transport=httpx.MockTransport(refusing))
+    try:
+        with pytest.raises(ValueError, match="plain file name"):
+            ensure_lama_weights(tmp_path, bad, client=client)  # refused before any download
+    finally:
+        client.close()
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_sha256_file(tmp_path: Path) -> None:
     path = tmp_path / "data.bin"
     path.write_bytes(b"hello world")

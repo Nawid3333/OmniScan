@@ -401,7 +401,10 @@ def project_pack(
         if output is not None
         else Path.cwd() / f"{safe_filename(series)} - {safe_filename(chapter)}{project.SUFFIX}"
     )
-    packed = project.pack(series_paths, chapter, dest, with_output=with_output)
+    try:
+        packed = project.pack(series_paths, chapter, dest, with_output=with_output)
+    except project.ProjectError as exc:
+        raise _fail(str(exc), "project") from exc
     typer.echo(f"project: {_parts(packed.files)} -> {dest} ({_size(dest.stat().st_size)})")
 
 
@@ -411,17 +414,22 @@ def project_unpack(
     series: Annotated[str | None, typer.Option("--series", help="Unpack into this series instead.")] = None,
     chapter: Annotated[str | None, typer.Option("--chapter", help="Unpack as this chapter instead.")] = None,
     force: Annotated[
-        bool, typer.Option("--force", help="Replace the chapter if it exists (its raw pages and work).")
+        bool,
+        typer.Option(
+            "--force", help="Replace the chapter if it exists (its raw pages, work and finished pages)."
+        ),
     ] = False,
 ) -> None:
     """Unpack a chapter project into your library and work folders; every stage done and every hand edit comes
-    along. The series files it carries are added only where the series has none."""
+    along. The series files it carries are added only where the series has none, and of its series.toml only
+    numbers, switches and fixed choices (never a download address, a file, a model or a font)."""
     try:
         done = project.unpack(file, get_config(), series=series, chapter=chapter, force=force)
-    except (project.ProjectError, FileExistsError) as exc:
+    except (project.ProjectError, OSError) as exc:
         raise _fail(str(exc), "project") from exc
     notes = [f"added {', '.join(done.series_files)}"] if done.series_files else []
     notes += [f"kept your {', '.join(done.kept_series_files)}"] if done.kept_series_files else []
+    notes += [f"left out {', '.join(done.dropped_settings)}"] if done.dropped_settings else []
     verb = "replaced" if done.replaced else "unpacked"
     typer.echo(
         f"project: {verb} {done.paths.series}/{done.paths.chapter}"
