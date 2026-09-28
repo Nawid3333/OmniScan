@@ -40,7 +40,7 @@ to the common strip width. Integers, half-open ranges `[x0, x1)`, `[y0, y1)`. A 
 | `qa.json` | `QaArtifact` (regions whose original text is still readable on the exported pages) | `qa` stage (`omniscan qa`, not part of `omniscan run`) |
 | `manifest.json` | `Manifest` of `StageRecord`s | stage runner |
 | `<series>/memory.json` | `SeriesMemory` (learned rules + translation memory of the whole series) | `learn/memory.py`, rebuilt from every `edits.json` when one changes; only rule switches are set by hand |
-| contribution archive (`.zip`, anywhere) | `Contribution` in `contribution.json` + `pages/<chapter id>/<page>.jpg` (hand corrections with the pages they were made on) | `share/contribution.py` (`omniscan contribute export`); never read by the pipeline |
+| contribution archive (`.zip`, anywhere) | `Contribution` in `contribution.json` + `pages/<chapter id>/<page>.jpg` (hand corrections and checked lines with the pages they are on) | `share/contribution.py` (`omniscan contribute export`); never read by the pipeline |
 Save/load only through `Artifact.save()` (atomic tmp+rename) and `Model.load(path)`.
 
 **Hand edits** (`edits/`): `edits.json` is user-owned — only the editing tools write it (web Studio, via
@@ -104,8 +104,9 @@ speaker, so unassigned lines keep their keys. `voices.toml` is an input of the t
 improve, for now as a local zip archive. `build` walks a series' chapters: each current region is paired with the
 pipeline's output (`ocr_auto.json` / `final_auto.json`, or the reading an edit recorded in `auto_text`) and its
 hand edits (matched like the stages re-apply them), deleted pipeline regions — and detections a hand-drawn box
-replaced (`replaced_by`) — are added back as `deleted`, and only pages holding a correction are kept, in page
-pixels (strip resolution). `write_archive` re-encodes those pages from the raw files (Pillow, like the PSD export:
+replaced (`replaced_by`) — are added back as `deleted`, a line whose proofreader's check still holds
+(`edits.store.line_statuses`) is marked `checked` (verified data: the machine was right), and only pages holding a
+correction or a checked line are kept, in page pixels (strip resolution). `write_archive` re-encodes those pages from the raw files (Pillow, like the PSD export:
 no metadata) and gives every entry the same fixed timestamp; `contribution.json` holds no date. Names never leave
 the machine: the series and chapters are HMAC-SHA256 ids keyed with a random per-install salt
 (`<work_root>/contribution-salt`), fonts are file names. `[share] enabled` (`ShareConfig`) gates `build`: false in

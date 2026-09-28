@@ -1807,15 +1807,17 @@ there is no upload service yet (it waits for decisions on hosting, the licence o
 `docs/OPEN_QUESTIONS.md` X1-X3).
 
 What the archive holds (`contribution.json` plus JPEG pages):
-- only the pages that carry a hand correction, as the pipeline saw them (the raw page at strip width);
+- only the pages that carry a hand correction or a line you marked checked, as the pipeline saw them (the raw
+  page at strip width). A checked line counts as long as its check holds (neither its source text nor its
+  English changed since): it confirms the OCR and the English were right, which is as useful as a fix;
 - every region on those pages with the pipeline's output next to yours: the OCR's reading and your text, the
   region type, boxes you added, deleted or redrew (a detected box you drew a new one over is kept, paired with
   your box), the judge's English and your line (typed, a suggestion you kept, or a line you cleared), the
-  speaker, and lettering you set by hand (fonts by file name only);
+  speaker, lettering you set by hand (fonts by file name only), and which lines you checked;
 - the series' locked glossary terms.
 
 What it never holds: file or folder names, paths, the pages' camera or editing metadata (they are re-encoded),
-untouched pages, or when and where you exported it (no date in `contribution.json`, and every archive entry has
+pages with neither a correction nor a checked line, or when and where you exported it (no date in `contribution.json`, and every archive entry has
 the same fixed date). The series and chapters are anonymous ids: hashes salted with a random value created on
 this computer (`contribution-salt` in your work folder, never shared), so nobody can find a title by hashing
 known names, while your later archives of the same series carry the same ids. Deleting that file gives your
