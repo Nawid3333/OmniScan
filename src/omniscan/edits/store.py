@@ -459,12 +459,20 @@ def edited_ids(paths: ChapterPaths) -> tuple[list[str], list[str]]:
     )
 
 
+def final_lines(paths: ChapterPaths, name: str = "final.json") -> dict[str, str]:
+    """A final artifact's English lines by region id (a region's first line): final.json as they will be
+    lettered, FINAL_AUTO_FILE as the judge wrote them; {} when the chapter has none."""
+    path = paths.artifact(name)
+    lines: dict[str, str] = {}
+    if path.is_file():
+        for line in FinalArtifact.load(path).lines:
+            lines.setdefault(line.region_id, line.text)
+    return lines
+
+
 def judged_lines(paths: ChapterPaths) -> dict[str, str]:
     """The judge's own English lines (final_auto.json) by region id; {} when it has none."""
-    path = paths.artifact(FINAL_AUTO_FILE)
-    if not path.is_file():
-        return {}
-    return {line.region_id: line.text for line in FinalArtifact.load(path).lines}
+    return final_lines(paths, FINAL_AUTO_FILE)
 
 
 def set_translations(
@@ -587,16 +595,6 @@ def _norm(text: str) -> str:
     return " ".join(text.split())
 
 
-def _current_english(paths: ChapterPaths) -> dict[str, str]:
-    """The chapter's English lines as they will be lettered (final.json) by region id; {} when it has none."""
-    path = paths.artifact("final.json")
-    lines: dict[str, str] = {}
-    if path.is_file():
-        for line in FinalArtifact.load(path).lines:
-            lines.setdefault(line.region_id, line.text)
-    return lines
-
-
 def _line_check(region: Region, english: Mapping[str, str]) -> LineCheck:
     """A check of `region`'s line as it is now: its source text and English."""
     return LineCheck(
@@ -624,7 +622,7 @@ def set_checked(paths: ChapterPaths, region_ids: Sequence[str], *, checked: bool
         wanted = {region_id: _find(regions, region_id) for region_id in region_ids}
         edits = load_edits(paths)
         index_of = {region_id: i for i, region_id in match_checks(regions, edits).items()}
-        english = _current_english(paths)
+        english = final_lines(paths)
         checks: list[LineCheck | None] = list(edits.checked)
         changed: list[str] = []
         for region_id, region in wanted.items():
@@ -651,7 +649,7 @@ def line_statuses(paths: ChapterPaths, touched: Collection[str] | None = None) -
     has them from `edited_ids`), else `todo`."""
     regions = current_regions(paths)
     edits = load_edits(paths)
-    english = _current_english(paths)
+    english = final_lines(paths)
     by_id = {region.id: region for region in regions}
     held = {
         region_id

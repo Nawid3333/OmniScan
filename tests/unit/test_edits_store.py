@@ -21,6 +21,7 @@ from omniscan.core.schemas import (
 )
 from omniscan.edits import store
 from omniscan.edits.apply import SOURCE_CHANGED
+from omniscan.translate.on_demand import english_lines
 
 
 def box(x0: int, y0: int, x1: int, y1: int) -> BBox:
@@ -309,3 +310,19 @@ def test_several_lines_are_written_at_once_or_not_at_all(paths: ChapterPaths) ->
         ("r0002", "Glad to see you", "Glad"),
         ("r0001", "Hi there", "Hi"),
     ]
+
+
+def test_final_lines_read_the_lettered_and_the_judged_lines(paths: ChapterPaths) -> None:
+    lines = [
+        FinalLine(region_id=rid, text=text, decision="pick")
+        for rid, text in (("r1", "one"), ("r1", "twice"), ("r2", "two"))
+    ]
+    FinalArtifact(judge_model="judge", lines=lines).save(paths.artifact("final.json"))
+    assert store.final_lines(paths) == {"r1": "one", "r2": "two"}  # a region's first line
+    assert store.judged_lines(paths) == {}  # no final_auto.json yet
+    FinalArtifact(judge_model="judge", lines=lines[2:]).save(paths.artifact(store.FINAL_AUTO_FILE))
+    assert store.judged_lines(paths) == store.final_lines(paths, store.FINAL_AUTO_FILE) == {"r2": "two"}
+    paths.artifact("final.json").write_text("{not json", encoding="utf-8")
+    with pytest.raises(ValueError):
+        store.final_lines(paths)
+    assert english_lines(paths) == {}  # the editors' reader shrugs a damaged file off

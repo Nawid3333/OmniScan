@@ -119,7 +119,9 @@ source lines with different English, `term_misses` checks locked glossary terms 
 **Reading one region again** (`ocr/on_demand.py`): the Studio's *Read again* and `omniscan edit ocr` cut the
 region's box plus a 24 px margin from the raw pages (`cleanup/strip.py`, Pillow) and pass it to the `ocr`
 stage's own `read_regions` (ppocr: lines found inside the crop) or `read_region_crops` with the region's box
-in crop pixels; the models come from a VRAM manager's vision group under the GPU lock, for that one read. The
+in crop pixels; the models come from a VRAM manager's vision group under the GPU lock, for that one read
+(`pipeline/on_demand.group_models`, the one loader of every on-demand action: this, finding missed text and
+LaMa on a selection). The
 reading is only returned; keeping it is a hand edit (`update_region(text=…)`). The module imports torch only
 inside `read_region`, so the web app and the CLI stay torch-free at import.
 
