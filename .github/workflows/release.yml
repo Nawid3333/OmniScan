@@ -33,10 +33,6 @@ on:
         options: [auto, patch, minor, major]
         default: auto
 
-concurrency:
-  group: release
-  cancel-in-progress: false
-
 permissions:
   contents: read
 
@@ -51,33 +47,55 @@ jobs:
       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # on the job, after its `if`: at workflow level every finished ci run (pull requests too) would join the
+    # group, and a group keeps only one pending run, so a skipped run could cancel a pending release
+    concurrency:
+      group: release
+      cancel-in-progress: false
     permissions:
       contents: write
+      actions: read # gh run list: did ci pass on the commit a manual run would release
     steps:
       - uses: actions/checkout@v7
         with:
           ref: main
           fetch-depth: 0 # the tags and the commits since the last one
-          token: ${{ secrets.RELEASE_PAT || github.token }}
+          # no token left in .git/config while uv lock / uv build run third-party code; only the push gets it
+          persist-credentials: false
 
       - name: Is there anything to release?
         id: check
         env:
           CI_SHA: ${{ github.event.workflow_run.head_sha }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           head=$(git rev-parse HEAD)
+          tag=$(git tag --points-at HEAD | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)
+          passed=1
+          if [ -z "$CI_SHA" ]; then # a manual run: count main's successful ci runs on this commit (fails closed)
+            passed=$(gh run list --workflow ci.yml --commit "$head" --event push --status success --json databaseId --jq length)
+          fi
           if [ -n "$CI_SHA" ] && [ "$CI_SHA" != "$head" ]; then
             echo "main moved on to $head since CI passed on $CI_SHA; that commit's own CI run releases both."
             echo "go=false" >> "$GITHUB_OUTPUT"
-          elif git tag --points-at HEAD | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "main ($head) is already released as $(git tag --points-at HEAD | head -1)."
+          elif [ -n "$tag" ] && gh release view "$tag" > /dev/null 2>&1; then
+            echo "main ($head) is already released as $tag."
             echo "go=false" >> "$GITHUB_OUTPUT"
+          elif [ -n "$tag" ]; then
+            # tagged and pushed by an earlier run whose build or publish failed: finish that release
+            echo "main ($head) is tagged $tag but has no GitHub release yet; publishing it."
+            echo "go=false" >> "$GITHUB_OUTPUT"
+            echo "resume=${tag#v}" >> "$GITHUB_OUTPUT"
+          elif [ "$passed" -eq 0 ]; then
+            # a manual run: the same rule as the automatic one, only a commit whose CI passed is released
+            echo "::error::ci has not passed on main ($head) yet; release it once it has."
+            exit 1
           else
             echo "go=true" >> "$GITHUB_OUTPUT"
           fi
 
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0 (no floating major tags since v8: pinned)
-        if: steps.check.outputs.go == 'true'
+        if: steps.check.outputs.go == 'true' || steps.check.outputs.resume != ''
 
       - name: Version
         id: version
@@ -94,7 +112,10 @@ jobs:
         if: steps.check.outputs.go == 'true'
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          PUSH_TOKEN: ${{ secrets.RELEASE_PAT || github.token }}
+          REPO: ${{ github.repository }}
         run: |
+          remote="https://x-access-token:${PUSH_TOKEN}@github.com/${REPO}.git"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           BASE=$(git rev-parse HEAD)
@@ -105,8 +126,8 @@ jobs:
           fi
           git tag -a "v$VERSION" -m "OmniScan v$VERSION"
           # atomic: the tag never lands without the commit it names
-          if ! git push --atomic origin HEAD:main "v$VERSION"; then
-            git fetch -q origin main
+          if ! git push --atomic "$remote" HEAD:main "v$VERSION"; then
+            git fetch -q "$remote" main:refs/remotes/origin/main
             if [ "$(git rev-parse origin/main)" != "$BASE" ]; then
               echo "::warning::main moved on while releasing v$VERSION; the newer commit's CI run releases it."
               echo "pushed=false" >> "$GITHUB_OUTPUT"
@@ -118,7 +139,7 @@ jobs:
           echo "pushed=true" >> "$GITHUB_OUTPUT"
 
       - name: Build
-        if: steps.push.outputs.pushed == 'true'
+        if: steps.push.outputs.pushed == 'true' || steps.check.outputs.resume != ''
         run: |
           uv build
           cd dist
@@ -126,8 +147,8 @@ jobs:
           cat ../SHA256SUMS
 
       - name: Publish the release
-        if: steps.push.outputs.pushed == 'true'
+        if: steps.push.outputs.pushed == 'true' || steps.check.outputs.resume != ''
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ steps.version.outputs.version || steps.check.outputs.resume }}
         run: gh release create "v$VERSION" --verify-tag --title "OmniScan v$VERSION" --generate-notes dist/* SHA256SUMS
