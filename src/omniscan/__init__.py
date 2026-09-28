@@ -2,6 +2,6 @@
 
 from omniscan.gpu.timeline import mark
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 mark("omniscan imported")
