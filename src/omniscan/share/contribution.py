@@ -21,7 +21,7 @@ import hmac
 import io
 import secrets
 import zipfile
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 from typing import Literal
@@ -49,10 +49,16 @@ from omniscan.core.schemas import (
     TranslationEdit,
 )
 from omniscan.edits.apply import MATCH_IOU, match_layout_edits, match_region_edits, match_translation_edits
-from omniscan.edits.store import auto_regions, current_regions, judged_lines, line_statuses, load_edits
+from omniscan.edits.store import (
+    auto_regions,
+    current_regions,
+    final_lines,
+    held_checks,
+    judged_lines,
+    load_edits,
+)
 from omniscan.glossary.store import GlossaryStore
 from omniscan.learn.harvest import norm
-from omniscan.translate.on_demand import english_lines
 from omniscan.typeset.page_preview import page_box
 from omniscan.update.version import current_version
 
@@ -264,6 +270,15 @@ def _corrected(region: ContributionRegion) -> bool:
     return region.edited or region.english_from in ("suggestion", "typed") or region.lettering is not None
 
 
+def _readable(read: Callable[[ChapterPaths], dict[str, str]], paths: ChapterPaths) -> dict[str, str]:
+    """`read(paths)`, or no lines when its file is damaged (a half-written final.json after an interrupted
+    judge run): one chapter's broken artifact never stops the export of the others."""
+    try:
+        return read(paths)
+    except OSError, ValueError:
+        return {}
+
+
 def build_chapter(
     paths: ChapterPaths, order: int, salt: bytes
 ) -> tuple[ContributionChapter | None, list[PageSource]]:
@@ -287,9 +302,8 @@ def build_chapter(
     auto_by_id = {region.id: region for region in auto}
     current = current_regions(paths)
     edits = _Edits.of(chapter_edits, auto, current)
-    judged, english = judged_lines(paths), english_lines(paths)
-    # only "checked" is read: without the touched ids every other line is "todo", which costs nothing here
-    checked = {rid for rid, status in line_statuses(paths, touched=()).items() if status == "checked"}
+    judged, english = _readable(judged_lines, paths), _readable(final_lines, paths)
+    checked = held_checks(current, chapter_edits, english)  # this snapshot of the edits, not a second read
     by_page: dict[int, list[ContributionRegion]] = {}
     files: dict[int, SourceFile] = {}
     for region in current:
