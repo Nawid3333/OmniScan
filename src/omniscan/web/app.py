@@ -34,7 +34,6 @@ from omniscan.core.schemas import (
     CleanupPatch,
     FilterArtifact,
     FilterDecision,
-    FinalArtifact,
     GlossaryEntry,
     IngestArtifact,
     InpaintArtifact,
@@ -61,7 +60,7 @@ from omniscan.pipeline.stages import STAGE_ORDER
 from omniscan.qa.consistency import divergences, series_lines, term_misses
 from omniscan.queue.store import QueueStore, queue_db_path
 from omniscan.queue.worker import run_queue
-from omniscan.translate.on_demand import translate_now
+from omniscan.translate.on_demand import english_lines, translate_now
 from omniscan.translate.profiles import default_profile_paths, load_profiles
 from omniscan.translate.run import ChatClient
 from omniscan.typeset.chapter import chapter_layout
@@ -347,20 +346,6 @@ def create_app(
             return []
         with GlossaryStore(series.db) as store:
             return store.list()
-
-    def final_lines(chapter: ChapterPaths) -> dict[str, str]:
-        """region_id -> final text; {} when final.json is missing or invalid (never a 500)."""
-        path = chapter.artifact("final.json")
-        if not path.is_file():
-            return {}
-        try:
-            final = FinalArtifact.load(path)
-        except Exception:
-            return {}
-        lines: dict[str, str] = {}
-        for line in final.lines:
-            lines.setdefault(line.region_id, line.text)
-        return lines
 
     def source_names(chapter: ChapterPaths) -> dict[int, str]:
         """SourceFile index -> name from ingest.json; {} when missing or invalid (never a 500)."""
@@ -1089,7 +1074,7 @@ def create_app(
             for entry in glossary_entries(series_paths(series))
             if entry.status in ("proposed", "locked")
         ]
-        finals = final_lines(paths)
+        finals = english_lines(paths)  # {} when final.json is missing or damaged (never a 500)
         hits: dict[str, list[dict[str, object]]] = {}
         for region in ocr.regions:
             region_hits: list[dict[str, object]] = []
