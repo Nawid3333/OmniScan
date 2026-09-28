@@ -86,3 +86,9 @@ export function termChange(entry: GlossaryEntry, draft: TermDraft): TermChange {
 export function replaceTerm(entries: GlossaryEntry[], updated: GlossaryEntry): GlossaryEntry[] {
   return entries.map((e) => (e.id === updated.id ? updated : e));
 }
+
+/** The text selected in a text field (`start`–`end`), trimmed; "" without a selection. */
+export function selectionOf(text: string, start: number | null, end: number | null): string {
+  if (start === null || end === null || end <= start) return "";
+  return text.slice(start, end).trim();
+}

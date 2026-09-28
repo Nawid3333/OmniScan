@@ -1725,6 +1725,11 @@ shows one raw page at a time with every text region as a box:
   just this box with the series' OCR engine — after moving a box or drawing one the detector missed — and
   shows the reading with a *use* link; nothing changes until you *Save source*. The first read loads the
   OCR models (a few seconds) and needs the GPU for that moment (it waits while a run holds it).
+- **Add term…** locks a name or term in the series' glossary without leaving the Studio: select it in the
+  source text (and its English in the English line), press *Add term…*, check the pre-filled term, English
+  and type, then *Lock term*. Every later translation must use that English, and the next run redoes just
+  the lines holding the term; a term already in the glossary is refused with its id (change it in the
+  **Glossary** view or with `omniscan glossary set`).
 - **Find missed text.** With nothing selected, the page panel's *Find missed text* runs the detector again
   on this page — at the series' threshold, or a lower one you type for faint text such as small signs — and
   the OCR reads every box no region covers. The finds show as orange dashed boxes (+1, +2, …) with their

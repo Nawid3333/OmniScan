@@ -5,6 +5,7 @@
   import {
     addCleanup,
     addRegion,
+    addTerm,
     cleanupPatchUrl,
     deleteCleanup,
     deleteLayout,
@@ -48,8 +49,10 @@
     RegionKind,
     SourceFile,
     Suggestion,
+    TermType,
     TranslationProfile,
   } from "./api";
+  import { TERM_TYPES, selectionOf } from "./glossary";
   import { kindColor } from "./ocr";
   import {
     HANDLES,
@@ -129,6 +132,10 @@
   let finding = $state(false);
   let findThreshold = $state<number | null>(null); // null = the series' detect.threshold
   let kept = $state<Suggestion | null>(null); // the suggestion the English draft was taken from
+  let sourceBox = $state<HTMLTextAreaElement | null>(null);
+  let englishBox = $state<HTMLTextAreaElement | null>(null);
+  let termForm = $state<{ source: string; target: string; type: TermType } | null>(null); // "Add term…" open
+  let termNote = $state(""); // what the last "Add term" stored
   let translating = $state(false);
   let cleanups = $state<CleanupPatch[]>([]);
   let cleanVersion = $state(0); // bumped on every refresh: patch ids are reused after a delete
@@ -268,11 +275,46 @@
     }
   }
 
+  /** Open the "Add term" form with the words selected in the source text and in the English line. */
+  function openTermForm(): void {
+    termNote = "";
+    termForm = {
+      source: sourceBox ? selectionOf(sourceBox.value, sourceBox.selectionStart, sourceBox.selectionEnd) : "",
+      target: englishBox ? selectionOf(englishBox.value, englishBox.selectionStart, englishBox.selectionEnd) : "",
+      type: "person",
+    };
+  }
+
+  /** Lock the term in the series' glossary (the next translation must use its English). */
+  async function addGlossaryTerm(): Promise<void> {
+    if (termForm === null) return;
+    busy = true;
+    actionError = "";
+    try {
+      const entry = await addTerm(series, {
+        source: termForm.source,
+        target: termForm.target,
+        type: termForm.type,
+        status: "locked",
+        notes: null,
+        aliases: [],
+      });
+      termNote = `locked “${entry.source}” → “${entry.target}” in the glossary; the next translation uses it`;
+      termForm = null;
+    } catch (e) {
+      actionError = e instanceof Error ? e.message : String(e);
+    } finally {
+      busy = false;
+    }
+  }
+
   function select(id: string | null): void {
     selectedId = id;
     suggestions = [];
     ocrReading = null;
     kept = null;
+    termForm = null;
+    termNote = "";
     resetLetterDraft(id);
     const region = regions.find((r) => r.id === id);
     sourceDraft = region?.text ?? "";
@@ -1039,7 +1081,7 @@
           </div>
           <label>
             source text <span class="muted">(OCR {selected.confidence.toFixed(2)} · Ctrl+Enter saves)</span>
-            <textarea rows="3" bind:value={sourceDraft} onkeydown={(e) => saveOnCtrlEnter(e, saveSource)} lang={selected.lang}></textarea>
+            <textarea rows="3" bind:this={sourceBox} bind:value={sourceDraft} onkeydown={(e) => saveOnCtrlEnter(e, saveSource)} lang={selected.lang}></textarea>
           </label>
           {#if selected.ocr_alt !== null}
             <p class="muted">
@@ -1061,9 +1103,30 @@
             disabled={busy || rereading}
             title="Read this box again with the OCR (after moving or drawing it); the first read loads the OCR models"
           >{rereading ? "Reading…" : "Read again (OCR)"}</button>
+          <button
+            onclick={openTermForm}
+            disabled={busy}
+            title="Lock a name or term in the series' glossary: select it in the source text (and its English below) first"
+          >Add term…</button>
+          {#if termForm !== null}
+            <div class="term-form">
+              <label>term <input bind:value={termForm.source} lang={selected.lang} aria-label="glossary term" /></label>
+              <label>English <input bind:value={termForm.target} lang="en" aria-label="glossary English" /></label>
+              <select bind:value={termForm.type} aria-label="glossary type">
+                {#each TERM_TYPES as type (type)}
+                  <option value={type}>{type}</option>
+                {/each}
+              </select>
+              <button onclick={() => void addGlossaryTerm()} disabled={busy || !termForm.source.trim() || !termForm.target.trim()}>Lock term</button>
+              <button class="link" onclick={() => (termForm = null)}>cancel</button>
+            </div>
+          {/if}
+          {#if termNote}
+            <p class="muted">{termNote}</p>
+          {/if}
           <label>
             English <span class="muted">(Ctrl+Enter saves)</span>
-            <textarea rows="3" bind:value={translationDraft} onkeydown={(e) => saveOnCtrlEnter(e, saveTranslation)} lang="en"></textarea>
+            <textarea rows="3" bind:this={englishBox} bind:value={translationDraft} onkeydown={(e) => saveOnCtrlEnter(e, saveTranslation)} lang="en"></textarea>
           </label>
           {#if selectedLine !== undefined && selectedLine.decision !== "manual" && selectedLine.rationale}
             <p class="muted">judge: {selectedLine.rationale}</p>
@@ -1315,6 +1378,13 @@
   .panel label {
     display: block;
     margin: 6px 0;
+  }
+  .term-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    align-items: center;
+    margin: 4px 0;
   }
   .panel textarea {
     width: 100%;
