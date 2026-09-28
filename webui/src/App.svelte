@@ -9,6 +9,7 @@
   import LearnedView from "./LearnedView.svelte";
   import OcrView from "./OcrView.svelte";
   import ProblemsView from "./ProblemsView.svelte";
+  import ProgressView from "./ProgressView.svelte";
   import ConsistencyView from "./ConsistencyView.svelte";
   import ReaderView from "./ReaderView.svelte";
   import SlicerView from "./SlicerView.svelte";
@@ -17,7 +18,7 @@
   import { listChapters, listSeries } from "./api";
 
   let view = $state<
-    "studio" | "slicer" | "ocr" | "translation" | "reader" | "inpaint" | "layout" | "edit" | "problems" | "filtered" | "learned" | "consistency" | "glossary"
+    "studio" | "slicer" | "ocr" | "translation" | "reader" | "inpaint" | "layout" | "edit" | "problems" | "filtered" | "learned" | "consistency" | "glossary" | "progress"
   >("studio");
   let series = $state("");
   let chapter = $state("");
@@ -40,6 +41,14 @@
     chapter = target;
     focus = regionId;
     view = "studio";
+  }
+
+  /** Open a chapter's Problems view (from the Progress view). */
+  async function openProblems(target: string): Promise<void> {
+    if (chapterList.length === 0) chapterList = await listChapters(series);
+    chapter = target;
+    focus = null;
+    view = "problems";
   }
 
   async function onSeriesChange(): Promise<void> {
@@ -91,6 +100,7 @@
       <button onclick={() => (view = "learned")} disabled={view === "learned"}>Learned</button>
       <button onclick={() => (view = "consistency")} disabled={view === "consistency"}>Consistency</button>
       <button onclick={() => (view = "glossary")} disabled={view === "glossary"}>Glossary</button>
+      <button onclick={() => (view = "progress")} disabled={view === "progress"}>Progress</button>
     </p>
     {#if view === "filtered"}
       <FilteredView {series} />
@@ -100,6 +110,8 @@
       <ConsistencyView {series} onOpen={(c, id) => void openRegion(c, id)} />
     {:else if view === "glossary"}
       <GlossaryView {series} />
+    {:else if view === "progress"}
+      <ProgressView {series} onOpen={(c) => void openProblems(c)} />
     {:else if chapter}
       {#if view === "studio"}
         <StudioView {series} {chapter} {focus} />
