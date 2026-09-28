@@ -142,8 +142,38 @@ MUTANTS = [
     ),
     (
         C,
-        "        if not any(_corrected(region) for region in regions):\n            continue\n",
+        "        if not any(_corrected(region) or region.checked for region in regions):\n            continue\n",
         "",
         "uncorrected pages contributed",
+    ),
+    (
+        C,
+        "        if not any(_corrected(region) or region.checked for region in regions):",
+        "        if not any(_corrected(region) for region in regions):",
+        "a page whose only news is a checked line is left out",
+    ),
+    (
+        C,
+        "            or chapter_edits.checked\n",
+        "",
+        "a chapter with checks but no edits is skipped",
+    ),
+    (
+        C,
+        '    checked = {rid for rid, status in line_statuses(paths, touched=()).items() if status == "checked"}',
+        "    checked = {check.region_id for check in chapter_edits.checked}",
+        "a stale check counts",
+    ),
+    (
+        C,
+        "                checked=region.id in checked,",
+        "                checked=False,",
+        "checks not shared",
+    ),
+    (
+        C,
+        "        checked=sum(1 for r in regions if r.checked),\n",
+        "",
+        "checked lines missing from the summary",
     ),
 ]

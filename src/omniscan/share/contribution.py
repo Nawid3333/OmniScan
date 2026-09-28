@@ -1,7 +1,7 @@
 """Contribution archives: a series' hand corrections with the pages they were made on (X4 in docs/ROADMAP.md).
 
 A contribution is what a user shares so the models, glossaries and defaults get better. For each page that
-carries a hand correction it holds the raw page (strip resolution, re-encoded, so no file name, folder path or
+carries a hand correction or a line a proofreader checked (verified data: the machine got it right) it holds the raw page (strip resolution, re-encoded, so no file name, folder path or
 image metadata survives) and every region on it with the pipeline's output next to the editor's
 (`core.schemas.Contribution`), plus the series' locked glossary terms. `build` collects it from the chapters'
 edits.json and the pipeline's own artifacts (ocr_auto.json, final_auto.json); `write_archive` writes
@@ -49,7 +49,7 @@ from omniscan.core.schemas import (
     TranslationEdit,
 )
 from omniscan.edits.apply import MATCH_IOU, match_layout_edits, match_region_edits, match_translation_edits
-from omniscan.edits.store import auto_regions, current_regions, judged_lines, load_edits
+from omniscan.edits.store import auto_regions, current_regions, judged_lines, line_statuses, load_edits
 from omniscan.glossary.store import GlossaryStore
 from omniscan.learn.harvest import norm
 from omniscan.translate.on_demand import english_lines
@@ -92,6 +92,7 @@ class Summary:
     other: int  # region edits that change neither text nor type (a moved box, a speaker)
     terms: int
     redrawn: int = 0  # detected boxes replaced by a box drawn over them by hand
+    checked: int = 0  # lines a proofreader checked (their check still holds), corrected or not
 
 
 def install_salt(work_root: Path) -> bytes:
@@ -227,6 +228,7 @@ def _region(
     edits: _Edits,
     judged: dict[str, str],
     english: dict[str, str],
+    checked: bool,
 ) -> ContributionRegion:
     """One current region of the chapter, the pipeline's output next to the hand edits."""
     edit = edits.regions.get(region.id)
@@ -253,6 +255,7 @@ def _region(
         english_from=_english_from(line, line_edit),
         speaker=region.speaker,
         lettering=_lettering(layout, page, width) if layout is not None else None,
+        checked=checked,
     )
 
 
@@ -264,12 +267,17 @@ def _corrected(region: ContributionRegion) -> bool:
 def build_chapter(
     paths: ChapterPaths, order: int, salt: bytes
 ) -> tuple[ContributionChapter | None, list[PageSource]]:
-    """One chapter's contributed pages (those with a hand correction) and where their pixels come from; None
-    when the chapter has no hand edit or no ingest.json to place its regions on pages."""
+    """One chapter's contributed pages (those with a hand correction or a checked line) and where their pixels
+    come from; None when the chapter has no hand edit or check, or no ingest.json to place its regions on pages."""
     chapter_edits = load_edits(paths)
     ingest_path = paths.artifact("ingest.json")
     if (
-        not (chapter_edits.regions or chapter_edits.translations or chapter_edits.layout)
+        not (
+            chapter_edits.regions
+            or chapter_edits.translations
+            or chapter_edits.layout
+            or chapter_edits.checked
+        )
         or not ingest_path.is_file()
     ):
         return None, []
@@ -280,6 +288,8 @@ def build_chapter(
     current = current_regions(paths)
     edits = _Edits.of(chapter_edits, auto, current)
     judged, english = judged_lines(paths), english_lines(paths)
+    # only "checked" is read: without the touched ids every other line is "todo", which costs nothing here
+    checked = {rid for rid, status in line_statuses(paths, touched=()).items() if status == "checked"}
     by_page: dict[int, list[ContributionRegion]] = {}
     files: dict[int, SourceFile] = {}
     for region in current:
@@ -296,6 +306,7 @@ def build_chapter(
                 edits=edits,
                 judged=judged,
                 english=english,
+                checked=region.id in checked,
             )
         )
     for region, replaced_by in edits.removed:
@@ -303,7 +314,9 @@ def build_chapter(
         if page is None:
             continue
         files[page.index] = page
-        kept = _region(region, page, width, auto=region, edits=edits, judged=judged, english={})
+        kept = _region(
+            region, page, width, auto=region, edits=edits, judged=judged, english={}, checked=False
+        )
         by_page.setdefault(page.index, []).append(
             kept.model_copy(update={"deleted": True, "edited": True, "replaced_by": replaced_by})
         )
@@ -312,7 +325,7 @@ def build_chapter(
     sources: list[PageSource] = []
     for index in sorted(by_page):
         regions = by_page[index]
-        if not any(_corrected(region) for region in regions):
+        if not any(_corrected(region) or region.checked for region in regions):
             continue
         member = f"pages/{chapter_id}/{index:04d}.jpg"
         file = files[index]
@@ -394,6 +407,7 @@ def summarize(contribution: Contribution) -> Summary:
         ),
         terms=len(contribution.glossary),
         redrawn=redrawn,
+        checked=sum(1 for r in regions if r.checked),
     )
 
 

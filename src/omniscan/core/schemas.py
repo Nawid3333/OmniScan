@@ -583,7 +583,8 @@ class ContributionRegion(Model):
     hand, a line never judged); `kind`, `text` and `english` are after the hand edits. A `deleted` region was
     found by the pipeline and removed by hand (a false detection), or replaced by a box drawn over it by hand
     (`replaced_by` names that box: the detector's box was wrong); its fields are the pipeline's. An `english_from`
-    of "typed" with no `english` is a line cleared by hand.
+    of "typed" with no `english` is a line cleared by hand. A `checked` region's line was approved by a
+    proofreader and neither its source text nor its English changed since: verified data, corrected or not.
     """
 
     id: str
@@ -606,6 +607,7 @@ class ContributionRegion(Model):
     )
     speaker: str | None = None
     lettering: ContributionLettering | None = None
+    checked: bool = False  # a proofreader's check still holds for this line (LineCheck)
 
 
 class ContributionPage(Model):
@@ -619,7 +621,7 @@ class ContributionPage(Model):
 
 
 class ContributionChapter(Model):
-    """The contributed pages of one chapter: only pages that carry a hand correction."""
+    """The contributed pages of one chapter: only pages that carry a hand correction or a checked line."""
 
     id: str  # hash of the series and chapter names (the names themselves are never shared)
     order: int  # the chapter's position in the series' reading order
@@ -636,8 +638,8 @@ class ContributionTerm(Model):
 
 
 class Contribution(Artifact):
-    """contribution.json inside a contribution archive (share/): a series' hand corrections with the pages they
-    were made on, shared to improve the models and defaults. Carries no file names, folder paths, image metadata
+    """contribution.json inside a contribution archive (share/): a series' hand corrections and checked lines with
+    the pages they were made on, shared to improve the models and defaults. Carries no file names, folder paths, image metadata
     or date; built only for series that have not opted out (`[share] enabled`)."""
 
     app_version: str

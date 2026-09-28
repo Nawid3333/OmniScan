@@ -51,9 +51,12 @@ def describe(summary: Summary) -> str:
         )
         if count
     )
+    held = [f"corrections: {fixes}"] if fixes else []
+    if summary.checked:
+        held.append(f"{summary.checked} checked line{'' if summary.checked == 1 else 's'}")
     return (
         f"{summary.chapters} chapter(s), {summary.pages} page(s), {summary.regions} region(s) and"
-        f" {summary.terms} glossary term(s); corrections: {fixes}"
+        f" {summary.terms} glossary term(s); {'; '.join(held)}"
     )
 
 
@@ -78,8 +81,8 @@ def contribute_export(
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Only say what the archive would hold.")] = False,
     as_json: Annotated[bool, typer.Option("--json", help="Print the summary as JSON.")] = False,
 ) -> None:
-    """Write the pages a series' hand corrections were made on, with the corrections and its locked glossary
-    terms, to one zip archive (no file names, folder paths or image metadata)."""
+    """Write the pages a series' hand corrections and checked lines are on, with the corrections, the checks and
+    its locked glossary terms, to one zip archive (no file names, folder paths or image metadata)."""
     cfg = get_config()
     series_paths = SeriesPaths.from_config(cfg, series)
     if not series_paths.library_dir.is_dir():
@@ -107,7 +110,9 @@ def contribute_export(
             json.dumps({**asdict(summary), "path": str(path) if size is not None else None, "bytes": size})
         )
     elif not pages:
-        typer.echo(f"contribute: {series} has no hand corrections to share; nothing exported")
+        typer.echo(
+            f"contribute: {series} has no hand corrections or checked lines to share; nothing exported"
+        )
     elif size is None:
         typer.echo(f"contribute: would write {describe(summary)}")
     else:
