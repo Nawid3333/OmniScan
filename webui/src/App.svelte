@@ -3,6 +3,7 @@
 
   import EditView from "./EditView.svelte";
   import FilteredView from "./FilteredView.svelte";
+  import GlossaryView from "./GlossaryView.svelte";
   import InpaintView from "./InpaintView.svelte";
   import LayoutView from "./LayoutView.svelte";
   import LearnedView from "./LearnedView.svelte";
@@ -15,7 +16,7 @@
   import { listChapters, listSeries } from "./api";
 
   let view = $state<
-    "studio" | "slicer" | "ocr" | "translation" | "reader" | "inpaint" | "layout" | "edit" | "filtered" | "learned" | "consistency"
+    "studio" | "slicer" | "ocr" | "translation" | "reader" | "inpaint" | "layout" | "edit" | "filtered" | "learned" | "consistency" | "glossary"
   >("studio");
   let series = $state("");
   let chapter = $state("");
@@ -87,6 +88,7 @@
       <button onclick={() => (view = "filtered")} disabled={view === "filtered"}>Filtered</button>
       <button onclick={() => (view = "learned")} disabled={view === "learned"}>Learned</button>
       <button onclick={() => (view = "consistency")} disabled={view === "consistency"}>Consistency</button>
+      <button onclick={() => (view = "glossary")} disabled={view === "glossary"}>Glossary</button>
     </p>
     {#if view === "filtered"}
       <FilteredView {series} />
@@ -94,6 +96,8 @@
       <LearnedView {series} />
     {:else if view === "consistency"}
       <ConsistencyView {series} onOpen={(c, id) => void openRegion(c, id)} />
+    {:else if view === "glossary"}
+      <GlossaryView {series} />
     {:else if chapter}
       {#if view === "studio"}
         <StudioView {series} {chapter} {focus} />
