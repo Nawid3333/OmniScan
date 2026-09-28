@@ -14,12 +14,14 @@ from typing import TYPE_CHECKING, Any, ClassVar, Protocol, runtime_checkable
 
 from omniscan.core.config import Config
 from omniscan.core.paths import SeriesPaths
+from omniscan.core.schemas import IngestArtifact
 from omniscan.core.stage import ChapterContext, Stage
 from omniscan.edits.store import FINAL_AUTO_FILE
 from omniscan.glossary.store import GlossaryStore
 from omniscan.llm.ollama import OllamaRateLimitError
 from omniscan.story.store import SummaryStore
 from omniscan.translate.chapter import translate_chapter
+from omniscan.translate.images import PageImages, stage_profile
 from omniscan.translate.judge_chapter import judge_chapter
 from omniscan.translate.voices import VOICES_FILE, Character, load_voices
 
@@ -139,6 +141,7 @@ class TranslateStage:
         from omniscan.gpu.vram import OLLAMA_GROUP  # deferred: importing this module must not pull torch
 
         every = [*self._profiles, *self._fallbacks.values()]
+        self._images = any(profile.images for profile in every)  # a profile sends the page images
         self.gpu_group = (
             OLLAMA_GROUP
             if any(_needs_local_gpu(profile.endpoint, profile.model) for profile in every)
@@ -153,6 +156,11 @@ class TranslateStage:
         voices = ctx.series.library_dir / VOICES_FILE
         if voices.is_file():
             inputs.append(voices)  # a changed voice re-translates that character's lines
+        if self._images:  # what a vision model sees: the page layout and the raw pages under it
+            ingest = ctx.paths.artifact("ingest.json")
+            inputs += [ingest, ctx.paths.artifact("slices.json")]
+            if ingest.is_file():
+                inputs += [ctx.paths.raw_dir / file.name for file in IngestArtifact.load(ingest).files]
         return inputs
 
     def outputs(self, ctx: ChapterContext) -> list[str]:
@@ -177,8 +185,10 @@ class TranslateStage:
     def config_subset(self, cfg: Config) -> Mapping[str, Any]:
         """Only the config values that affect this stage's output (hashed for invalidation)."""
         return {
-            "profiles": [profile.model_dump() for profile in self._profiles],
-            "fallbacks": {name: fallback.model_dump() for name, fallback in sorted(self._fallbacks.items())},
+            "profiles": [stage_profile(profile) for profile in self._profiles],
+            "fallbacks": {
+                name: stage_profile(fallback) for name, fallback in sorted(self._fallbacks.items())
+            },
         }
 
     def run(self, ctx: ChapterContext, models: Mapping[str, Any]) -> Mapping[str, float]:
@@ -192,13 +202,14 @@ class TranslateStage:
 
             hints = translation_hints(current_memory(ctx.series), ctx.cfg.learn)
         characters = load_voices(ctx.series)
+        images = PageImages(ctx.paths) if self._images else None  # read and encoded once for every profile
         regions = fallbacks_used = reused = remembered = 0.0
         for profile in self._profiles:
             fallback = self._fallbacks.get(profile.name)
             run: CandidateRun | None = None
             if fallback is None or profile.name not in self._rate_limited:
                 try:
-                    run = self._translate(ctx, profile, entries, story_summary, hints, characters)
+                    run = self._translate(ctx, profile, entries, story_summary, hints, characters, images)
                 except OllamaRateLimitError:
                     if fallback is None:
                         raise
@@ -211,7 +222,7 @@ class TranslateStage:
                     )
                     self._rate_limited.add(profile.name)
             if run is None and fallback is not None:
-                run = self._translate(ctx, fallback, entries, story_summary, hints, characters)
+                run = self._translate(ctx, fallback, entries, story_summary, hints, characters, images)
                 fallbacks_used += 1.0
                 ctx.paths.artifact(f"translations/{profile.name}.json").unlink(missing_ok=True)  # stale
             elif fallback is not None:
@@ -236,6 +247,7 @@ class TranslateStage:
         story_summary: str | None,
         hints: TranslationHints | None = None,
         characters: Sequence[Character] = (),
+        images: PageImages | None = None,
     ) -> CandidateRun:
         """One profile over the chapter (the only local model in VRAM while it runs); its written run."""
         _make_sole_local_model(ctx, profile.endpoint, profile.model)
@@ -249,6 +261,7 @@ class TranslateStage:
             reuse=True,
             hints=hints,
             characters=characters,
+            images=images,
         )
         if run is None:
             raise RuntimeError(f"translate_chapter skipped {profile.name} despite force=True")

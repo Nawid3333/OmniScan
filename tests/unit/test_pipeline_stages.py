@@ -7,7 +7,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from PIL import Image
 
+import omniscan.translate.images as images_module
 from omniscan.core.config import Config, GpuConfig, LearnConfig, PathsConfig
 from omniscan.core.manifest import load_manifest
 from omniscan.core.paths import ChapterPaths
@@ -17,10 +19,14 @@ from omniscan.core.schemas import (
     CandidateRun,
     FinalArtifact,
     GlossaryEntry,
+    IngestArtifact,
     MemoryEntry,
     Region,
     RegionsArtifact,
     SeriesMemory,
+    Slice,
+    SlicesArtifact,
+    SourceFile,
 )
 from omniscan.core.stage import ChapterContext, StageOutcome, make_context, run_stage
 from omniscan.glossary.store import GlossaryStore
@@ -232,6 +238,101 @@ def test_translate_stage_config_subset_hashes_the_profiles(cfg: Config) -> None:
     other = TranslateStage(FakeClient([]), [profile(temperature=0.9)])
     assert stage.config_subset(cfg) != other.config_subset(cfg)
     assert TranslateStage(FakeClient([]), [profile()]).config_subset(cfg) == stage.config_subset(cfg)
+
+
+class EchoClient(FakeClient):
+    """Answers every region of every request with EN(<source>); keeps the requests."""
+
+    def __init__(self) -> None:
+        super().__init__([])
+
+    def chat(self, model: str, messages: list[dict[str, Any]], **kwargs: Any) -> ChatResponse:
+        sent = json.loads(messages[-1]["content"].split("Regions (reading order):\n", 1)[1])
+        self.replies = [json_reply({r["id"]: f"EN({r['text']})" for r in sent})]
+        return super().chat(model, messages, **kwargs)
+
+
+def write_pages(paths: ChapterPaths) -> list[Region]:
+    """Two 200 x 300 raw pages as three slices of 200 rows, and one region on each slice."""
+    paths.raw_dir.mkdir(parents=True)
+    for i in range(2):
+        Image.new("RGB", (200, 300), (60 + 100 * i,) * 3).save(paths.raw_dir / f"{i + 1:03d}.jpg")
+    IngestArtifact(
+        series=SERIES,
+        chapter=CHAPTER,
+        strip_width=200,
+        strip_height=600,
+        files=[
+            SourceFile(
+                index=i,
+                name=f"{i + 1:03d}.jpg",
+                sha256=str(i) * 64,
+                width=200,
+                height=300,
+                y0=300 * i,
+                y1=300 * (i + 1),
+            )
+            for i in range(2)
+        ],
+    ).save(paths.artifact("ingest.json"))
+    SlicesArtifact(
+        strip_width=200,
+        strip_height=600,
+        bands=[],
+        slices=[Slice(index=i, y0=200 * i, y1=200 * (i + 1)) for i in range(3)],
+    ).save(paths.artifact("slices.json"))
+    regions = [
+        Region(
+            id=f"r000{i + 1}",
+            slice_index=i,
+            kind="bubble_text",
+            bbox=BBox(x0=10, y0=200 * i + 20, x1=150, y1=200 * i + 80),
+            text=f"줄 {i + 1}",
+        )
+        for i in range(3)
+    ]
+    RegionsArtifact(regions=regions).save(paths.artifact("ocr.json"))
+    return regions
+
+
+def test_translate_stage_hash_of_a_profile_without_images_is_as_before(cfg: Config) -> None:
+    plain = profile()
+    subset = TranslateStage(FakeClient([]), [plain], {"test-profile": profile(name="fb")}).config_subset(cfg)
+    before = plain.model_dump(exclude={"images", "image_side", "images_per_request"})
+    assert subset == {"profiles": [before], "fallbacks": {"test-profile": {**before, "name": "fb"}}}
+    wider = TranslateStage(FakeClient([]), [profile(image_side=2048)]).config_subset(cfg)
+    assert wider == TranslateStage(FakeClient([]), [plain]).config_subset(cfg)
+    seeing = TranslateStage(FakeClient([]), [profile(images=True)]).config_subset(cfg)
+    assert seeing["profiles"][0]["images"] is True and seeing["profiles"][0]["image_side"] == 1280
+
+
+def test_translate_stage_with_page_images_lists_the_pages_and_reads_them_once(
+    cfg: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx = make_context(cfg, SERIES, CHAPTER)
+    write_pages(ctx.paths)
+    assert TranslateStage(FakeClient([]), [profile()]).inputs(ctx) == [ctx.paths.artifact("ocr.json")]
+    client = EchoClient()
+    both = [cloud_profile(images=True), cloud_profile(images=True, name="other")]
+    stage = TranslateStage(client, both)
+    assert stage.inputs(ctx) == [
+        ctx.paths.artifact("ocr.json"),
+        ctx.paths.artifact("ingest.json"),
+        ctx.paths.artifact("slices.json"),
+        ctx.paths.raw_dir / "001.jpg",
+        ctx.paths.raw_dir / "002.jpg",
+    ]
+    reads: list[int] = []
+    real = images_module.strip_crop
+
+    def counted(*args: Any) -> Any:
+        reads.append(1)
+        return real(*args)
+
+    monkeypatch.setattr(images_module, "strip_crop", counted)
+    stage.run(ctx, {})
+    assert client.calls == 2 and all(len(call[-1]["images"]) == 3 for call in client.messages)
+    assert len(reads) == 3  # three slices, read and encoded once for both profiles
 
 
 def test_translate_stage_gpu_group_needs_a_local_model(cfg: Config) -> None:

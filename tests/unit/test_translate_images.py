@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import io
+import itertools
 import json
 from pathlib import Path
 from typing import Any
@@ -21,11 +22,13 @@ from omniscan.core.schemas import (
     GlossaryEntry,
     IngestArtifact,
     Region,
+    RegionsArtifact,
     Slice,
     SlicesArtifact,
     SourceFile,
 )
 from omniscan.llm.ollama import ChatResponse, OllamaClient
+from omniscan.translate.chapter import translate_chapter
 from omniscan.translate.images import PageImages
 from omniscan.translate.incremental import translation_key
 from omniscan.translate.profiles import TranslationProfile
@@ -129,19 +132,55 @@ def test_requests_carry_the_pages_their_regions_are_on(paths: ChapterPaths) -> N
         images=PageImages(paths),
     )
     assert [c.text for c in run.candidates] == ["EN(가자)", "EN(어디로?)", "EN(게이트로)", "EN(늦었어)"]
-    first, second = client.calls  # slices 0 and 1 in one request, slice 2 in the next
+    first, second = client.calls  # 400 x 600 slices, at 300 px: two 300 x 225 tiles each; two per request
     images = [decoded(data) for data in first[-1]["images"]]
-    assert [image.size for image in images] == [(200, 300), (200, 300)]  # 400 x 600 slices, long side 300
-    assert decoded(second[-1]["images"][0]).size == (200, 300)
-    assert np.asarray(images[0].convert("L"))[65, 100] > 200  # the bright band of page 1, scaled by 0.5
+    assert [image.size for image in images] == [(300, 225), (300, 225)]
+    assert [decoded(data).size for data in second[-1]["images"]] == [(300, 225), (300, 225)]
+    assert np.asarray(images[0].convert("L"))[90, 100] > 200  # the bright band of page 1, scaled by 0.75
     sent = json.loads(first[-1]["content"].split("Regions (reading order):\n", 1)[1])
     assert [(r["id"], r["image"], r["box"]) for r in sent] == [
-        ("r0001", 0, [20, 50, 120, 90]),
-        ("r0002", 0, [20, 200, 120, 240]),
-        ("r0003", 1, [20, 50, 120, 90]),  # strip row 700 is row 100 of slice 1
+        ("r0001", 0, [30, 75, 180, 135]),
+        ("r0002", 1, [30, 75, 180, 135]),  # strip row 400 is row 100 of slice 0's second tile
     ]
+    later = json.loads(second[-1]["content"].split("Regions (reading order):\n", 1)[1])
+    assert [(r["id"], r["image"]) for r in later] == [("r0003", 0), ("r0004", 1)]
     assert "Page images: the attached images show the pages" in first[-1]["content"]
     assert "images" not in first[0]  # only the user message carries them
+
+
+@pytest.mark.parametrize(
+    ("width", "height", "side", "tiles", "image"),
+    [
+        (800, 6000, 1280, 5, (800, 1200)),  # a webtoon slice keeps its width instead of becoming 171 px wide
+        (800, 15000, 1280, 12, (800, 1250)),
+        (2000, 3000, 1280, 2, (1280, 960)),  # a wide strip is scaled to fit, then cut
+        (400, 600, 1280, 1, (400, 600)),  # a small slice goes whole, never enlarged
+    ],
+)
+def test_tall_slices_are_cut_into_tiles_that_keep_their_detail(
+    width: int, height: int, side: int, tiles: int, image: tuple[int, int]
+) -> None:
+    cut = images_module.tiles_of(Slice(index=3, y0=100, y1=100 + height), width, side)
+    assert len(cut) == tiles and (cut[0].y0, cut[-1].y1) == (100, 100 + height)
+    assert all(a.y1 == b.y0 for a, b in itertools.pairwise(cut))  # no row lost or sent twice
+    first = cut[0]
+    size = (round(width * first.scale), round((first.y1 - first.y0) * first.scale))
+    assert size == image and max(size) <= side
+
+
+def test_repair_rounds_send_only_the_pages_still_needed(paths: ChapterPaths) -> None:
+    class ForgetsTheLast(EchoClient):
+        def chat(self, model: str, messages: list[dict[str, Any]], **kwargs: Any) -> ChatResponse:
+            reply = super().chat(model, messages, **kwargs)
+            answer = json.loads(reply.content)
+            if len(self.calls) == 1:
+                answer["translations"] = answer["translations"][:-1]  # r0002 missing from the first reply
+            return ChatResponse(json.dumps(answer, ensure_ascii=False), model, True, None, 1, 1, {})
+
+    client = ForgetsTheLast()
+    run_profile(client, profile(images=True, image_side=300), REGIONS[:2], [], images=PageImages(paths))
+    first, repair = client.calls
+    assert len(first[-1]["images"]) == 2 and len(repair[-1]["images"]) == 1
 
 
 def test_a_profile_without_images_sends_exactly_what_it_sent_before(paths: ChapterPaths) -> None:
@@ -154,7 +193,7 @@ def test_a_profile_without_images_sends_exactly_what_it_sent_before(paths: Chapt
     assert all("images" not in message for call in client.calls for message in call)
 
 
-def test_keys_change_only_for_profiles_that_send_images() -> None:
+def test_keys_change_only_for_lines_sent_with_their_page() -> None:
     line = Region(
         id="r0001",
         slice_index=0,
@@ -166,14 +205,55 @@ def test_keys_change_only_for_profiles_that_send_images() -> None:
     plain = TranslationProfile(name="p", endpoint="cloud", model="gemma4:31b-cloud", style="chat_json")
     before_images_existed = "546526f4c58d71995eb38a2e50cc9b65b566096558d207aec86c083c5558512e"
     assert translation_key(line, entries, plain) == before_images_existed
-    assert (
-        translation_key(line, entries, plain.model_copy(update={"image_side": 2048})) == before_images_existed
-    )
+    assert translation_key(line, entries, plain, page="p1") == before_images_existed  # images off
+    wider = plain.model_copy(update={"image_side": 2048, "images_per_request": 5})
+    assert translation_key(line, entries, wider) == before_images_existed
     seeing = plain.model_copy(update={"images": True})
-    assert translation_key(line, entries, seeing) != before_images_existed
-    assert translation_key(line, entries, seeing.model_copy(update={"image_side": 2048})) != translation_key(
-        line, entries, seeing
-    )
+    assert translation_key(line, entries, seeing) == before_images_existed  # sent without its page
+    with_page = translation_key(line, entries, seeing, page="p1")
+    assert with_page != before_images_existed
+    assert translation_key(line, entries, seeing, page="p2") != with_page  # another page image
+    bigger = seeing.model_copy(update={"image_side": 2048})
+    assert translation_key(line, entries, bigger, page="p1") != with_page
+    fewer = seeing.model_copy(update={"images_per_request": 1})  # chunking, like chunk_regions
+    assert translation_key(line, entries, fewer, page="p1") == with_page
+
+
+def test_keys_say_what_was_sent_and_a_replaced_page_is_translated_again(paths: ChapterPaths) -> None:
+    RegionsArtifact(regions=REGIONS).save(paths.artifact("ocr.json"))
+    seeing = profile(images=True)
+    kept = {page.name: page.read_bytes() for page in paths.raw_dir.iterdir()}
+    for page in paths.raw_dir.iterdir():
+        page.unlink()
+    client = EchoClient()
+    _, run = translate_chapter(client, paths, seeing, [], force=True, reuse=True)
+    assert run is not None
+    assert [c.key for c in run.candidates] == [translation_key(r, [], seeing) for r in REGIONS]  # text only
+    for name, data in kept.items():
+        (paths.raw_dir / name).write_bytes(data)
+    client = EchoClient()
+    _, run = translate_chapter(client, paths, seeing, [], force=True, reuse=True)
+    assert run is not None and len(client.calls) == 1 and "images" in client.calls[0][-1]  # all sent again
+    ingest = IngestArtifact.load(paths.artifact("ingest.json"))
+    ingest.files[1] = ingest.files[1].model_copy(update={"sha256": "1" * 64})  # page 2 replaced
+    ingest.save(paths.artifact("ingest.json"))
+    client = EchoClient()
+    translate_chapter(client, paths, seeing, [], force=True, reuse=True)
+    (call,) = client.calls
+    sent = json.loads(call[-1]["content"].split("Regions (reading order):\n", 1)[1])
+    assert [r["id"] for r in sent] == ["r0003", "r0004"]  # only the lines whose image shows page 2
+
+
+def test_pages_shared_by_profiles_count_what_each_one_sent(paths: ChapterPaths) -> None:
+    RegionsArtifact(regions=REGIONS).save(paths.artifact("ocr.json"))
+    shared = PageImages(paths)
+    translate_chapter(EchoClient(), paths, profile(images=True), [], force=True, images=shared)
+    for page in paths.raw_dir.iterdir():  # gone before the next profile, which needs another size
+        page.unlink()
+    small = profile(images=True, image_side=300).model_copy(update={"name": "small"})
+    _, run = translate_chapter(EchoClient(), paths, small, [], force=True, images=shared)
+    assert run is not None
+    assert [c.key for c in run.candidates] == [translation_key(r, [], small) for r in REGIONS]  # text only
 
 
 def test_unreadable_pages_translate_without_images(
@@ -214,10 +294,28 @@ def test_images_need_a_chat_json_profile() -> None:
         )
 
 
-def test_a_local_model_gets_room_for_the_images() -> None:
+def jpeg(width: int, height: int) -> str:
+    buffer = io.BytesIO()
+    Image.new("RGB", (width, height)).save(buffer, "JPEG")
+    return base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+def test_a_local_model_gets_room_for_the_images_it_is_sent() -> None:
     client = OllamaClient(OllamaConfig(num_ctx=4096), Secrets())
-    text = [{"role": "user", "content": "x" * 100}]
-    with_images = [{"role": "user", "content": "x" * 100, "images": ["a", "b", "c"]}]
-    plain = client._with_num_ctx("gemma4:12b", text, None, cloud=False)
-    seeing = client._with_num_ctx("gemma4:12b", with_images, None, cloud=False)
-    assert plain is not None and seeing is not None and seeing["num_ctx"] > plain["num_ctx"]
+
+    def ctx(*images: str) -> int:
+        message: dict[str, Any] = {"role": "user", "content": "x" * 100}
+        if images:
+            message["images"] = list(images)
+        options = client._with_num_ctx("gemma4:12b", [message], None, cloud=False)
+        assert options is not None
+        return int(options["num_ctx"])
+
+    assert ctx() == 8192  # 200 prompt tokens and room for the reply
+    assert OllamaClient(OllamaConfig(num_ctx=4096), Secrets())._with_num_ctx(
+        "gemma4:12b", [{"role": "user", "content": "x", "images": [jpeg(4096, 4096)]}], None, cloud=False
+    ) == {"num_ctx": 28672}  # 147 x 147 patches of 28 px: a big image costs far more than a small one
+    assert ctx(jpeg(1280, 1280)) == 8192  # 46 x 46 patches
+    assert ctx(jpeg(1280, 1280), "not an image") == 12288  # an unreadable one counts as 2048 tokens
+    assert ctx(jpeg(280, 280)) == 12288  # never less than an earlier image request: no model reload
+    assert ctx() == 8192  # text requests keep their own size

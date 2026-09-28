@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 from omniscan.core.paths import natural_key
 from omniscan.core.schemas import GlossaryEntry, Region
 from omniscan.glossary.match import find_terms
+from omniscan.translate.images import attached
 from omniscan.translate.languages import region_language, source_language
 
 if TYPE_CHECKING:
@@ -146,7 +147,7 @@ def chat_json_messages(
     memory: Sequence[tuple[str, str]] = (),
     preferences: Sequence[tuple[str, str]] = (),
     characters: Sequence[Character] = (),
-    images: Sequence[PageImage] = (),
+    images: Mapping[str, PageImage] | None = None,
 ) -> list[dict[str, Any]]:
     """The chat_json prompt: system message plus story context, glossary sections and the regions list.
 
@@ -155,8 +156,8 @@ def chat_json_messages(
     lines the editor translated before and `preferences` (machine word, the editor's word) come from the
     series' learned memory (learn/); each adds its section only when given. `characters` (translate/voices.py)
     adds how they talk; a region with a speaker carries it, so a prompt without either is unchanged. `images`
-    (translate/images.py) are attached to the request, and each region on one of them says which and where;
-    without images the prompt is unchanged."""
+    (region id -> its page image, translate/images.py) are attached to the request, and each region on one of
+    them says which and where; without images the prompt is unchanged."""
     subset = glossary_subset(regions, entries)
     parts: list[str] = []
     if story_summary:
@@ -198,8 +199,10 @@ def chat_json_messages(
             "Context (the lines around these regions, already lettered; for reference only, do not "
             f"translate them):\n{context_json}"
         )
-    on_image = {image.slice_index: (i, image) for i, image in enumerate(images)}
-    if images:
+    images = images or {}
+    shown = attached(images)
+    number = {(image.tile.slice_index, image.tile.index): i for i, image in enumerate(shown)}
+    if shown:
         parts.append(
             "Page images: the attached images show the pages these regions are on, in the order attached (the "
             'first is image 0). A region\'s "image" is the page it is on and its "box" is where its text sits '
@@ -214,8 +217,11 @@ def chat_json_messages(
                 "text": source_text(r),
                 **({"speaker": r.speaker} if r.speaker else {}),
                 **(
-                    {"image": on_image[r.slice_index][0], "box": on_image[r.slice_index][1].box(r.bbox)}
-                    if r.slice_index in on_image
+                    {
+                        "image": number[(images[r.id].tile.slice_index, images[r.id].tile.index)],
+                        "box": images[r.id].box(r.bbox),
+                    }
+                    if r.id in images
                     else {}
                 ),
             }
@@ -226,8 +232,8 @@ def chat_json_messages(
     )
     parts.append(f"Regions (reading order):\n{regions_json}")
     user: dict[str, Any] = {"role": "user", "content": "\n\n".join(parts)}
-    if images:
-        user["images"] = [image.data for image in images]
+    if shown:
+        user["images"] = [image.data for image in shown]
     return [{"role": "system", "content": chat_json_system(region_language(regions))}, user]
 
 

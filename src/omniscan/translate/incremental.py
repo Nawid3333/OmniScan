@@ -40,10 +40,12 @@ def translation_key(
     entries: Sequence[GlossaryEntry],
     profile: TranslationProfile,
     characters: Sequence[Character] = (),
+    page: str | None = None,
 ) -> str:
     """Key of one region's translation by `profile`; a region with a speaker also depends on the speaker and
-    their voice (an unassigned region's key is the same as before speakers existed), and a profile that sends
-    page images on their settings (a profile without them keys as before images existed)."""
+    their voice (an unassigned region's key is the same as before speakers existed), and a region sent with its
+    page image (`page`: the image's identity, translate/images.py) on that image and the image size (a region
+    sent without one keys as before images existed)."""
     return _digest(
         {
             "text": source_text(region),
@@ -52,7 +54,7 @@ def translation_key(
             "glossary": _terms(region, entries),
             "profile": profile.model_dump(exclude={"enabled", "fallback", "chunk_regions", *IMAGE_FIELDS}),
             **voice_key(region, characters),
-            **image_key(profile),
+            **image_key(profile, page),
         }
     )
 

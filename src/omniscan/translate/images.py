@@ -1,19 +1,28 @@
-"""Page images for the translation model: the slices a request's regions sit on (profiles with `images = true`).
+"""Page images for the translation model: the pages a request's regions sit on (profiles with `images = true`).
 
 A vision model that sees the page can tell who is shouting, what "that" points at and whether a caption is a
-sign or narration. `PageImages` reads a chapter's slices from its raw pages and scales each so its long side is
-at most the profile's `image_side`, as base64 JPEG for the Ollama message's `images`; every region of the
-request then carries the image it is on and its box in that image's pixels (translate/prompts.py). The pixels
-are read with Pillow like the editing tools' crops (cleanup/strip.py): a few JPEGs per request next to a model
-call that takes seconds. A chapter whose pages cannot be read is translated without images (logged once).
+sign or narration. `PageImages` reads a chapter's slices from its raw pages as base64 JPEG for the Ollama
+message's `images`: each slice is scaled so the strip's width fits `image_side` px and cut into tiles at most
+`image_side` px tall, so a tall webtoon slice keeps its detail instead of shrinking to a sliver (a vision
+encoder squares what it gets). Every region of a request then carries the tile it is on (the one holding its
+vertical centre) and its box in that tile's pixels (translate/prompts.py). The pixels are read with Pillow like
+the editing tools' crops (cleanup/strip.py): a few JPEGs per request next to a model call that takes seconds.
+A chapter whose pages cannot be read is translated without images (logged once).
+
+A region's translation key (translate/incremental.py) holds the identity of its tile — the rows and the
+sha256 of the raw pages under them, from ingest.json — so a replaced page is translated again; a region sent
+without its image is keyed as if images were off, so it is translated again once the pages can be read.
 """
 
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
+import json
 import logging
-from collections.abc import Sequence
+import math
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -28,49 +37,80 @@ log = logging.getLogger(__name__)
 
 IMAGE_FIELDS = frozenset(
     {"images", "image_side", "images_per_request"}
-)  # profile fields a key sees only when on
+)  # profile fields a key or the stage hash sees only when images are on
 JPEG_QUALITY = 85
 
 
 @dataclass(frozen=True, slots=True)
-class PageImage:
-    """One slice as sent to the model: base64 JPEG, its scale (image px per strip px) and its top strip row."""
+class Tile:
+    """A piece of a slice sent as one image: strip rows [y0, y1) of slice `slice_index`, scaled by `scale`."""
 
     slice_index: int
-    data: str
-    scale: float
+    index: int  # the tile's number within its slice
     y0: int
+    y1: int
+    scale: float  # image px per strip px
+
+
+@dataclass(frozen=True, slots=True)
+class PageImage:
+    """One tile as sent to the model: base64 JPEG."""
+
+    tile: Tile
+    data: str
 
     def box(self, bbox: BBox) -> list[int]:
-        """A strip-space box in this image's pixels."""
-        return [
-            round(bbox.x0 * self.scale),
-            round((bbox.y0 - self.y0) * self.scale),
-            round(bbox.x1 * self.scale),
-            round((bbox.y1 - self.y0) * self.scale),
-        ]
+        """A strip-space box in this image's pixels (clipped to the tile's rows)."""
+        tile = self.tile
+
+        def row(y: int) -> int:
+            return round((min(max(y, tile.y0), tile.y1) - tile.y0) * tile.scale)
+
+        return [round(bbox.x0 * tile.scale), row(bbox.y0), round(bbox.x1 * tile.scale), row(bbox.y1)]
 
 
-def image_key(profile: TranslationProfile) -> dict[str, object]:
-    """What a translation key adds for a profile's page images: nothing when they are off (keys stay as before)."""
-    if not profile.images:
+def stage_profile(profile: TranslationProfile) -> dict[str, object]:
+    """A profile as the translate stage hashes it: with the page-image settings only when images are on, so a
+    profile without them hashes as before images existed."""
+    return profile.model_dump(exclude=None if profile.images else set(IMAGE_FIELDS))
+
+
+def image_key(profile: TranslationProfile, page: str | None) -> dict[str, object]:
+    """What a translation key adds for a region's page image (`page`: its tile's identity, None when it was not
+    sent): nothing when images are off or the image was not sent, so the key is the one without images."""
+    if not profile.images or page is None:
         return {}
-    return {"images": {"side": profile.image_side, "per_request": profile.images_per_request}}
+    return {"images": {"side": profile.image_side, "page": page}}
 
 
-def slices_of(regions: Sequence[Region]) -> list[int]:
-    """The slices `regions` sit on, in the order they first appear."""
-    return list(dict.fromkeys(region.slice_index for region in regions))
+def tiles_of(piece: Slice, width: int, side: int) -> list[Tile]:
+    """How a slice of a `width`-px strip is sent: scaled so the width fits `side` px, cut into equal tiles at
+    most `side` px tall."""
+    scale = min(1.0, side / width)
+    height = piece.y1 - piece.y0
+    count = max(1, math.ceil(height * scale / side))
+    step = math.ceil(height / count)
+    return [
+        Tile(piece.index, i, piece.y0 + i * step, min(piece.y1, piece.y0 + (i + 1) * step), scale)
+        for i in range(count)
+    ]
 
 
 class PageImages:
-    """A chapter's slices as JPEG images for the translation model, read on first use and kept per size."""
+    """A chapter's tiles as JPEG images for the translation model, read on first use and kept per size.
+
+    `sent` collects the ids of the regions whose image was handed out since `begin()` (one translation run)."""
 
     def __init__(self, paths: ChapterPaths) -> None:
         self._paths = paths
         self._layout: tuple[IngestArtifact, dict[int, Slice]] | None = None
-        self._cache: dict[tuple[int, int], PageImage] = {}
+        self._cache: dict[tuple[int, int, int], PageImage] = {}
         self._broken = False
+        self.sent: set[str] = set()
+
+    def begin(self) -> None:
+        """Start a translation run: forget which regions' images were handed out."""
+        self.sent = set()
 
     def _slices(self) -> tuple[IngestArtifact, dict[int, Slice]] | None:
         """The chapter's ingest.json and slices by index; None (logged once) when they cannot be read."""
@@ -92,36 +132,64 @@ class PageImages:
             )
         self._broken = True
 
-    def get(self, slice_indices: Sequence[int], side: int) -> list[PageImage]:
-        """The images of these slices in the order given, each at most `side` px on its long side; [] when the
-        chapter's pages cannot be read."""
+    def _place(self, region: Region, side: int) -> tuple[IngestArtifact, Tile] | None:
+        """The chapter's ingest.json and the tile `region` is sent on (the one holding its vertical centre);
+        None without a page layout."""
         layout = None if self._broken else self._slices()
-        if layout is None:
-            return []
-        ingest, slices = layout
-        images: list[PageImage] = []
-        for index in slice_indices:
-            key = (index, side)
+        piece = layout[1].get(region.slice_index) if layout is not None else None
+        if layout is None or piece is None:
+            return None
+        centre = (region.bbox.y0 + region.bbox.y1) // 2
+        tiles = tiles_of(piece, layout[0].strip_width, side)
+        return layout[0], next((t for t in tiles if centre < t.y1), tiles[-1])
+
+    def tile(self, region: Region, side: int) -> Tile | None:
+        """The tile `region` is sent on; None without a page layout."""
+        placed = self._place(region, side)
+        return placed[1] if placed is not None else None
+
+    def page_id(self, region: Region, side: int) -> str | None:
+        """The identity of the image `region` is sent with: its tile's rows and the sha256 of the raw pages under
+        them (ingest.json); None without a page layout."""
+        placed = self._place(region, side)
+        if placed is None:
+            return None
+        ingest, tile = placed
+        pages = [f.sha256 for f in ingest.files if f.y0 < tile.y1 and f.y1 > tile.y0 and not f.filtered]
+        text = json.dumps([tile.y0, tile.y1, round(tile.scale, 6), pages])
+        return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+    def for_regions(self, regions: Sequence[Region], side: int) -> dict[str, PageImage]:
+        """Region id -> the image it is on, for these regions ({} when the chapter's pages cannot be read)."""
+        found: dict[str, PageImage] = {}
+        for region in regions:
+            placed = self._place(region, side)
+            if placed is None:
+                continue
+            ingest, tile = placed
+            key = (tile.slice_index, tile.index, side)
             if key not in self._cache:
-                piece = slices.get(index)
-                if piece is None:
-                    continue
                 try:
                     pixels = strip_crop(
-                        self._paths, ingest, BBox(x0=0, y0=piece.y0, x1=ingest.strip_width, y1=piece.y1)
+                        self._paths, ingest, BBox(x0=0, y0=tile.y0, x1=ingest.strip_width, y1=tile.y1)
                     )
                 except (OSError, ValueError) as exc:
                     self._give_up(str(exc))
-                    return []
-                self._cache[key] = _encode(pixels, index, piece.y0, side)
-            images.append(self._cache[key])
-        return images
+                    return {}
+                self._cache[key] = PageImage(tile, _encode(pixels, tile.scale))
+            found[region.id] = self._cache[key]
+        self.sent |= found.keys()
+        return found
 
 
-def _encode(pixels: np.ndarray, index: int, y0: int, side: int) -> PageImage:
-    """A slice's pixels (uint8 [h, w, 3]) scaled to at most `side` px on its long side, as base64 JPEG."""
+def attached(images: Mapping[str, PageImage]) -> list[PageImage]:
+    """The distinct images of a request, in the order their regions first use them."""
+    return list({(image.tile.slice_index, image.tile.index): image for image in images.values()}.values())
+
+
+def _encode(pixels: np.ndarray, scale: float) -> str:
+    """A tile's pixels (uint8 [h, w, 3]) scaled by `scale`, as base64 JPEG."""
     image = Image.fromarray(pixels)
-    scale = min(1.0, side / max(image.size))
     if scale < 1.0:
         image = image.resize(
             (max(1, round(image.width * scale)), max(1, round(image.height * scale))),
@@ -129,6 +197,4 @@ def _encode(pixels: np.ndarray, index: int, y0: int, side: int) -> PageImage:
         )
     buffer = io.BytesIO()
     image.save(buffer, "JPEG", quality=JPEG_QUALITY)
-    return PageImage(
-        slice_index=index, data=base64.b64encode(buffer.getvalue()).decode("ascii"), scale=scale, y0=y0
-    )
+    return base64.b64encode(buffer.getvalue()).decode("ascii")
