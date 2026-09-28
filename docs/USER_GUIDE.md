@@ -1335,6 +1335,21 @@ lettering misread as stray characters is never reported. Issues are `source_left
 the chapter's `qa.json` (the desktop Studio's Check shows them too). Needs the chapter exported; not part of
 `omniscan run`. Uses the GPU like `omniscan ocr` (the OCR models are loaded once per command).
 
+### `omniscan status`
+
+Where each chapter of a series stands, for whoever manages it: how far the pipeline got (`through typeset`,
+`failed: detect`, `not started`), the dialogue and caption lines with English and the ones a proofreader checked
+(sound effects and watermarks are left out), the open problems on the lines not checked yet (the same list as
+`omniscan edit problems`), and whether the pages are exported: `yes`, `no`, or `outdated` when the chapter was
+edited or cleaned by hand, or a pipeline stage ran again, after the export (the `qa` re-read does not count).
+
+```bash
+uv run omniscan status "Solo Leveling"
+uv run omniscan status "Solo Leveling" --json
+```
+
+Read-only and CPU only; exit 2 for a series with no chapters. The web UI's **Progress** view shows the same table.
+
 ### `omniscan consistency`
 
 A proofreading report of a whole series: lines said again but translated differently (a catchphrase rendered
@@ -1926,7 +1941,8 @@ The chapter views (Studio, Slicer, OCR, Translation, Reader, Inpaint, Layout, Ed
 view. The
 **Filtered** view only needs a series and shows its every chapter that has filtered items; the **Learned**
 view only needs a series too (see "Learning from your corrections"), and so does the **Consistency** view (the
-report of `omniscan consistency`; each place opens the Studio on that region), and the **Glossary** view: the
+report of `omniscan consistency`; each place opens the Studio on that region), the **Progress** view (the table of `omniscan status`, with the series' totals; a chapter's name opens its
+Problems view), and the **Glossary** view: the
 series' terms with a status filter and a search box, a form to add a term (locked unless you untick it), and
 Edit / Lock / Reject / Propose / Remove on each row, the same changes as `omniscan glossary add|set|lock|reject|remove`. The **Studio**
 is the editor (see "Studio: editing by hand"); the other views are for checking one stage's output.

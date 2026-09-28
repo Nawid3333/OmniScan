@@ -43,6 +43,7 @@ from omniscan.match.cli import match_app
 from omniscan.models.rows import build_rows, row_to_json
 from omniscan.models.rows import ollama_model_names as _ollama_model_names
 from omniscan.packaging import pack_cbz, pack_pdf, safe_filename
+from omniscan.qa.progress import ChapterProgress, series_progress
 from omniscan.queue.executor import stage_executor
 from omniscan.queue.notify import combine, log_notifier, webhook_notifier
 from omniscan.queue.store import KNOWN_STAGES, STATUSES, JobStatus, QueueStore, queue_db_path
@@ -523,6 +524,46 @@ def cmd_consistency(
 
 
 app.command("consistency")(cmd_consistency)
+
+
+def _pipeline_state(progress: ChapterProgress) -> str:
+    """'failed: inpaint', 'through typeset' or 'not started'."""
+    if progress.failed is not None:
+        return f"failed: {progress.failed}"
+    return f"through {progress.last_stage}" if progress.last_stage else "not started"
+
+
+def cmd_status(
+    series: Annotated[str, typer.Argument()],
+    as_json: Annotated[bool, typer.Option("--json", help="Print the chapters as JSON.")] = False,
+) -> None:
+    """Show where each chapter of a series stands: how far the pipeline got, the lines translated and checked,
+    the open problems (`omniscan edit problems`) and whether the pages are exported and up to date."""
+    paths = _series_paths(series)
+    if not paths.chapters():
+        typer.echo(f"status: no chapters found for series {series!r}", err=True)
+        raise typer.Exit(2)
+    chapters = series_progress(paths)
+    if as_json:
+        _echo_text(json.dumps([asdict(progress) for progress in chapters], ensure_ascii=False, indent=2))
+        return
+    table = Table(title=f"status: {series} ({len(chapters)} chapter(s))")
+    for column in ("Chapter", "Pipeline", "English", "Checked", "Problems", "Export"):
+        table.add_column(column)
+    for progress in chapters:
+        export = ("outdated" if progress.outdated else "yes") if progress.exported else "no"
+        table.add_row(
+            progress.chapter,
+            _pipeline_state(progress),
+            f"{progress.translated}/{progress.lines}",
+            f"{progress.checked}/{progress.lines}",
+            str(progress.problems),
+            export,
+        )
+    Console().print(table)
+
+
+app.command("status")(cmd_status)
 
 
 def _echo_text(text: str) -> None:

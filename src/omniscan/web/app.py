@@ -61,6 +61,7 @@ from omniscan.ocr.on_demand import Reading, read_region_now
 from omniscan.pipeline.stages import STAGE_ORDER
 from omniscan.qa.consistency import divergences, series_lines, term_misses
 from omniscan.qa.problems import chapter_problems
+from omniscan.qa.progress import series_progress
 from omniscan.qa.typos import allow_word, checker_for, series_typos
 from omniscan.queue.store import QueueStore, queue_db_path
 from omniscan.queue.worker import run_queue
@@ -1083,6 +1084,12 @@ def create_app(
         except LookupError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return {**rule.model_dump(mode="json"), "active": is_active(rule, learn)}
+
+    @app.get("/api/series/{series}/progress")
+    def get_progress(series: str) -> list[dict[str, object]]:
+        """Where each chapter of the series stands, in reading order (qa/progress.py): the lines translated and
+        checked, the open problems, how far the pipeline got and whether the pages are exported and up to date."""
+        return [asdict(progress) for progress in series_progress(series_paths(series))]
 
     @app.get("/api/series/{series}/consistency")
     def get_consistency(series: str) -> dict[str, object]:

@@ -888,6 +888,24 @@ export async function getProblems(series: string, chapter: string): Promise<Prob
   return result.problems;
 }
 
+/** Where one chapter stands (GET /api/series/{series}/progress; qa/progress.py). */
+export interface ChapterProgress {
+  chapter: string;
+  lines: number; // dialogue and captions with text
+  translated: number;
+  checked: number;
+  problems: number; // open problems on lines not checked yet
+  last_stage: string | null; // the last pipeline stage recorded done
+  failed: string | null; // the first stage whose last run failed
+  exported: boolean;
+  outdated: boolean; // exported, but edited or re-run since
+}
+
+/** Every chapter of the series in reading order. */
+export async function getProgress(series: string): Promise<ChapterProgress[]> {
+  return getJson<ChapterProgress[]>(`${BASE}/series/${encodeURIComponent(series)}/progress`);
+}
+
 /** POST /api/series/{series}/typo-words: accept a word as "not a typo" for the whole series. */
 export async function allowTypoWord(series: string, word: string): Promise<{ words: string[] }> {
   return postJson<{ words: string[] }>(`${BASE}/series/${encodeURIComponent(series)}/typo-words`, { word });
