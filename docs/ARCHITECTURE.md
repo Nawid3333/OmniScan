@@ -116,6 +116,13 @@ disk: `series_lines` reads every chapter's current regions and English lines, `d
 source lines with different English, `term_misses` checks locked glossary terms with `glossary/match.py`
 (served by `omniscan consistency` and `GET /api/series/{series}/consistency`).
 
+**Reading one region again** (`ocr/on_demand.py`): the Studio's *Read again* and `omniscan edit ocr` cut the
+region's box plus a 24 px margin from the raw pages (`cleanup/strip.py`, Pillow) and pass it to the `ocr`
+stage's own `read_regions` (ppocr: lines found inside the crop) or `read_region_crops` with the region's box
+in crop pixels; the models come from a VRAM manager's vision group under the GPU lock, for that one read. The
+reading is only returned; keeping it is a hand edit (`update_region(text=…)`). The module imports torch only
+inside `read_region`, so the web app and the CLI stay torch-free at import.
+
 **Interchange** (`interchange/`): other tools' files in and out of a chapter, never a stage. Out: LabelPlus
 files (`labelplus.py`), layered PSD pages (`psd.py`) and BallonsTranslator projects (`ballons.py`), built from
 the chapter's artifacts on the CPU. In: LabelPlus labels (a point each) go to the region they point into

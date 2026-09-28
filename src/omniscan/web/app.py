@@ -53,6 +53,7 @@ from omniscan.glossary.store import GlossaryStore
 from omniscan.inpaint.patches import load_patches
 from omniscan.learn.memory import current_memory, is_active, set_rule_enabled
 from omniscan.llm.ollama import OllamaClient, OllamaError, OllamaRateLimitError
+from omniscan.ocr.on_demand import Reading, read_region_now
 from omniscan.pipeline.stages import STAGE_ORDER
 from omniscan.qa.consistency import divergences, series_lines, term_misses
 from omniscan.queue.store import QueueStore, queue_db_path
@@ -98,6 +99,12 @@ class TranslateBody(Model):
     region_ids: list[str] = Field(min_length=1, max_length=60)
     profile: str | None = None  # one profile by name (enabled or not); None = every enabled profile
     apply: bool = False  # keep each region's first suggestion as its English line
+
+
+class OcrBody(Model):
+    """Body of the one-region OCR POST request."""
+
+    apply: bool = False  # keep a non-empty reading as the region's source text (a hand edit)
 
 
 class LayoutBody(Model):
@@ -236,6 +243,7 @@ def create_app(
     cors_origins: Sequence[str] = ("http://localhost:5173",),
     run_worker: bool = False,
     chat_client: Callable[[Config], ChatClient] = ollama_client,
+    ocr_reader: Callable[[ChapterPaths, str, Config], Reading] = read_region_now,
     ui_dir: Path | None = None,
 ) -> FastAPI:
     """Build the debug API app: series/chapter browsing + ingest/slices artifacts + raw pages.
@@ -244,7 +252,8 @@ def create_app(
     a background thread that drains `queue.db`, so `POST .../run` requests actually execute instead of
     only ever sitting queued; tests and other embedders that just want to read existing artifacts
     should leave it `False` (the default here) to avoid touching the GPU/queue at all. `chat_client`
-    builds the LLM client of the on-demand translation route (tests pass a fake). `ui_dir` (the built web UI,
+    builds the LLM client of the on-demand translation route (tests pass a fake), `ocr_reader` reads one region
+    again for the OCR route (tests pass a fake). `ui_dir` (the built web UI,
     see `built_ui`) is served at `/`, so the API and the Studio share one address.
     """
 
@@ -556,6 +565,42 @@ def create_app(
             ],
             "applied": [line.model_dump(mode="json") for line in result.applied],
         }
+
+    def ocr_body(series: str, chapter: str, region_id: str, body: OcrBody) -> dict[str, object]:
+        """Read one region again (sync, runs in a worker thread); with `apply` keep a non-empty reading."""
+        paths = chapter_paths(series, chapter)
+        try:
+            scfg = series_config(cfg, series_paths(series).library_dir)
+        except SeriesConfigError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        try:
+            reading = ocr_reader(paths, region_id, scfg)
+        except (edit_store.EditNotFoundError, FileNotFoundError) as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (ImportError, OSError, RuntimeError, ValueError) as exc:  # no torch backend, no models, no GPU
+            raise HTTPException(status_code=503, detail=f"the OCR could not run: {exc}") from exc
+        applied = body.apply and bool(reading.text.strip())
+        if applied:
+            run_edit(
+                lambda: edit_store.update_region(
+                    paths, region_id, direction=scfg.detect.reading_direction, text=reading.text
+                )
+            )
+        return {
+            "region_id": reading.region_id,
+            "text": reading.text,
+            "confidence": reading.confidence,
+            "engine": reading.engine,
+            "applied": applied,
+        }
+
+    @app.post("/api/series/{series}/chapters/{chapter}/regions/{region_id}/ocr")
+    async def ocr_region(series: str, chapter: str, region_id: str, request: Request) -> dict[str, object]:
+        """Read one region again with the series' OCR engine (its models are loaded for this read, with
+        exclusive GPU access) and return the reading; with `apply` a non-empty reading becomes the region's
+        source text, a hand edit. 404 for an unknown region, 503 when the OCR cannot run."""
+        body = await json_body(request, OcrBody)
+        return await run_in_threadpool(ocr_body, series, chapter, region_id, body)
 
     @app.post("/api/series/{series}/chapters/{chapter}/translate")
     async def translate_regions(series: str, chapter: str, request: Request) -> dict[str, object]:
