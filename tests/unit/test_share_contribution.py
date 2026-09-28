@@ -334,6 +334,27 @@ def test_checked_lines_are_verified_data(cfg: Config) -> None:
     assert both.endswith("; corrections: 1 region type; 1 checked line")
 
 
+def test_a_damaged_final_never_stops_the_export(cfg: Config) -> None:
+    one, two = make_chapter(cfg, "Chapter 1"), make_chapter(cfg, "Chapter 2")
+    store.update_region(one, "r0001", direction="ltr", text="원문 하나")
+    store.update_region(two, "r0001", direction="ltr", kind="sfx")  # page 0: a correction
+    store.set_checked(two, ["r0003"])  # page 1: a checked line
+    two.artifact("final.json").write_text('{"judge_model": "ju', encoding="utf-8")  # a judge run cut short
+    two.artifact(store.FINAL_AUTO_FILE).write_bytes(b"\xff\xfe")
+    contribution, pages = build(SeriesPaths.from_config(cfg, "S"), cfg)
+    first, second = contribution.chapters
+    assert [page.index for page in first.pages] == [0] and first.pages[0].regions[0].english == "Line 1"
+    assert [page.index for page in second.pages] == [0] and len(pages) == 2  # the check can't be confirmed
+    kind = second.pages[0].regions[0]
+    assert (kind.kind, kind.auto_kind, kind.english, kind.machine_english, kind.checked) == (
+        "sfx",
+        "bubble_text",
+        None,
+        None,
+        False,
+    )
+
+
 def test_a_salt_another_export_just_made_is_kept(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     made = install_salt(tmp_path)
     read = Path.read_text
