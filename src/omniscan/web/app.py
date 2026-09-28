@@ -59,6 +59,7 @@ from omniscan.llm.ollama import OllamaClient, OllamaError, OllamaRateLimitError
 from omniscan.ocr.on_demand import Reading, read_region_now
 from omniscan.pipeline.stages import STAGE_ORDER
 from omniscan.qa.consistency import divergences, series_lines, term_misses
+from omniscan.qa.typos import allow_word, checker_for, series_typos
 from omniscan.queue.store import QueueStore, queue_db_path
 from omniscan.queue.worker import run_queue
 from omniscan.translate.on_demand import translate_now
@@ -94,6 +95,12 @@ class RuleBody(Model):
     """Body of the learned-rule switch PUT request."""
 
     enabled: bool
+
+
+class TypoWordBody(Model):
+    """Body of the "not a typo" POST request: one word the series' typo check should accept."""
+
+    word: str
 
 
 class TranslateBody(Model):
@@ -1062,14 +1069,29 @@ def create_app(
 
     @app.get("/api/series/{series}/consistency")
     def get_consistency(series: str) -> dict[str, object]:
-        """Lines of the series said again but translated differently (most repeated first), and translated
-        lines missing a locked glossary term's English (qa/consistency.py)."""
+        """Lines of the series said again but translated differently (most repeated first), translated lines
+        missing a locked glossary term's English (qa/consistency.py), and words of the English the dictionary
+        does not know (qa/typos.py)."""
         paths = series_paths(series)
         lines = series_lines(paths)
         return {
             "divergences": [asdict(item) for item in divergences(lines)],
             "term_misses": [asdict(item) for item in term_misses(lines, glossary_entries(paths))],
+            "typos": [asdict(item) for item in series_typos(lines, checker_for(paths))],
         }
+
+    @app.post("/api/series/{series}/typo-words")
+    async def add_typo_word(series: str, request: Request) -> dict[str, list[str]]:
+        """Mark a word "not a typo" for the series (typo_words.txt in its library folder); returns the list.
+        422 for anything but a single word."""
+        body = await json_body(request, TypoWordBody)
+        paths = series_paths(series)
+        if not paths.library_dir.is_dir():
+            raise HTTPException(status_code=404, detail=f"unknown series {series!r}")
+        try:
+            return {"words": allow_word(paths, body.word)}
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get("/api/series/{series}/glossary")
     def get_glossary(series: str) -> list[dict[str, object]]:

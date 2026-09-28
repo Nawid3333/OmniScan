@@ -816,12 +816,27 @@ export interface TermMiss {
   english: string;
 }
 
+/** A word of a translated line the English dictionary does not know, with its closest known words. */
+export interface SeriesTypo {
+  chapter: string;
+  region_id: string;
+  word: string;
+  suggestions: string[];
+  english: string;
+}
+
 /** GET /api/series/{series}/consistency: the series' proofreading report. */
 export interface ConsistencyReport {
   divergences: Divergence[];
   term_misses: TermMiss[];
+  typos: SeriesTypo[];
 }
 
 export async function getConsistency(series: string): Promise<ConsistencyReport> {
   return getJson<ConsistencyReport>(`${BASE}/series/${encodeURIComponent(series)}/consistency`);
+}
+
+/** POST /api/series/{series}/typo-words: accept a word as "not a typo" for the whole series. */
+export async function allowTypoWord(series: string, word: string): Promise<{ words: string[] }> {
+  return postJson<{ words: string[] }>(`${BASE}/series/${encodeURIComponent(series)}/typo-words`, { word });
 }

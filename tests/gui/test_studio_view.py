@@ -117,3 +117,18 @@ def test_chapter_without_regions_says_what_to_run(qapp: QApplication, cfg: Confi
     view.open_chapter(SERIES, CHAPTERS[2])
     assert view.session() is None and view.table.rowCount() == 0
     assert "run detection and OCR first" in view.status_label.text()
+
+
+def test_not_a_typo_accepts_the_selected_lines_words_for_the_series(qapp: QApplication, cfg: Config) -> None:
+    view = _view(qapp, cfg)
+    view.table.item(1, 3).setText("Grab teh sword")  # type: ignore[union-attr]
+    assert view.run_check() == 1
+    assert "'teh' is not in the dictionary" in view.table.item(1, 4).text()  # type: ignore[union-attr]
+    view.select_region("r0001")
+    assert not view.not_typo_button.isEnabled()  # "Hello" has no unknown word
+    view.select_region("r0002")
+    assert view.not_typo_button.isEnabled()
+    assert view.allow_selected_words() == ["teh"]
+    assert view.run_check() == 0
+    words = SeriesPaths.from_config(cfg, SERIES).library_dir / "typo_words.txt"
+    assert words.read_text(encoding="utf-8") == "teh\n"
