@@ -160,9 +160,21 @@ MUTANTS = [
     ),
     (
         C,
-        '    checked = {rid for rid, status in line_statuses(paths, touched=()).items() if status == "checked"}',
+        "    checked = held_checks(current, chapter_edits, english)",
         "    checked = {check.region_id for check in chapter_edits.checked}",
         "a stale check counts",
+    ),
+    (
+        C,
+        "    try:\n        return read(paths)\n    except OSError, ValueError:\n        return {}",
+        "    return read(paths)",
+        "a damaged final.json stops the whole export",
+    ),
+    (
+        C,
+        "    judged, english = _readable(judged_lines, paths), _readable(final_lines, paths)",
+        "    judged, english = judged_lines(paths), _readable(final_lines, paths)",
+        "a damaged final_auto.json stops the whole export",
     ),
     (
         C,

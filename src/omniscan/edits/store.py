@@ -647,19 +647,23 @@ def set_checked(paths: ChapterPaths, region_ids: Sequence[str], *, checked: bool
         return changed
 
 
+def held_checks(regions: Sequence[Region], edits: ChapterEdits, english: Mapping[str, str]) -> set[str]:
+    """The ids of `regions` (the current ones) whose check in `edits` still approves their line: neither the
+    source text nor the English (`english`, the chapter's lines by region id) changed since it was checked."""
+    by_id = {region.id: region for region in regions}
+    return {
+        region_id
+        for i, region_id in match_checks(regions, edits).items()
+        if _holds(edits.checked[i], by_id[region_id], english)
+    }
+
+
 def line_statuses(paths: ChapterPaths, touched: Collection[str] | None = None) -> dict[str, LineStatus]:
     """Each current region's line status: `checked` while a check still matches its source text and English,
     else `edited` when it carries a region edit or a hand-written line (`touched`: those ids, when the caller
     has them from `edited_ids`), else `todo`."""
     regions = current_regions(paths)
-    edits = load_edits(paths)
-    english = final_lines(paths)
-    by_id = {region.id: region for region in regions}
-    held = {
-        region_id
-        for i, region_id in match_checks(regions, edits).items()
-        if _holds(edits.checked[i], by_id[region_id], english)
-    }
+    held = held_checks(regions, load_edits(paths), final_lines(paths))
     if touched is None:
         edited, translated = edited_ids(paths)
         touched = {*edited, *translated}

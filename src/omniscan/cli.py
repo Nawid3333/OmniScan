@@ -17,11 +17,12 @@ from rich.table import Table
 
 from omniscan.core.config import Config, get_config, get_secrets, series_config
 from omniscan.core.paths import ChapterPaths, SeriesPaths, chapter_number, list_chapters, list_images
-from omniscan.core.schemas import GlossaryEntry, IngestArtifact, SlicesArtifact
+from omniscan.core.schemas import GlossaryEntry, IngestArtifact, SlicesArtifact, TermType
 from omniscan.doctor import run_all_checks
 from omniscan.edits.cli import edit_app
 from omniscan.filter.apply import record_override
 from omniscan.filter.decide import EXAMPLE_SUFFIXES
+from omniscan.glossary.edit import TermError, add_term, find_term, remove_term, set_status, update_term
 from omniscan.glossary.store import GlossaryStore
 from omniscan.glossary.yaml_io import export_yaml, import_yaml
 from omniscan.gpu.timeline import mark
@@ -1330,13 +1331,14 @@ def glossary_list(
     with _open_glossary(_series_paths(series)) as store:
         entries = store.list(status=status)
     table = Table(title=f"glossary: {series} ({len(entries)} entries)")
+    table.add_column("ID", justify="right")
     table.add_column("Source")
     table.add_column("Target")
     table.add_column("Type")
     table.add_column("Status")
     table.add_column("Count", justify="right")
     for entry in entries:
-        table.add_row(entry.source, entry.target, entry.type, entry.status, str(entry.count))
+        table.add_row(str(entry.id), entry.source, entry.target, entry.type, entry.status, str(entry.count))
     Console().print(table)
 
 
@@ -1365,6 +1367,119 @@ def glossary_import(
     with _open_glossary(paths) as store:
         written = import_yaml(store, paths.glossary_yaml, mode=mode)
     typer.echo(f"glossary: wrote {written} entries ({mode}) from {paths.glossary_yaml}")
+
+
+def _term_id(paths: SeriesPaths, key: str) -> int:
+    try:
+        return cast(int, find_term(paths, key).id)
+    except KeyError as exc:
+        typer.echo(f"glossary: {exc.args[0]}", err=True)
+        raise typer.Exit(2) from exc
+
+
+def _term_line(entry: GlossaryEntry) -> str:
+    return f"{entry.id}: {entry.source} -> {entry.target} ({entry.type}, {entry.status})"
+
+
+TermKey = Annotated[
+    str, typer.Argument(help="The entry's id (from `glossary list`) or its exact source text.")
+]
+TermKeys = Annotated[
+    list[str], typer.Argument(help="Entry ids (from `glossary list`) or exact source texts.")
+]
+AliasOption = Annotated[
+    list[str] | None, typer.Option("--alias", help="Another spelling of the source; repeatable.")
+]
+
+
+@glossary_app.command("add")
+def glossary_add(
+    series: Annotated[str, typer.Argument()],
+    source: Annotated[str, typer.Argument(help="The term as the raw pages write it.")],
+    target: Annotated[str, typer.Argument(help="Its English.")],
+    term_type: Annotated[TermType, typer.Option("--type", help="What the term names.")] = "other",
+    proposed: Annotated[
+        bool, typer.Option("--proposed", help="Add it as a suggestion the model may follow, not locked.")
+    ] = False,
+    notes: Annotated[
+        str | None, typer.Option("--notes", help="A note for whoever reviews the glossary.")
+    ] = None,
+    alias: AliasOption = None,
+) -> None:
+    """Add a term by hand: locked (every translation must use its English) unless --proposed."""
+    try:
+        entry = add_term(
+            _series_paths(series),
+            source,
+            target,
+            type=term_type,
+            status="proposed" if proposed else "locked",
+            notes=notes,
+            aliases=alias or (),
+        )
+    except (TermError, FileNotFoundError) as exc:
+        typer.echo(f"glossary: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    typer.echo(f"glossary: added {_term_line(entry)}")
+
+
+@glossary_app.command("set")
+def glossary_set(
+    series: Annotated[str, typer.Argument()],
+    term: TermKey,
+    source: Annotated[str | None, typer.Option("--source", help="New source text.")] = None,
+    target: Annotated[str | None, typer.Option("--target", help="New English.")] = None,
+    term_type: Annotated[TermType | None, typer.Option("--type", help="What the term names.")] = None,
+    notes: Annotated[str | None, typer.Option("--notes", help='New notes; "" clears them.')] = None,
+    alias: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--alias", help='The spellings that replace the aliases; repeatable, --alias "" clears them.'
+        ),
+    ] = None,
+) -> None:
+    """Correct an entry; new words make it yours, so a later `glossary propose` never overwrites them."""
+    paths = _series_paths(series)
+    try:
+        entry = update_term(
+            paths,
+            _term_id(paths, term),
+            source=source,
+            target=target,
+            type=term_type,
+            notes=notes,
+            aliases=alias,
+        )
+    except TermError as exc:
+        typer.echo(f"glossary: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    typer.echo(f"glossary: {_term_line(entry)}")
+
+
+def _set_status(series: str, terms: Sequence[str], status: GlossaryStatus) -> None:
+    paths = _series_paths(series)
+    for entry in set_status(paths, [_term_id(paths, term) for term in terms], status):
+        typer.echo(f"glossary: {_term_line(entry)}")
+
+
+@glossary_app.command("lock")
+def glossary_lock(series: Annotated[str, typer.Argument()], terms: TermKeys) -> None:
+    """Lock entries: every translation must use their English (a reviewed proposal becomes binding)."""
+    _set_status(series, terms, "locked")
+
+
+@glossary_app.command("reject")
+def glossary_reject(series: Annotated[str, typer.Argument()], terms: TermKeys) -> None:
+    """Reject entries: no prompt shows them and `glossary propose` never suggests them again."""
+    _set_status(series, terms, "rejected")
+
+
+@glossary_app.command("remove")
+def glossary_remove(series: Annotated[str, typer.Argument()], term: TermKey) -> None:
+    """Delete an entry; a later `glossary propose` may suggest it again, which `reject` prevents."""
+    paths = _series_paths(series)
+    entry = remove_term(paths, _term_id(paths, term))
+    typer.echo(f"glossary: removed {_term_line(entry)}")
 
 
 @glossary_app.command("propose")

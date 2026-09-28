@@ -34,7 +34,6 @@ from omniscan.core.schemas import (
     CleanupPatch,
     FilterArtifact,
     FilterDecision,
-    FinalArtifact,
     GlossaryEntry,
     IngestArtifact,
     InpaintArtifact,
@@ -44,6 +43,7 @@ from omniscan.core.schemas import (
     RegionsArtifact,
     SeriesMemory,
     SlicesArtifact,
+    TermType,
 )
 from omniscan.detect.on_demand import Found, find_on_page_now
 from omniscan.edits import store as edit_store
@@ -51,6 +51,7 @@ from omniscan.edits.replace import FindReplace, apply_changes
 from omniscan.edits.replace import plan as replace_plan
 from omniscan.export.segments import cut_crossings
 from omniscan.filter.decide import effective_decision, restore
+from omniscan.glossary import edit as glossary_edit
 from omniscan.glossary.match import find_terms, term_present
 from omniscan.glossary.store import GlossaryStore
 from omniscan.inpaint.patches import load_patches
@@ -59,9 +60,10 @@ from omniscan.llm.ollama import OllamaClient, OllamaError, OllamaRateLimitError
 from omniscan.ocr.on_demand import Reading, read_region_now
 from omniscan.pipeline.stages import STAGE_ORDER
 from omniscan.qa.consistency import divergences, series_lines, term_misses
+from omniscan.qa.typos import allow_word, checker_for, series_typos
 from omniscan.queue.store import QueueStore, queue_db_path
 from omniscan.queue.worker import run_queue
-from omniscan.translate.on_demand import translate_now
+from omniscan.translate.on_demand import english_lines, translate_now
 from omniscan.translate.profiles import default_profile_paths, load_profiles
 from omniscan.translate.run import ChatClient
 from omniscan.typeset.chapter import chapter_layout
@@ -94,6 +96,34 @@ class RuleBody(Model):
     """Body of the learned-rule switch PUT request."""
 
     enabled: bool
+
+
+class TypoWordBody(Model):
+    """Body of the "not a typo" POST request: one word the series' typo check should accept."""
+
+    word: str
+
+
+class TermBody(Model):
+    """Body of the glossary POST request: a term typed by hand."""
+
+    source: str
+    target: str
+    type: TermType = "other"
+    status: Literal["proposed", "locked", "rejected"] = "locked"
+    notes: str | None = None
+    aliases: list[str] = Field(default_factory=list)
+
+
+class TermChangeBody(Model):
+    """Body of the glossary PATCH request: every field left out stays; notes "" clears them."""
+
+    source: str | None = None
+    target: str | None = None
+    type: TermType | None = None
+    status: Literal["proposed", "locked", "rejected"] | None = None
+    notes: str | None = None
+    aliases: list[str] | None = None
 
 
 class TranslateBody(Model):
@@ -347,20 +377,6 @@ def create_app(
             return []
         with GlossaryStore(series.db) as store:
             return store.list()
-
-    def final_lines(chapter: ChapterPaths) -> dict[str, str]:
-        """region_id -> final text; {} when final.json is missing or invalid (never a 500)."""
-        path = chapter.artifact("final.json")
-        if not path.is_file():
-            return {}
-        try:
-            final = FinalArtifact.load(path)
-        except Exception:
-            return {}
-        lines: dict[str, str] = {}
-        for line in final.lines:
-            lines.setdefault(line.region_id, line.text)
-        return lines
 
     def source_names(chapter: ChapterPaths) -> dict[int, str]:
         """SourceFile index -> name from ingest.json; {} when missing or invalid (never a 500)."""
@@ -1062,19 +1078,73 @@ def create_app(
 
     @app.get("/api/series/{series}/consistency")
     def get_consistency(series: str) -> dict[str, object]:
-        """Lines of the series said again but translated differently (most repeated first), and translated
-        lines missing a locked glossary term's English (qa/consistency.py)."""
+        """Lines of the series said again but translated differently (most repeated first), translated lines
+        missing a locked glossary term's English (qa/consistency.py), and words of the English the dictionary
+        does not know (qa/typos.py)."""
         paths = series_paths(series)
         lines = series_lines(paths)
         return {
             "divergences": [asdict(item) for item in divergences(lines)],
             "term_misses": [asdict(item) for item in term_misses(lines, glossary_entries(paths))],
+            "typos": [asdict(item) for item in series_typos(lines, checker_for(paths))],
         }
+
+    @app.post("/api/series/{series}/typo-words")
+    async def add_typo_word(series: str, request: Request) -> dict[str, list[str]]:
+        """Mark a word "not a typo" for the series (typo_words.txt in its library folder); returns the list.
+        422 for anything but a single word."""
+        body = await json_body(request, TypoWordBody)
+        paths = series_paths(series)
+        if not paths.library_dir.is_dir():
+            raise HTTPException(status_code=404, detail=f"unknown series {series!r}")
+        try:
+            return {"words": allow_word(paths, body.word)}
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get("/api/series/{series}/glossary")
     def get_glossary(series: str) -> list[dict[str, object]]:
         """Every glossary entry of the series in store order ([] when series.db is missing)."""
         return [entry.model_dump(mode="json") for entry in glossary_entries(series_paths(series))]
+
+    @app.post("/api/series/{series}/glossary", status_code=201)
+    async def post_glossary(series: str, request: Request) -> dict[str, object]:
+        """Add a term by hand (locked unless the body says otherwise); 409 when its source is already in the
+        glossary, 422 for empty words, 404 for a series not in the library."""
+        body = await json_body(request, TermBody)
+        try:
+            entry = glossary_edit.add_term(series_paths(series), **body.model_dump())
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except glossary_edit.DuplicateTermError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except glossary_edit.TermError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return entry.model_dump(mode="json")
+
+    @app.patch("/api/series/{series}/glossary/{entry_id}")
+    async def patch_glossary(series: str, entry_id: int, request: Request) -> dict[str, object]:
+        """Correct, lock or reject an entry (new words make it the user's); 404 for no such entry, 409/422 as
+        for adding."""
+        body = await json_body(request, TermChangeBody)
+        try:
+            entry = glossary_edit.update_term(series_paths(series), entry_id, **body.model_dump())
+        except (FileNotFoundError, KeyError) as exc:
+            raise HTTPException(status_code=404, detail=f"no glossary entry {entry_id}") from exc
+        except glossary_edit.DuplicateTermError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except glossary_edit.TermError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return entry.model_dump(mode="json")
+
+    @app.delete("/api/series/{series}/glossary/{entry_id}")
+    def delete_glossary(series: str, entry_id: int) -> dict[str, object]:
+        """Delete an entry and return what it was; 404 for no such entry."""
+        try:
+            entry = glossary_edit.remove_term(series_paths(series), entry_id)
+        except (FileNotFoundError, KeyError) as exc:
+            raise HTTPException(status_code=404, detail=f"no glossary entry {entry_id}") from exc
+        return entry.model_dump(mode="json")
 
     @app.get("/api/series/{series}/chapters/{chapter}/glossary-hits")
     def get_glossary_hits(series: str, chapter: str) -> dict[str, dict[str, list[dict[str, object]]]]:
@@ -1089,7 +1159,7 @@ def create_app(
             for entry in glossary_entries(series_paths(series))
             if entry.status in ("proposed", "locked")
         ]
-        finals = final_lines(paths)
+        finals = english_lines(paths)  # {} when final.json is missing or damaged (never a 500)
         hits: dict[str, list[dict[str, object]]] = {}
         for region in ocr.regions:
             region_hits: list[dict[str, object]] = []

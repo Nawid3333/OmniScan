@@ -89,13 +89,15 @@ def test_exception_becomes_failed_without_crashing(qapp: QApplication) -> None:
 def test_two_tasks_run_concurrently_and_both_finish(qapp: QApplication) -> None:
     pool = QThreadPool()
     pool.setMaxThreadCount(2)
-    gates = {tag: threading.Event() for tag in (0, 1)}
+    # Neither task may return before both are running: with only an event to release them, the first task could
+    # finish before the second was started and the pool would reuse its idle thread (seen on macOS).
+    both_running = threading.Barrier(2, timeout=WAIT_S)
     threads: dict[int, int] = {}
 
     def make(tag: int) -> Any:
         def fn(progress: Any) -> str:
             threads[tag] = threading.get_ident()
-            gates[tag].wait(WAIT_S)
+            both_running.wait()
             return f"done-{tag}"
 
         return fn
@@ -104,8 +106,6 @@ def test_two_tasks_run_concurrently_and_both_finish(qapp: QApplication) -> None:
     finished: list[str] = []
     for item in signals:
         item.finished.connect(finished.append)
-    gates[0].set()
-    gates[1].set()
     _pump(qapp, lambda: len(finished) == 2)
     assert sorted(finished) == ["done-0", "done-1"]
     assert len(set(threads.values())) == 2  # both ran at the same time, on different threads

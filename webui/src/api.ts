@@ -310,6 +310,41 @@ export async function getGlossaryHits(series: string, chapter: string): Promise<
   );
 }
 
+/** What a glossary term names (core/schemas.py TermType). */
+export type TermType = "person" | "place" | "org" | "skill" | "item" | "rank" | "title" | "honorific" | "sfx" | "other";
+
+/** A term typed by hand: POST /api/series/{series}/glossary (locked unless `status` says otherwise). */
+export interface NewTerm {
+  source: string;
+  target: string;
+  type: TermType;
+  status: GlossaryEntry["status"];
+  notes: string | null;
+  aliases: string[];
+}
+
+/** PATCH /api/series/{series}/glossary/{id}: the fields to change (notes "" clears them). */
+export type TermChange = Partial<NewTerm>;
+
+function glossaryBase(series: string): string {
+  return `${BASE}/series/${encodeURIComponent(series)}/glossary`;
+}
+
+/** Add a term by hand; returns it as stored (409 when its source is already in the glossary). */
+export async function addTerm(series: string, term: NewTerm): Promise<GlossaryEntry> {
+  return postJson<GlossaryEntry>(glossaryBase(series), term);
+}
+
+/** Correct, lock or reject an entry; new words make it the user's. Returns it as stored. */
+export async function changeTerm(series: string, entryId: number, change: TermChange): Promise<GlossaryEntry> {
+  return patchJson<GlossaryEntry>(`${glossaryBase(series)}/${entryId}`, change);
+}
+
+/** Delete an entry (a later proposal pass may suggest it again; rejecting keeps it out). */
+export async function removeTerm(series: string, entryId: number): Promise<void> {
+  await deleteJson<unknown>(`${glossaryBase(series)}/${entryId}`);
+}
+
 export async function listOutput(series: string, chapter: string): Promise<string[]> {
   return getJson<string[]>(
     `${BASE}/series/${encodeURIComponent(series)}/chapters/${encodeURIComponent(chapter)}/output`,
@@ -816,12 +851,27 @@ export interface TermMiss {
   english: string;
 }
 
+/** A word of a translated line the English dictionary does not know, with its closest known words. */
+export interface SeriesTypo {
+  chapter: string;
+  region_id: string;
+  word: string;
+  suggestions: string[];
+  english: string;
+}
+
 /** GET /api/series/{series}/consistency: the series' proofreading report. */
 export interface ConsistencyReport {
   divergences: Divergence[];
   term_misses: TermMiss[];
+  typos: SeriesTypo[];
 }
 
 export async function getConsistency(series: string): Promise<ConsistencyReport> {
   return getJson<ConsistencyReport>(`${BASE}/series/${encodeURIComponent(series)}/consistency`);
+}
+
+/** POST /api/series/{series}/typo-words: accept a word as "not a typo" for the whole series. */
+export async function allowTypoWord(series: string, word: string): Promise<{ words: string[] }> {
+  return postJson<{ words: string[] }>(`${BASE}/series/${encodeURIComponent(series)}/typo-words`, { word });
 }
