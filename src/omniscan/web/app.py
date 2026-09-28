@@ -101,6 +101,12 @@ class TranslateBody(Model):
     apply: bool = False  # keep each region's first suggestion as its English line
 
 
+class OcrBody(Model):
+    """Body of the one-region OCR POST request."""
+
+    apply: bool = False  # keep a non-empty reading as the region's source text (a hand edit)
+
+
 class LayoutBody(Model):
     """Body of the hand lettering PUT request: every field left out keeps the typesetter's choice."""
 
@@ -159,12 +165,6 @@ def built_ui(folder: Path = UI_DIST) -> Path | None:
 def ollama_client(cfg: Config) -> ChatClient:
     """The chat client for on-demand translation (the configured Ollama daemon)."""
     return OllamaClient(cfg.ollama, get_secrets())
-
-
-class OcrBody(Model):
-    """Body of the one-region OCR POST request."""
-
-    apply: bool = False  # keep a non-empty reading as the region's source text (a hand edit)
 
 
 class ReplaceBody(Model):

@@ -115,44 +115,6 @@ def edit_show(
         typer.echo("deleted by hand: " + ", ".join(f"{r.id} ({r.text})" for r in deleted))
 
 
-def read_again(paths: ChapterPaths, region_id: str, cfg: Config) -> Reading:
-    """The reader of `edit ocr` (tests replace this to fake the OCR models)."""
-    return read_region_now(paths, region_id, cfg)
-
-
-@edit_app.command("ocr")
-def edit_ocr(
-    series: Series,
-    chapter: Chapter,
-    region: RegionId,
-    apply: Annotated[
-        bool, typer.Option("--apply", help="Keep the reading as the region's source text (a hand edit).")
-    ] = False,
-) -> None:
-    """Read one region again with the series' OCR engine (its models are loaded for this read) and print what
-    it reads; with --apply a non-empty reading becomes the region's source text."""
-    scfg, _series, paths = _chapter(series, chapter)
-    try:
-        reading = read_again(paths, region, scfg)
-    except (store.EditNotFoundError, FileNotFoundError) as exc:
-        raise _fail(str(exc)) from exc
-    except (ImportError, OSError, RuntimeError, ValueError) as exc:  # no torch backend, no models, no GPU
-        typer.echo(f"edit: the OCR could not run: {exc}", err=True)
-        raise typer.Exit(1) from exc
-    typer.echo(
-        f"edit: {region} reads ({reading.engine}, {reading.confidence:.2f}): {reading.text or '(nothing)'}"
-    )
-    if apply and reading.text.strip():
-        _run(
-            lambda: store.update_region(
-                paths, region, direction=scfg.detect.reading_direction, text=reading.text
-            )
-        )
-        typer.echo(f"edit: {region} source text saved")
-    elif apply:
-        typer.echo(f"edit: nothing read; {region} keeps its source text")
-
-
 @edit_app.command("text")
 def edit_text(
     series: Series, chapter: Chapter, region: RegionId, text: Annotated[str, typer.Argument()]
@@ -370,6 +332,44 @@ def edit_replace(
     typer.echo(
         f"replace: {verb} {total} {'source text' if source else 'English line'}(s) in {touched} chapter(s)"
     )
+
+
+def read_again(paths: ChapterPaths, region_id: str, cfg: Config) -> Reading:
+    """The reader of `edit ocr` (tests replace this to fake the OCR models)."""
+    return read_region_now(paths, region_id, cfg)
+
+
+@edit_app.command("ocr")
+def edit_ocr(
+    series: Series,
+    chapter: Chapter,
+    region: RegionId,
+    apply: Annotated[
+        bool, typer.Option("--apply", help="Keep the reading as the region's source text (a hand edit).")
+    ] = False,
+) -> None:
+    """Read one region again with the series' OCR engine (its models are loaded for this read) and print what
+    it reads; with --apply a non-empty reading becomes the region's source text."""
+    scfg, _series, paths = _chapter(series, chapter)
+    try:
+        reading = read_again(paths, region, scfg)
+    except (store.EditNotFoundError, FileNotFoundError) as exc:
+        raise _fail(str(exc)) from exc
+    except (ImportError, OSError, RuntimeError, ValueError) as exc:  # no torch backend, no models, no GPU
+        typer.echo(f"edit: the OCR could not run: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(
+        f"edit: {region} reads ({reading.engine}, {reading.confidence:.2f}): {reading.text or '(nothing)'}"
+    )
+    if apply and reading.text.strip():
+        _run(
+            lambda: store.update_region(
+                paths, region, direction=scfg.detect.reading_direction, text=reading.text
+            )
+        )
+        typer.echo(f"edit: {region} source text saved")
+    elif apply:
+        typer.echo(f"edit: nothing read; {region} keeps its source text")
 
 
 def _history(paths: ChapterPaths) -> str:
