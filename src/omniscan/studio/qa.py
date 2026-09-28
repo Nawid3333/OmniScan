@@ -1,8 +1,9 @@
 """Automatic quality check of a translated chapter: the problems a proofreader would look for first.
 
 It reads the stage artifacts only (no GPU, no model): lines that were never translated, source script left in the
-English, lettering that overflowed its balloon, and lines the judge marked uncertain or as breaking the glossary.
-Re-reading the finished pages with OCR is the next step (docs/ROADMAP.md X3).
+English, lettering that overflowed its balloon, lines the judge marked uncertain or as breaking the glossary, and
+(given a checker) words the English dictionary does not know (qa/typos.py).
+Re-reading the finished pages with OCR is qa/leftover.py.
 """
 
 from __future__ import annotations
@@ -10,11 +11,14 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from omniscan.core.schemas import FinalLine, LayoutItem, Region
 
-IssueKind = Literal["untranslated", "source_left", "overflow", "uncertain", "glossary", "too_long"]
+if TYPE_CHECKING:
+    from omniscan.qa.typos import TypoChecker
+
+IssueKind = Literal["untranslated", "source_left", "overflow", "uncertain", "glossary", "too_long", "typo"]
 
 # Hangul, CJK ideographs, Hiragana/Katakana (incl. half-width) — none belongs in an English line
 _SOURCE_SCRIPT = re.compile(r"[ᄀ-ᇿ぀-ヿ㄰-㆏㐀-鿿가-힯ｦ-ﾟ]")
@@ -31,6 +35,7 @@ class Issue:
     region_id: str
     kind: IssueKind
     message: str
+    word: str = ""  # the unknown word of a "typo" issue (what "not a typo" remembers)
 
 
 def check_chapter(
@@ -38,8 +43,10 @@ def check_chapter(
     translations: Mapping[str, str],
     final_lines: Sequence[FinalLine] = (),
     layout: Sequence[LayoutItem] = (),
+    typos: TypoChecker | None = None,
 ) -> list[Issue]:
-    """All issues of a chapter, in reading order; `translations` are the effective lines (manual edits applied)."""
+    """All issues of a chapter, in reading order; `translations` are the effective lines (manual edits applied).
+    With `typos`, each unknown word of a line (sound effects aside) is an issue too."""
     flags = {line.region_id: set(line.flags) for line in final_lines}
     overflow = {item.region_id for item in layout if item.overflow}
     issues: list[Issue] = []
@@ -64,4 +71,12 @@ def check_chapter(
             issues.append(
                 Issue(region.id, "too_long", "much longer than the source; check for invented text")
             )
+        if typos is not None and region.kind != "sfx":
+            issues += [_typo_issue(region.id, typo.word, typo.suggestions) for typo in typos.check(english)]
     return issues
+
+
+def _typo_issue(region_id: str, word: str, suggestions: Sequence[str]) -> Issue:
+    """A "typo" issue with the dictionary's closest words in its message."""
+    hint = f" (did you mean {', '.join(repr(s) for s in suggestions)}?)" if suggestions else ""
+    return Issue(region_id, "typo", f"{word!r} is not in the dictionary{hint}", word=word)

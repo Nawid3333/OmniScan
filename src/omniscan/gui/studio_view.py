@@ -63,6 +63,7 @@ class StudioView(QWidget):
         self._session: StudioSession | None = None
         self._rows: list[StudioRow] = []
         self._issues: dict[str, list[str]] = {}
+        self._typos: dict[str, list[str]] = {}  # region id -> the unknown words the check found in its line
         self._filling = False
         self._worker: RunWorker | None = None
 
@@ -72,6 +73,8 @@ class StudioView(QWidget):
         self.issues_only = QCheckBox("Only lines with issues", self)
         self.check_button = QPushButton("Check", self)
         self.check_button.setToolTip("Run the automatic quality check")
+        self.not_typo_button = QPushButton("Not a typo", self)
+        self.not_typo_button.setToolTip("Accept the selected line's unknown words for the whole series")
         self.remove_button = QPushButton("Remove box", self)
         self.remove_button.setToolTip("Delete the selected region (a false detection)")
         self.save_button = QPushButton("Save", self)
@@ -103,7 +106,13 @@ class StudioView(QWidget):
         ):
             bar.addWidget(widget)
         bar.addStretch(1)
-        for widget in (self.check_button, self.remove_button, self.save_button, self.reletter_button):
+        for widget in (
+            self.check_button,
+            self.not_typo_button,
+            self.remove_button,
+            self.save_button,
+            self.reletter_button,
+        ):
             bar.addWidget(widget)
 
         splitter = QSplitter(self)
@@ -120,6 +129,7 @@ class StudioView(QWidget):
         self.chapter_combo.currentTextChanged.connect(self._on_chapter)
         self.issues_only.toggled.connect(lambda _checked: self._apply_filter())
         self.check_button.clicked.connect(self.run_check)
+        self.not_typo_button.clicked.connect(self.allow_selected_words)
         self.remove_button.clicked.connect(self.remove_selected)
         self.save_button.clicked.connect(self.save)
         self.reletter_button.clicked.connect(self.reletter)
@@ -162,12 +172,27 @@ class StudioView(QWidget):
         if self._session is None:
             return 0
         issues = self._session.issues()
-        self._issues = {}
+        self._issues, self._typos = {}, {}
         for issue in issues:
             self._issues.setdefault(issue.region_id, []).append(issue.message)
+            if issue.kind == "typo":
+                self._typos.setdefault(issue.region_id, []).append(issue.word)
         self._fill_table()
         self.status_label.setText(f"{len(issues)} issue(s) in {len(self._issues)} line(s)")
         return len(issues)
+
+    def allow_selected_words(self) -> list[str]:
+        """Mark the selected line's unknown words "not a typo" for the series, then check again; returns them."""
+        row = self.table.currentRow()
+        if self._session is None or not 0 <= row < len(self._rows):
+            return []
+        words = self._typos.get(self._rows[row].region_id, [])
+        for word in words:
+            self._session.allow_word(word)
+        self.run_check()
+        if words:
+            self.status_label.setText(f"{', '.join(words)}: not a typo in this series")
+        return words
 
     def remove_selected(self) -> None:
         """Remove the selected region from the chapter (applied on Save)."""
@@ -291,7 +316,7 @@ class StudioView(QWidget):
             return
         self.strip.set_tiles(view.raw, view.strip_width, view.strip_height)
         self._session = session
-        self._issues = {}
+        self._issues, self._typos = {}, {}
         self._refresh()
         self.run_check()
 
@@ -299,7 +324,7 @@ class StudioView(QWidget):
         """No chapter open."""
         self._session = None
         self._rows = []
-        self._issues = {}
+        self._issues, self._typos = {}, {}
         self.strip.set_overlays(())
         self._fill_table()
 
@@ -357,7 +382,11 @@ class StudioView(QWidget):
         idle = self._worker is None
         self.check_button.setEnabled(is_open)
         self.save_button.setEnabled(is_open and idle and self._session is not None and self._session.dirty)
-        self.remove_button.setEnabled(is_open and idle and self.table.currentRow() >= 0)
+        row = self.table.currentRow()
+        self.remove_button.setEnabled(is_open and idle and row >= 0)
+        self.not_typo_button.setEnabled(
+            is_open and 0 <= row < len(self._rows) and self._rows[row].region_id in self._typos
+        )
         self.reletter_button.setEnabled(is_open and idle)
 
     def _release_worker(self, worker: RunWorker) -> None:

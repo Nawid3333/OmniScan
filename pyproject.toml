@@ -21,6 +21,7 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
     "opencv-python-headless>=5.0.0.93",
+    "pyspellchecker>=0.8.3",  # QA: typos in the English lines (qa/typos.py), offline English dictionary, MIT
     # Pure-Python packages torch/torchvision/transformers pull in transitively (never imported by
     # omniscan itself). Listed directly, with floors matching what's already resolved on the dev
     # machine, ONLY so the `[tool.uv.sources]` pypi pins below have a requirement to attach to: uv
@@ -172,6 +173,7 @@ networkx = [{ index = "pypi" }]
 jinja2 = [{ index = "pypi" }]
 markupsafe = [{ index = "pypi" }]
 fsspec = [{ index = "pypi" }]
+pyspellchecker = [{ index = "pypi" }]  # pure Python, only on PyPI: never look it up on rocm10
 
 # AMD ROCm 10 wheel index (torch, torchvision, triton, rocm-sdk-*, amd-*-device-gfx1201) for the
 # rocm-gfx1201 extra. Not `explicit`, same as before this table existed: its transitive ROCm SDK/device

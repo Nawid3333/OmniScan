@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Protocol
 
 from omniscan.core.config import get_config, series_config
-from omniscan.core.paths import ChapterPaths
+from omniscan.core.paths import ChapterPaths, SeriesPaths
 from omniscan.core.schemas import Artifact, FinalArtifact, LayoutArtifact, Region, RegionsArtifact
 from omniscan.edits import store
 
@@ -39,6 +39,7 @@ class Issue(Protocol):
     region_id: str
     kind: str
     message: str
+    word: str  # the unknown word of a "typo" issue, "" otherwise
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,9 +171,29 @@ class StudioSession:
         return "edited" if region_id in self._edited or unsaved else "todo"
 
     def issues(self) -> list[Issue]:
-        """The automatic QA pass over the edited chapter (omniscan.studio.qa, the desktop Studio's checks)."""
+        """The automatic QA pass over the edited chapter (omniscan.studio.qa, the desktop Studio's checks),
+        typos included (qa/typos.py: the series' glossary, character names and "not a typo" words are known)."""
+        from omniscan.qa import typos  # the dictionary and the translate helpers load on the first check only
+
         qa = importlib.import_module("omniscan.studio.qa")
-        return qa.check_chapter(self.regions(), self.translations(), self._final, self._layout)
+        checker = typos.checker_for(self._series())
+        return qa.check_chapter(self.regions(), self.translations(), self._final, self._layout, checker)
+
+    def allow_word(self, word: str) -> list[str]:
+        """Mark a word "not a typo" for the whole series (saved at once); returns the series' list.
+        ValueError for anything but a single word."""
+        from omniscan.qa import typos
+
+        return typos.allow_word(self._series(), word)
+
+    def _series(self) -> SeriesPaths:
+        """The paths of the chapter's series (its library, work and output folders)."""
+        return SeriesPaths(
+            series=self.paths.series,
+            library_dir=self.paths.raw_dir.parent,
+            work_dir=self.paths.work_dir.parent,
+            output_dir=self.paths.output_dir.parent,
+        )
 
     def set_source(self, region_id: str, text: str) -> None:
         """Correct a region's source (OCR) text; a re-run OCR re-applies the fix over its own reading."""

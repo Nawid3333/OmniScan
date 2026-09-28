@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getConsistency } from "./api";
+  import { allowTypoWord, getConsistency } from "./api";
   import type { ConsistencyReport } from "./api";
   import { filterReport, placeCount } from "./consistency";
 
@@ -30,11 +30,24 @@
       busy = false;
     }
   }
+
+  async function notATypo(word: string): Promise<void> {
+    busy = true;
+    try {
+      await allowTypoWord(series, word);
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+      busy = false;
+      return;
+    }
+    await load(series);
+  }
 </script>
 
 <section class="consistency">
   <p class="intro">
-    Lines of this series said again but translated differently, and lines missing a locked glossary term's English.
+    Lines of this series said again but translated differently, lines missing a locked glossary term's English, and
+    words the English dictionary does not know.
     Open a place to fix it in the Studio (its Find &amp; replace fixes many at once).
     <button onclick={() => load(series)} disabled={busy}>Check again</button>
     <input placeholder="filter" bind:value={query} />
@@ -73,6 +86,21 @@
         <li>
           <button class="place" onclick={() => onOpen(miss.chapter, miss.region_id)} title="open in the Studio">{miss.chapter} · {miss.region_id}</button>
           <strong>{miss.term}</strong> → <em>{miss.target}</em>: <span class="english">{miss.english}</span>
+        </li>
+      {/each}
+    </ul>
+    <h2>Possible typos ({shown.typos.length})</h2>
+    {#if shown.typos.length === 0}
+      <p class="muted">Every word of the English is in the dictionary, the glossary or the character names.</p>
+    {/if}
+    <ul>
+      {#each shown.typos as typo (`${typo.chapter}/${typo.region_id}/${typo.word}`)}
+        <li>
+          <button class="place" onclick={() => onOpen(typo.chapter, typo.region_id)} title="open in the Studio">{typo.chapter} · {typo.region_id}</button>
+          <strong>{typo.word}</strong>
+          {#if typo.suggestions.length > 0}<span class="muted">→ {typo.suggestions.join(", ")}</span>{/if}:
+          <span class="english">{typo.english}</span>
+          <button class="place" onclick={() => notATypo(typo.word)} disabled={busy} title="accept this word everywhere in the series">not a typo</button>
         </li>
       {/each}
     </ul>

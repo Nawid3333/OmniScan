@@ -1,6 +1,6 @@
-import type { ConsistencyReport, Divergence, TermMiss } from "./api";
+import type { ConsistencyReport, Divergence, SeriesTypo, TermMiss } from "./api";
 
-/** The report narrowed to the entries whose source, English or term contains `query` (any case); all when blank. */
+/** The report narrowed to the entries whose source, English, term or word contains `query` (any case); all when blank. */
 export function filterReport(report: ConsistencyReport, query: string): ConsistencyReport {
   const q = query.trim().toLowerCase();
   if (q === "") return report;
@@ -10,6 +10,7 @@ export function filterReport(report: ConsistencyReport, query: string): Consiste
       (d: Divergence) => has(d.source) || d.renderings.some((r) => has(r.english)),
     ),
     term_misses: report.term_misses.filter((m: TermMiss) => has(m.term) || has(m.target) || has(m.english)),
+    typos: report.typos.filter((t: SeriesTypo) => has(t.word) || has(t.english)),
   };
 }
 

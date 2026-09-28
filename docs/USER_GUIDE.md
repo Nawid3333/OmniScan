@@ -1328,6 +1328,18 @@ the English must contain the term's target as written. Nothing is changed: fix t
 many at once with `omniscan edit replace`. CPU only; the web UI's **Consistency** view shows the same report
 with a link from every place into the Studio.
 
+#### Typos in the English
+
+The desktop Studio's **Check** and the web UI's **Consistency** view (under *Possible typos*) also list the
+words of the English lines that an offline English dictionary does not know (`pyspellchecker`), each with up to
+three of the closest known words. Known as well: the English of the series' glossary terms (rejected ones
+aside), its characters' names and aliases (`voices.toml`), common interjections and romanised honorifics
+(*hmph*, *hyung*, *-nim*, *senpai*), and the series' own "not a typo" words. Sound effects and watermarks are
+never checked; a capitalised word inside a sentence is taken for a name and left alone, and a drawn-out word
+(*Nooo*) is fine. Nothing is changed: fix the line, or press **Not a typo** (desktop: the selected line's words;
+web: one word), which adds the word to `typo_words.txt` in the series' library folder, one word per line
+(the file can also be edited by hand). The `omniscan consistency` command does not list typos.
+
 ### `omniscan pack`
 
 Package finished chapters (`output_root/<series>/<chapter>/*.jpg`) into CBZ and/or PDF files.
