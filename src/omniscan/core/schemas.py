@@ -350,6 +350,29 @@ class ReaderSeries(Artifact):
     updated_at: datetime = Field(default_factory=utcnow)
 
 
+# ---------------------------------------------------------------- chapter projects (between OmniScan users)
+
+
+class ProjectFile(Model):
+    """One file of a chapter project archive, with what it must hash to after unpacking."""
+
+    path: str  # archive member: raw/…, work/…, series/… or output/…
+    sha256: str
+    bytes: int = Field(ge=0)
+
+
+class ChapterProject(Artifact):
+    """project.json in a chapter project archive (interchange/project.py): one chapter's raw pages and all its work
+    — stage artifacts, hand edits, cleanup, undo history — so another OmniScan user continues where it was left
+    (a group passing a chapter from translator to proofreader to typesetter)."""
+
+    format: Literal["omniscan-chapter-project"] = "omniscan-chapter-project"
+    app_version: str
+    series: str
+    chapter: str
+    files: list[ProjectFile]
+
+
 # ---------------------------------------------------------------- quality check
 
 

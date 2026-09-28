@@ -33,7 +33,7 @@ from omniscan.importer.plan import (
     files_to_convert,
     plan_import,
 )
-from omniscan.interchange.cli import ballons_app, labelplus_app, mit_app, psd_app
+from omniscan.interchange.cli import ballons_app, labelplus_app, mit_app, project_app, psd_app
 from omniscan.learn.memory import current_memory, is_active, set_rule_enabled
 from omniscan.library.cli import library_app
 from omniscan.llm.ollama import OllamaClient, OllamaError, OllamaRateLimitError
@@ -2097,6 +2097,7 @@ def update_download(
 app.add_typer(update_app, name="update")
 
 app.add_typer(library_app, name="library")
+app.add_typer(project_app, name="project")
 
 app.add_typer(match_app, name="match")
 

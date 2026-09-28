@@ -107,7 +107,12 @@ files (`labelplus.py`), layered PSD pages (`psd.py`) and BallonsTranslator proje
 the chapter's artifacts on the CPU. In: LabelPlus labels (a point each) go to the region they point into
 (`labelplus.py::match_labels`); BallonsTranslator and manga-image-translator text blocks (`ballons.py`, `mit.py`,
 a box each in page pixels) go to the region they overlap most (`blocks.py::match_blocks`). Everything imported
-is recorded through `edits/store.py`, like any hand edit.
+is recorded through `edits/store.py`, like any hand edit. Between OmniScan users, a chapter travels as a project archive
+(`project.py`): `raw/`, `work/` (the whole chapter work dir), `series/` (series.toml, voices.toml) and optionally
+`output/`, listed with sha256 in a `ChapterProject` (`project.json`). Stage input hashes cover file names and
+contents, not locations, so an unpacked chapter's stages stay done. `unpack` checks the listing (only those
+parts, plain names, no duplicates up to case, a size cap), stages into hidden sibling folders, verifies every
+file's size and sha256, and only then moves the folders into place.
 
 ## Stages (`core/stage.py`)
 A stage is a class with `name`, `version`, `gpu_group` class vars and four methods:

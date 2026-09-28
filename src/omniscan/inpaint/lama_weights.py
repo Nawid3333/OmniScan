@@ -8,12 +8,16 @@ from pathlib import Path
 import httpx
 
 from omniscan.core.config import InpaintConfig
+from omniscan.packaging.names import safe_filename
 
 _CHUNK = 1 << 20  # 1 MiB: streamed download and hashing
 
 
 def lama_path(models_dir: Path, cfg: InpaintConfig) -> Path:
-    """Path of the LaMa TorchScript weights: `<models_dir>/lama/<cfg.lama_file>`."""
+    """Path of the LaMa TorchScript weights: `<models_dir>/lama/<cfg.lama_file>`; ValueError when `lama_file` is
+    not a plain file name (a setting must never make OmniScan write or load a file outside its models folder)."""
+    if cfg.lama_file != safe_filename(cfg.lama_file):
+        raise ValueError(f"inpaint.lama_file must be a plain file name, not {cfg.lama_file!r}")
     return models_dir / "lama" / cfg.lama_file
 
 

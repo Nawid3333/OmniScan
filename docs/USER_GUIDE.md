@@ -1166,6 +1166,35 @@ layer support show the release. Hide `text` to letter by hand, or paint on `clea
 `<output_root>/<series>/_psd/<chapter>/`. Pages are built on the CPU with the Studio preview's code; without a
 `layout.json` (typeset not run yet) the `text` layers are empty.
 
+### `omniscan project`
+
+Pass a chapter to another OmniScan user — the next person in a group (translator → proofreader → typesetter),
+or yourself on another computer. One `.omniscan` file holds the chapter's raw pages and all its work: every
+stage's output, your hand edits with their undo history, hand cleanup, and the series' `series.toml` and
+`voices.toml`. Unpacked, every stage already done stays done (the stages compare file contents, which travel
+unchanged) and every hand edit can still be changed or undone.
+
+```bash
+uv run omniscan project pack "Solo Leveling" "Chapter 12"              # "Solo Leveling - Chapter 12.omniscan" here
+uv run omniscan project pack "Solo Leveling" "Chapter 12" -o ch12.omniscan --with-output   # plus the finished pages
+uv run omniscan project show ch12.omniscan                             # what it holds, without unpacking
+uv run omniscan project unpack ch12.omniscan                           # into your library and work folders
+uv run omniscan project unpack ch12.omniscan --force                   # replace your copy (raw, work, finished pages)
+uv run omniscan project unpack ch12.omniscan --series "SL" --chapter "Ch 12"   # under other names
+```
+
+Unpacking never overwrites: a chapter you already have (its raw pages, work or finished pages) is replaced only
+with `--force`, and the series files are added only where your series has none (your own `series.toml` /
+`voices.toml` stay). Of someone else's `series.toml` only numbers, switches and fixed choices are taken (sizes,
+thresholds, the source language, the lettering style); download addresses, file names, models, fonts and batch
+sizes are left out — they would make OmniScan fetch, load or write what the sender chose — and `unpack` names
+what it left out. A file from someone else is checked before anything is written: only files OmniScan writes,
+inside the chapter's folders, with names every system accepts (no `NUL` or `COM1.jpg`), each matching the sha256
+its `project.json` lists, and work files that name only files inside the chapter; a damaged, encrypted or
+tampered file is refused and leaves nothing behind. If moving the chapter into place fails (a file open in
+another program), your old copy is put back. The glossary is not included; pass it with
+`omniscan glossary export` / `import`.
+
 ### `omniscan ballons` and `omniscan mit`
 
 Bring work done in [BallonsTranslator](https://github.com/dmMaze/BallonsTranslator) or
