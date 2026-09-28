@@ -1226,8 +1226,9 @@ uv run omniscan contribute export "Solo Leveling" -c "Chapter 12" -o fixes.zip
 uv run omniscan contribute export "Solo Leveling" --json           # the summary as JSON (path, bytes)
 ```
 
-A series (or machine) that opted out (`[share] enabled = false`) and an unknown chapter exit 2; a series without
-hand corrections writes nothing.
+A series (or machine) that opted out (`[share] enabled = false`), an unknown series or chapter, and an archive
+that cannot be written (a page file gone, an `--output` that is a folder) exit 2 with the reason; a series without
+hand corrections writes nothing. A chapter given twice is exported once.
 
 ### `omniscan qa`
 
@@ -1739,16 +1740,20 @@ there is no upload service yet (it waits for decisions on hosting, the licence o
 What the archive holds (`contribution.json` plus JPEG pages):
 - only the pages that carry a hand correction, as the pipeline saw them (the raw page at strip width);
 - every region on those pages with the pipeline's output next to yours: the OCR's reading and your text, the
-  region type, boxes you added or deleted, the judge's English and your line (typed, or a suggestion you kept),
-  the speaker, and lettering you set by hand (fonts by file name only);
+  region type, boxes you added, deleted or redrew (a detected box you drew a new one over is kept, paired with
+  your box), the judge's English and your line (typed, a suggestion you kept, or a line you cleared), the
+  speaker, and lettering you set by hand (fonts by file name only);
 - the series' locked glossary terms.
 
-What it never holds: file or folder names (the series and chapters are anonymous ids), paths, the pages' camera
-or editing metadata (they are re-encoded), untouched pages, or when and where you exported it (every archive
-entry has the same fixed date).
+What it never holds: file or folder names, paths, the pages' camera or editing metadata (they are re-encoded),
+untouched pages, or when and where you exported it (no date in `contribution.json`, and every archive entry has
+the same fixed date). The series and chapters are anonymous ids: hashes salted with a random value created on
+this computer (`contribution-salt` in your work folder, never shared), so nobody can find a title by hashing
+known names, while your later archives of the same series carry the same ids. Deleting that file gives your
+next archives new ids.
 
-To opt out, set `[share] enabled = false` in your `config.toml` (every series) or in a series' `series.toml`
-(that series); an opted-out series exports nothing.
+To opt out, set `[share] enabled = false` in your `config.toml` (every series; a series' `series.toml` cannot
+switch it back on) or in a series' `series.toml` (that series); an opted-out series exports nothing.
 
 ## Speakers and character voices
 

@@ -7,7 +7,7 @@ Every top-level artifact carries `schema_version`; bump it on any breaking chang
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, Self
 
@@ -546,7 +546,9 @@ class ContributionRegion(Model):
 
     `auto_kind`, `ocr_text` and `machine_english` are the pipeline's (None where it had none: a region added by
     hand, a line never judged); `kind`, `text` and `english` are after the hand edits. A `deleted` region was
-    found by the pipeline and removed by hand (a false detection); its fields are the pipeline's.
+    found by the pipeline and removed by hand (a false detection), or replaced by a box drawn over it by hand
+    (`replaced_by` names that box: the detector's box was wrong); its fields are the pipeline's. An `english_from`
+    of "typed" with no `english` is a line cleared by hand.
     """
 
     id: str
@@ -560,6 +562,7 @@ class ContributionRegion(Model):
     text: str
     added: bool = False
     deleted: bool = False
+    replaced_by: str | None = None  # a deleted region: the id of the hand-drawn box that replaced it
     edited: bool = False  # a hand edit changed the region's box, kind, text or speaker
     machine_english: str | None = None
     english: str | None = None
@@ -599,12 +602,11 @@ class ContributionTerm(Model):
 
 class Contribution(Artifact):
     """contribution.json inside a contribution archive (share/): a series' hand corrections with the pages they
-    were made on, shared to improve the models and defaults. Carries no file names, folder paths or image
-    metadata; built only for series that have not opted out (`[share] enabled`)."""
+    were made on, shared to improve the models and defaults. Carries no file names, folder paths, image metadata
+    or date; built only for series that have not opted out (`[share] enabled`)."""
 
     app_version: str
-    created: date  # the export's day (UTC)
-    series_id: str  # hash of the series name
+    series_id: str  # salted hash of the series name (the salt never leaves this install)
     target_lang: Lang = "en"
     chapters: list[ContributionChapter]
     glossary: list[ContributionTerm] = Field(default_factory=list)

@@ -433,7 +433,7 @@ def edited_ids(paths: ChapterPaths) -> tuple[list[str], list[str]]:
     )
 
 
-def _judged_lines(paths: ChapterPaths) -> dict[str, str]:
+def judged_lines(paths: ChapterPaths) -> dict[str, str]:
     """The judge's own English lines (final_auto.json) by region id; {} when it has none."""
     path = paths.artifact(FINAL_AUTO_FILE)
     if not path.is_file():
@@ -460,7 +460,7 @@ def set_translations(
             _find(current, region_id)
         edits = load_edits(paths)
         index_of = {region_id: i for i, region_id in match_translation_edits(current, edits).items()}
-        judged = _judged_lines(paths)
+        judged = judged_lines(paths)
         for region_id, text in lines.items():
             region, index = regions[region_id], index_of.get(region_id)
             first = edits.translations[index].auto_text if index is not None else None

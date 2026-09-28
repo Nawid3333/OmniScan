@@ -1,7 +1,8 @@
 """`omniscan contribute` sub-app: write a series' hand corrections to a contribution archive (share/contribution.py).
 
-Nothing is sent anywhere: the archive is a local file the user can inspect and share. A series that opted out of
-sharing (`[share] enabled = false` in config.toml or its series.toml) exports nothing.
+Nothing is sent anywhere: the archive is a local file the user can inspect and share. Nothing is exported when
+this machine opted out of sharing (`[share] enabled = false` in config.toml, for every series) or the series did
+(in its series.toml).
 """
 
 from __future__ import annotations
@@ -43,6 +44,7 @@ def describe(summary: Summary) -> str:
             (summary.kinds, "region type", "region types"),
             (summary.added, "added box", "added boxes"),
             (summary.deleted, "deleted box", "deleted boxes"),
+            (summary.redrawn, "redrawn box", "redrawn boxes"),
             (summary.english, "English line", "English lines"),
             (summary.lettering, "lettering", "letterings"),
             (summary.other, "other region edit", "other region edits"),
@@ -80,13 +82,15 @@ def contribute_export(
     terms, to one zip archive (no file names, folder paths or image metadata)."""
     cfg = get_config()
     series_paths = SeriesPaths.from_config(cfg, series)
+    if not series_paths.library_dir.is_dir():
+        raise _fail(f"no series {series!r} in the library")
     known = series_paths.chapters()
     unknown = [name for name in chapter or [] if name not in known]
     if unknown:
         raise _fail(f"no chapter {unknown[0]!r} in {series}")
     try:
         contribution, pages = build(series_paths, cfg, chapter)
-    except (ShareOptOutError, SeriesConfigError) as exc:
+    except (ShareOptOutError, SeriesConfigError, OSError, ValueError) as exc:
         raise _fail(f"{exc}; nothing exported") from exc
     summary = summarize(contribution)
     path = (
@@ -96,7 +100,7 @@ def contribute_export(
     if pages and not dry_run:
         try:
             size = write_archive(path, contribution, pages)
-        except FileNotFoundError as exc:
+        except OSError as exc:  # a page gone or unreadable, an --output that is a folder or not writable
             raise _fail(f"{exc}; nothing exported") from exc
     if as_json:
         typer.echo(

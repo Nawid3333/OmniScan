@@ -36,9 +36,47 @@ MUTANTS = [
     ),
     (
         C,
-        "                deleted=True,\n                edited=True,",
-        "                deleted=True,",
+        '{"deleted": True, "edited": True, "replaced_by": replaced_by}',
+        '{"deleted": True, "replaced_by": replaced_by}',
         "a page whose only correction is a deletion is left out",
+    ),
+    (
+        C,
+        '{"deleted": True, "edited": True, "replaced_by": replaced_by}',
+        '{"deleted": True, "edited": True}',
+        "a redrawn box is not paired with the box drawn over it",
+    ),
+    (
+        C,
+        "            if replaced_by is not None:\n                removed.append((region, replaced_by))\n",
+        "            pass\n",
+        "a detected box replaced by a drawn one vanishes",
+    ),
+    (
+        C,
+        "            if region.id in claimed:\n                continue\n",
+        "",
+        "a detection an edit claims counted as replaced",
+    ),
+    (
+        C,
+        '    if edit is not None:\n        return "typed" if edit.suggested_by is None else "suggestion"\n'
+        '    return "machine" if line else None',
+        "    if not line:\n        return None\n    if edit is not None:\n"
+        '        return "typed" if edit.suggested_by is None else "suggestion"\n    return "machine"',
+        "a line cleared by hand is not a correction",
+    ),
+    (
+        C,
+        "    for name in dict.fromkeys(chapters) if chapters is not None else order:",
+        "    for name in chapters if chapters is not None else order:",
+        "a chapter asked twice is built twice",
+    ),
+    (
+        C,
+        "        deleted=sum(1 for r in regions if r.deleted) - redrawn,",
+        "        deleted=sum(1 for r in regions if r.deleted),",
+        "redrawn boxes counted as deleted",
     ),
     (
         C,
@@ -74,10 +112,34 @@ MUTANTS = [
     (
         C,
         "    if not series_config(cfg, series.library_dir).share.enabled:",
-        "    if not cfg.share.enabled:",
+        "    if False:",
         "series.toml opt-out ignored",
     ),
-    (C, "series_id=digest(series.series),", "series_id=series.series,", "the series name is shared"),
+    (
+        C,
+        "    if not cfg.share.enabled:\n        raise",
+        "    if False:\n        raise",
+        "a series.toml opts a series back in although the machine opted out",
+    ),
+    (C, "series_id=digest(series.series, salt),", "series_id=series.series,", "the series name is shared"),
+    (
+        C,
+        "    return hmac.new(salt, text.encode(), hashlib.sha256).hexdigest()[:16]",
+        "    return hashlib.sha256(text.encode()).hexdigest()[:16]",
+        "ids reversible by hashing known titles",
+    ),
+    (
+        C,
+        '                with path.open("x", encoding="ascii") as out:',
+        '                with path.open("w", encoding="ascii") as out:',
+        "an existing salt could be replaced (ids change)",
+    ),
+    (
+        C,
+        "        if len(salt) >= 16:\n            return salt\n",
+        "        return salt\n",
+        "a damaged salt used",
+    ),
     (
         C,
         "        if not any(_corrected(region) for region in regions):\n            continue\n",

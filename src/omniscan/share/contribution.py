@@ -5,20 +5,24 @@ carries a hand correction it holds the raw page (strip resolution, re-encoded, s
 image metadata survives) and every region on it with the pipeline's output next to the editor's
 (`core.schemas.Contribution`), plus the series' locked glossary terms. `build` collects it from the chapters'
 edits.json and the pipeline's own artifacts (ocr_auto.json, final_auto.json); `write_archive` writes
-contribution.json and the page images into one zip file whose entries all carry the same fixed timestamp.
-A series that opted out (`[share] enabled = false` in config.toml or its series.toml) builds nothing. Nothing is
-uploaded: the archive stays a local file until the upload service exists. Pages are read and encoded on the CPU
-(Pillow), like the PSD export: an export of a few edited pages, not a pipeline stage.
+contribution.json and the page images into one zip file whose entries all carry the same fixed timestamp, and
+contribution.json holds no date. Series and chapters are named by ids salted with a random value kept in this
+install's work folder, so hashing known titles cannot reverse them, while a later contribution of the same
+series from the same install carries the same ids. A series is built only when both this machine and the series
+allow sharing (`[share] enabled`, false in config.toml opts out every series whatever its series.toml says).
+Nothing is uploaded: the archive stays a local file until the upload service exists. Pages are read and encoded
+on the CPU (Pillow), like the PSD export: an export of a few edited pages, not a pipeline stage.
 """
 
 from __future__ import annotations
 
 import hashlib
+import hmac
 import io
+import secrets
 import zipfile
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path, PureWindowsPath
 from typing import Literal
 
@@ -37,7 +41,6 @@ from omniscan.core.schemas import (
     ContributionPage,
     ContributionRegion,
     ContributionTerm,
-    FinalArtifact,
     IngestArtifact,
     LayoutEdit,
     Region,
@@ -45,14 +48,16 @@ from omniscan.core.schemas import (
     SourceFile,
     TranslationEdit,
 )
-from omniscan.edits.apply import match_layout_edits, match_region_edits, match_translation_edits
-from omniscan.edits.store import FINAL_AUTO_FILE, auto_regions, current_regions, load_edits
+from omniscan.edits.apply import MATCH_IOU, match_layout_edits, match_region_edits, match_translation_edits
+from omniscan.edits.store import auto_regions, current_regions, judged_lines, load_edits
 from omniscan.glossary.store import GlossaryStore
+from omniscan.learn.harvest import norm
 from omniscan.translate.on_demand import english_lines
 from omniscan.typeset.page_preview import page_box
 from omniscan.update.version import current_version
 
 CONTRIBUTION_FILE = "contribution.json"
+SALT_FILE = "contribution-salt"  # in the work root: this install's random salt for the ids (never shared)
 JPEG_QUALITY = 92
 _ZIP_TIME = (1980, 1, 1, 0, 0, 0)  # every entry's timestamp: when and where the export ran is not shared
 
@@ -86,16 +91,35 @@ class Summary:
     lettering: int
     other: int  # region edits that change neither text nor type (a moved box, a speaker)
     terms: int
+    redrawn: int = 0  # detected boxes replaced by a box drawn over them by hand
 
 
-def digest(text: str) -> str:
-    """A short, stable, anonymous id for a name (so the name itself is never shared)."""
-    return hashlib.sha256(text.encode()).hexdigest()[:16]
+def install_salt(work_root: Path) -> bytes:
+    """This install's random salt for anonymous ids, created on first use in `work_root` (never shared)."""
+    path = work_root / SALT_FILE
+    for _ in range(2):
+        try:
+            salt = bytes.fromhex(path.read_text(encoding="ascii"))
+        except FileNotFoundError:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                with path.open("x", encoding="ascii") as out:  # never replace a salt another export made
+                    out.write(secrets.token_hex(32))
+            except FileExistsError:
+                pass
+            continue
+        except ValueError:
+            salt = b""
+        if len(salt) >= 16:
+            return salt
+        raise ValueError(f"{path} is damaged: delete it (the next contribution gets new ids)")
+    raise FileNotFoundError(f"could not create {path}")
 
 
-def _norm(text: str) -> str:
-    """`text` with every run of whitespace collapsed to one space."""
-    return " ".join(text.split())
+def digest(text: str, salt: bytes) -> str:
+    """A short, stable, anonymous id for a name: an HMAC with this install's salt, so the name cannot be found
+    by hashing known titles, and the name itself is never shared."""
+    return hmac.new(salt, text.encode(), hashlib.sha256).hexdigest()[:16]
 
 
 def _page_of(ingest: IngestArtifact, box: BBox) -> SourceFile | None:
@@ -131,18 +155,13 @@ def _lettering(edit: LayoutEdit, page: SourceFile, width: int) -> ContributionLe
     )
 
 
-def _judged(paths: ChapterPaths) -> dict[str, str]:
-    """The judge's own English lines (final_auto.json) by region id; {} when it has none."""
-    path = paths.artifact(FINAL_AUTO_FILE)
-    return {line.region_id: line.text for line in FinalArtifact.load(path).lines} if path.is_file() else {}
-
-
 @dataclass(frozen=True, slots=True)
 class _Edits:
     """A chapter's hand edits keyed by the id of the region each belongs to."""
 
     regions: dict[str, RegionEdit]
-    deleted: list[tuple[Region, RegionEdit]]
+    # pipeline regions deleted by hand (None) or replaced by a box drawn over them (that box's id)
+    removed: list[tuple[Region, str | None]]
     translations: dict[str, TranslationEdit]
     layout: dict[str, LayoutEdit]
 
@@ -152,15 +171,24 @@ class _Edits:
         auto_by_id = {region.id: region for region in auto}
         claims = match_region_edits(auto, edits)
         regions = {region_id: edits.regions[i] for i, region_id in claims.items()}
+        drawn = {edit.region_id for edit in edits.regions if edit.added and not edit.deleted}
         regions |= {edit.region_id: edit for edit in edits.regions if edit.added and not edit.deleted}
-        deleted = [
-            (auto_by_id[region_id], edits.regions[i])
-            for i, region_id in claims.items()
-            if edits.regions[i].deleted
+        removed: list[tuple[Region, str | None]] = [
+            (auto_by_id[region_id], None) for i, region_id in claims.items() if edits.regions[i].deleted
         ]
+        claimed = set(claims.values())
+        for region in auto:  # a drawn box over a detection no edit claims replaces it (apply_region_edits)
+            if region.id in claimed:
+                continue
+            replaced_by = next(
+                (new.id for new in current if new.id in drawn and region.bbox.iou(new.bbox) >= MATCH_IOU),
+                None,
+            )
+            if replaced_by is not None:
+                removed.append((region, replaced_by))
         return cls(
             regions=regions,
-            deleted=deleted,
+            removed=removed,
             translations={
                 region_id: edits.translations[i]
                 for i, region_id in match_translation_edits(current, edits).items()
@@ -183,12 +211,11 @@ def _ocr_text(region: Region, auto: Region | None, edit: RegionEdit | None) -> s
 def _english_from(
     line: str, edit: TranslationEdit | None
 ) -> Literal["machine", "suggestion", "typed"] | None:
-    """Who wrote a region's English line: the judge, the editor keeping a suggestion, or the editor typing it."""
-    if not line:
-        return None
-    if edit is None:
-        return "machine"
-    return "typed" if edit.suggested_by is None else "suggestion"
+    """Who wrote a region's English line: the judge, the editor keeping a suggestion, or the editor typing it
+    (also a line cleared by hand); None when the region has no line and no hand-written one."""
+    if edit is not None:
+        return "typed" if edit.suggested_by is None else "suggestion"
+    return "machine" if line else None
 
 
 def _region(
@@ -234,7 +261,9 @@ def _corrected(region: ContributionRegion) -> bool:
     return region.edited or region.english_from in ("suggestion", "typed") or region.lettering is not None
 
 
-def build_chapter(paths: ChapterPaths, order: int) -> tuple[ContributionChapter | None, list[PageSource]]:
+def build_chapter(
+    paths: ChapterPaths, order: int, salt: bytes
+) -> tuple[ContributionChapter | None, list[PageSource]]:
     """One chapter's contributed pages (those with a hand correction) and where their pixels come from; None
     when the chapter has no hand edit or no ingest.json to place its regions on pages."""
     chapter_edits = load_edits(paths)
@@ -250,7 +279,7 @@ def build_chapter(paths: ChapterPaths, order: int) -> tuple[ContributionChapter 
     auto_by_id = {region.id: region for region in auto}
     current = current_regions(paths)
     edits = _Edits.of(chapter_edits, auto, current)
-    judged, english = _judged(paths), english_lines(paths)
+    judged, english = judged_lines(paths), english_lines(paths)
     by_page: dict[int, list[ContributionRegion]] = {}
     files: dict[int, SourceFile] = {}
     for region in current:
@@ -269,30 +298,16 @@ def build_chapter(paths: ChapterPaths, order: int) -> tuple[ContributionChapter 
                 english=english,
             )
         )
-    for region, edit in edits.deleted:
+    for region, replaced_by in edits.removed:
         page = _page_of(ingest, region.bbox)
         if page is None:
             continue
         files[page.index] = page
+        kept = _region(region, page, width, auto=region, edits=edits, judged=judged, english={})
         by_page.setdefault(page.index, []).append(
-            ContributionRegion(
-                id=region.id,
-                box=_on_page(region.bbox, page, width),
-                bubble_box=_on_page(region.bubble_bbox, page, width)
-                if region.bubble_bbox is not None
-                else None,
-                reading_order=region.reading_order,
-                lang=region.lang,
-                kind=region.kind,
-                auto_kind=region.kind,
-                ocr_text=edit.auto_text if edit.auto_text is not None else region.text,
-                text=region.text,
-                deleted=True,
-                edited=True,
-                machine_english=judged.get(region.id),
-            )
+            kept.model_copy(update={"deleted": True, "edited": True, "replaced_by": replaced_by})
         )
-    chapter_id = digest(f"{paths.series}\0{paths.chapter}")
+    chapter_id = digest(f"{paths.series}\0{paths.chapter}", salt)
     pages: list[ContributionPage] = []
     sources: list[PageSource] = []
     for index in sorted(by_page):
@@ -331,22 +346,26 @@ def build(
 ) -> tuple[Contribution, list[PageSource]]:
     """The contribution of a series' chapters (all by default) and where its pages' pixels come from.
 
-    ShareOptOutError when the series or this machine opted out; SeriesConfigError for a broken series.toml;
-    KeyError for a chapter the series does not have."""
+    ShareOptOutError when this machine or the series opted out (the machine's choice covers every series);
+    SeriesConfigError for a broken series.toml; KeyError for a chapter the series does not have."""
+    if not cfg.share.enabled:
+        raise ShareOptOutError(
+            "this machine is opted out of sharing ([share] enabled = false in config.toml)"
+        )
     if not series_config(cfg, series.library_dir).share.enabled:
         raise ShareOptOutError(f"{series.series} is opted out of sharing ([share] enabled = false)")
+    salt = install_salt(cfg.paths.work_root)
     order = {name: i for i, name in enumerate(series.chapters())}
     contributed: list[ContributionChapter] = []
     sources: list[PageSource] = []
-    for name in chapters if chapters is not None else list(order):
-        chapter, pages = build_chapter(series.chapter(name), order[name])
+    for name in dict.fromkeys(chapters) if chapters is not None else order:
+        chapter, pages = build_chapter(series.chapter(name), order[name], salt)
         if chapter is not None:
             contributed.append(chapter)
             sources += pages
     contribution = Contribution(
         app_version=str(current_version()),
-        created=datetime.now(UTC).date(),
-        series_id=digest(series.series),
+        series_id=digest(series.series, salt),
         chapters=contributed,
         glossary=locked_terms(series),
     )
@@ -359,20 +378,22 @@ def summarize(contribution: Contribution) -> Summary:
         region for chapter in contribution.chapters for page in chapter.pages for region in page.regions
     ]
     live = [region for region in regions if not region.added and not region.deleted]
+    redrawn = sum(1 for r in regions if r.replaced_by is not None)
     return Summary(
         chapters=len(contribution.chapters),
         pages=sum(len(chapter.pages) for chapter in contribution.chapters),
         regions=len(regions),
-        ocr_fixes=sum(1 for r in live if r.ocr_text is not None and _norm(r.ocr_text) != _norm(r.text)),
+        ocr_fixes=sum(1 for r in live if r.ocr_text is not None and norm(r.ocr_text) != norm(r.text)),
         kinds=sum(1 for r in live if r.auto_kind is not None and r.auto_kind != r.kind),
         added=sum(1 for r in regions if r.added),
-        deleted=sum(1 for r in regions if r.deleted),
+        deleted=sum(1 for r in regions if r.deleted) - redrawn,
         english=sum(1 for r in regions if r.english_from in ("suggestion", "typed")),
         lettering=sum(1 for r in regions if r.lettering is not None),
         other=sum(
-            1 for r in live if r.edited and _norm(r.ocr_text or "") == _norm(r.text) and r.auto_kind == r.kind
+            1 for r in live if r.edited and norm(r.ocr_text or "") == norm(r.text) and r.auto_kind == r.kind
         ),
         terms=len(contribution.glossary),
+        redrawn=redrawn,
     )
 
 
