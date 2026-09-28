@@ -586,7 +586,7 @@ def create_app(
         edits = edit_store.load_edits(paths)
         edited, translated = edit_store.edited_ids(paths)
         back, forward = edit_store.history_steps(paths)
-        status = edit_store.line_statuses(paths)
+        status = edit_store.line_statuses(paths, {*edited, *translated})
         return {
             **edits.model_dump(mode="json"),
             "deleted_regions": [r.model_dump(mode="json") for r in edit_store.deleted_regions(paths)],

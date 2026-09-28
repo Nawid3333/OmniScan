@@ -106,6 +106,56 @@ def test_a_check_follows_its_region_through_a_re_detection(paths: ChapterPaths) 
     assert store.line_statuses(paths) == {"r0001": "todo", "r0005": "checked", "r0003": "todo"}
 
 
+def test_undoing_a_first_check_keeps_the_regions(paths: ChapterPaths) -> None:
+    assert not paths.artifact(store.OCR_AUTO_FILE).exists()  # a chapter no edit has touched yet
+    store.set_checked(paths, ["r0001"])
+    assert store.undo(paths, direction="ltr")
+    assert [r.id for r in store.current_regions(paths)] == ["r0001", "r0002", "r0003"]
+
+
+def test_a_check_follows_a_moved_reverted_or_deleted_region(paths: ChapterPaths) -> None:
+    store.set_checked(paths, ["r0001", "r0002"])
+    far = BBox(x0=10, y0=300, x1=110, y1=350)  # no overlap with the checked box at rows 200-250
+    store.update_region(paths, "r0002", direction="ltr", bbox=far)
+    assert store.line_statuses(paths)["r0002"] == "checked"  # its text and English did not change
+    store.revert_region(paths, "r0002", direction="ltr")
+    assert store.load_edits(paths).checked[1].anchor == BBox(x0=10, y0=200, x1=110, y1=250)
+    assert store.line_statuses(paths)["r0002"] == "checked"
+    store.delete_region(paths, "r0002", direction="ltr")
+    assert [check.region_id for check in store.load_edits(paths).checked] == ["r0001"]
+    added = store.add_region(paths, BBox(x0=120, y0=10, x1=190, y1=60), direction="ltr", text="추가")
+    store.set_checked(paths, [added.id])
+    assert store.revert_region(paths, added.id, direction="ltr") is None  # a hand-added region goes
+    assert [check.region_id for check in store.load_edits(paths).checked] == ["r0001"]  # with its check
+
+
+def test_a_deleted_regions_check_never_lands_on_its_neighbour(paths: ChapterPaths) -> None:
+    near = region("r0004", 15, "안녕하세요")  # overlaps r0001 far above MATCH_IOU
+    RegionsArtifact(regions=[*store.current_regions(paths), near]).save(paths.artifact("ocr.json"))
+    FinalArtifact(
+        judge_model="judge",
+        lines=[
+            FinalLine(region_id=rid, text=text, decision="pick")
+            for rid, text in (("r0001", "Hi"), ("r0002", "Glad"), ("r0003", "Let's go"), ("r0004", "Hello"))
+        ],
+    ).save(paths.artifact("final.json"))
+    store.set_checked(paths, ["r0001", "r0004"])
+    store.delete_region(paths, "r0001", direction="ltr")
+    assert store.line_statuses(paths)["r0004"] == "checked"
+
+
+def test_checking_what_is_already_so_changes_nothing(paths: ChapterPaths) -> None:
+    assert store.set_checked(paths, ["r0001", "r0002", "r0001"]) == ["r0001", "r0002"]
+    steps = store.history_steps(paths)
+    assert store.set_checked(paths, ["r0001"]) == []  # already checked as it is: no undo step
+    assert store.set_checked(paths, ["r0003"], checked=False) == []  # never checked
+    assert store.history_steps(paths) == steps
+    store.set_translation(paths, "r0001", "Hello", direction="ltr")
+    assert store.set_checked(paths, ["r0001", "r0002"]) == ["r0001"]  # only the line that changed
+    assert [check.region_id for check in store.load_edits(paths).checked] == ["r0001", "r0002"]  # in place
+    assert store.load_edits(paths).checked[0].english == "Hello"
+
+
 def test_the_desktop_session_holds_checks_until_save(paths: ChapterPaths) -> None:
     session = StudioSession(paths, direction="ltr")
     session.set_translation("r0001", "Hello there")
@@ -125,11 +175,27 @@ def test_the_desktop_session_holds_checks_until_save(paths: ChapterPaths) -> Non
     assert session.undo() and store.line_statuses(paths)["r0001"] == "todo"  # the first save was one step
     session.set_source("r0003", "가자!")
     assert session.rows()[2].status == "edited"  # an unsaved edit
+    session.set_checked("r0003", False)  # it has no check to take back
+    session.set_source("r0003", "가자")  # and the edit is taken back: nothing is left to save
+    assert not session.dirty and session.save() == 0
     session.remove_region("r0003")
     with pytest.raises(KeyError):
         session.set_checked("r0003")
     with pytest.raises(KeyError):
         session.set_checked("r0009")
+
+
+def test_a_new_speaker_keeps_a_check_in_the_session(paths: ChapterPaths) -> None:
+    store.set_checked(paths, ["r0001", "r0002"])
+    session = StudioSession(paths, direction="ltr")
+    session.set_speaker("r0001", "Jinwoo")  # a speaker is not part of what a check approves
+    session.set_source("r0002", "반가워요")  # the source text is
+    assert [row.status for row in session.rows()] == ["checked", "edited", "todo"]
+    session.set_checked("r0001")  # checked as it is already: nothing to do
+    steps = store.history_steps(paths)
+    assert session.save() == 2
+    assert store.line_statuses(paths) == {"r0001": "checked", "r0002": "edited", "r0003": "todo"}
+    assert store.history_steps(paths)[0] == steps[0] + 1  # one step for the whole save
 
 
 def test_edit_check_on_the_command_line(
@@ -147,7 +213,7 @@ def test_edit_check_on_the_command_line(
     assert [r["status"] for r in shown["regions"]] == ["checked", "todo", "checked"]
     assert "checked" in runner.invoke(edit_cli.edit_app, ["show", *ARGS]).output
     assert edit("check", *ARGS, "r0003", "--uncheck") == "0:edit: 1 line(s) unchecked; 1 of 3 checked\n"
-    assert edit("check", *ARGS, "--all") == "0:edit: 3 line(s) checked; 3 of 3 checked\n"
+    assert edit("check", *ARGS, "--all") == "0:edit: 2 line(s) checked; 3 of 3 checked\n"  # r0001 was
     assert edit("check", *ARGS).startswith("2:edit: name the regions to check, or pass --all")
     assert edit("check", *ARGS, "r0001", "--all").startswith("2:edit: name regions or pass --all, not both")
     assert edit("check", *ARGS, "r0009").startswith("2:edit: region 'r0009' not found")

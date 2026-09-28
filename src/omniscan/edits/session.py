@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import importlib
 import shutil
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -88,12 +88,15 @@ class StudioSession:
         readable = ocr_path.is_file() and regions is not None
         edited, hand = store.edited_ids(self.paths) if readable else ([], [])
         self._edited, self._hand = set(edited) | set(hand), set(hand)
-        self._status: dict[str, store.LineStatus] = store.line_statuses(self.paths) if readable else {}
+        self._status: dict[str, store.LineStatus] = (
+            store.line_statuses(self.paths, self._edited) if readable else {}
+        )
         self._sources: dict[str, str] = {}
         self._speakers: dict[str, str] = {}  # "": no speaker
         self._english: dict[str, str | None] = {}  # None: back to the judge's line
         self._removed: list[str] = []
         self._checks: dict[str, bool] = {}  # True: mark the line checked on save, False: unmark it
+        # (only the ones that change something are saved: `_pending_checks`)
 
     @property
     def has_regions(self) -> bool:
@@ -103,7 +106,9 @@ class StudioSession:
     @property
     def dirty(self) -> bool:
         """Whether there are unsaved changes."""
-        return bool(self._sources or self._speakers or self._english or self._removed or self._checks)
+        return bool(
+            self._sources or self._speakers or self._english or self._removed or self._pending_checks()
+        )
 
     def regions(self) -> list[Region]:
         """The chapter's regions with every edit applied (saved and unsaved), in reading order."""
@@ -134,6 +139,7 @@ class StudioSession:
     def rows(self) -> list[StudioRow]:
         """One row per remaining region."""
         english = self.translations()
+        pending = self._pending_checks()
         rows: list[StudioRow] = []
         for region in self.regions():
             unsaved = self._unsaved(region.id)
@@ -147,20 +153,21 @@ class StudioSession:
                     english=english.get(region.id, ""),
                     edited=region.id in self._edited or unsaved,
                     speaker=region.speaker or "",
-                    status=self._row_status(region.id, unsaved),
+                    status=self._row_status(region.id, unsaved, pending),
                 )
             )
         return rows
 
-    def _row_status(self, region_id: str, unsaved: bool) -> str:
-        """A row's review state with the unsaved changes: a pending check wins, an unsaved edit makes it edited."""
-        check = self._checks.get(region_id)
+    def _row_status(self, region_id: str, unsaved: bool, pending: Mapping[str, bool]) -> str:
+        """A row's review state as a save would leave it: a pending check wins; a saved check holds unless the
+        line is unchecked or its source text or English changes (a new speaker keeps it); else the line
+        is edited when it carries a saved or unsaved hand edit, or todo."""
+        check = pending.get(region_id)
         if check:
             return "checked"
-        edited = region_id in self._edited or unsaved
-        if check is False or unsaved:
-            return "edited" if edited else "todo"
-        return self._status.get(region_id, "edited" if edited else "todo")
+        if check is None and self._status.get(region_id) == "checked" and not self._rewrites(region_id):
+            return "checked"
+        return "edited" if region_id in self._edited or unsaved else "todo"
 
     def issues(self) -> list[Issue]:
         """The automatic QA pass over the edited chapter (omniscan.studio.qa, the desktop Studio's checks)."""
@@ -201,14 +208,25 @@ class StudioSession:
         self._require(region_id)
         if region_id in self._removed:
             raise KeyError(f"region {region_id!r} is removed")
-        if checked == (self._status.get(region_id) == "checked") and not self._unsaved(region_id):
-            self._checks.pop(region_id, None)
-        else:
-            self._checks[region_id] = checked
+        self._checks[region_id] = checked
 
     def _unsaved(self, region_id: str) -> bool:
         """Whether the region has an unsaved source text, speaker or English line."""
         return region_id in self._sources or region_id in self._speakers or region_id in self._english
+
+    def _rewrites(self, region_id: str) -> bool:
+        """Whether the region has an unsaved source text or English line (which a saved check does not approve)."""
+        return region_id in self._sources or region_id in self._english
+
+    def _pending_checks(self) -> dict[str, bool]:
+        """The checks and unchecks a save makes: checking a line whose saved check still approves it, or
+        unchecking one without a check, changes nothing and is left out."""
+        return {
+            region_id: checked
+            for region_id, checked in self._checks.items()
+            if (self._status.get(region_id) == "checked") != checked
+            or (checked and self._rewrites(region_id))
+        }
 
     def remove_region(self, region_id: str) -> None:
         """Drop a region (a false detection: nothing is erased or lettered there)."""
@@ -245,16 +263,13 @@ class StudioSession:
                     store.set_translation(self.paths, region_id, line, direction=direction)
             for region_id in self._removed:
                 store.delete_region(self.paths, region_id, direction=direction)
+            pending = self._pending_checks()
             for checked in (True, False):  # after the text edits: a check approves the saved lines
-                ids = [region_id for region_id, value in self._checks.items() if value is checked]
+                ids = [region_id for region_id, value in pending.items() if value is checked]
                 if ids:
                     store.set_checked(self.paths, ids, checked=checked)
         count = (
-            len(self._sources)
-            + len(self._speakers)
-            + len(self._english)
-            + len(self._removed)
-            + len(self._checks)
+            len(self._sources) + len(self._speakers) + len(self._english) + len(self._removed) + len(pending)
         )
         self._reload()
         return count

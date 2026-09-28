@@ -1668,8 +1668,11 @@ shows one raw page at a time with every text region as a box:
 - **Checked lines.** *Mark line checked* approves the selected line — its source text and English as they are
   now — for proofreading: the region list shows it as `checked` (green). Changing either one (by hand, or a
   re-run whose machine line differs) makes it unchecked again, so what is checked is always what will be
-  lettered. Every line is `todo`, `edited` (a hand edit since the last check) or `checked`; the same status is in
-  `omniscan edit show` / `check` and the desktop Studio. A check is an undo step like any edit.
+  lettered; moving the box, setting a speaker or lettering keeps the check, and deleting the region drops it.
+  Every line is `todo`, `edited` (a hand edit since the last check) or `checked`; the same status is in
+  `omniscan edit show` / `check` and the desktop Studio. A check is an undo step like any edit; checking a line
+  that is already checked as it is, or unchecking one that is not, changes nothing (`edit check` counts only the
+  lines whose status changed).
 - **Undo and redo.** *↶ Undo* (Ctrl+Z) takes back the last edit of the chapter — a box, a source text, an
   English line, a kind, lettering, output cuts, a deletion or a restore — and *↷ Redo* (Ctrl+Shift+Z or
   Ctrl+Y) makes it again; inside a text field the keys undo your typing instead. The same history is shared

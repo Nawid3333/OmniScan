@@ -88,7 +88,7 @@ def edit_show(
     english = english_lines(paths)
     edited, translated = (set(ids) for ids in store.edited_ids(paths))
     deleted = store.deleted_regions(paths)
-    status = store.line_statuses(paths)
+    status = store.line_statuses(paths, edited | translated)
     if as_json:
         rows = [
             {
@@ -135,11 +135,11 @@ def edit_check(
     ids = [region.id for region in store.current_regions(paths)] if every else list(regions or [])
     if not ids:
         raise _fail("name the regions to check, or pass --all")
-    _run(lambda: store.set_checked(paths, ids, checked=not uncheck))
+    changed = _run(lambda: store.set_checked(paths, ids, checked=not uncheck))
     status = store.line_statuses(paths)
     done = sum(1 for value in status.values() if value == "checked")
     typer.echo(
-        f"edit: {len(ids)} line(s) {'unchecked' if uncheck else 'checked'}; {done} of {len(status)} checked"
+        f"edit: {len(changed)} line(s) {'unchecked' if uncheck else 'checked'}; {done} of {len(status)} checked"
     )
 
 

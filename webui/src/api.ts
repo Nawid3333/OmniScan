@@ -455,10 +455,19 @@ export interface EditHistory {
   redo: number;
 }
 
+/** One line a proofreader approved: its source text and English when it was checked (edits.json). */
+export interface LineCheck {
+  region_id: string;
+  anchor: BBox;
+  source: string;
+  english: string;
+}
+
 export interface ChapterEdits {
   regions: RegionEdit[];
   translations: TranslationEdit[];
   layout?: LayoutEdit[];
+  checked?: LineCheck[]; // the raw checks; `checked_region_ids` says which still hold
   deleted_regions: Region[];
   edited_region_ids: string[];
   manual_translation_ids: string[];
