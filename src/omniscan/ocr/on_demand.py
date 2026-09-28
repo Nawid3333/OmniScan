@@ -23,6 +23,7 @@ from omniscan.core.config import Config
 from omniscan.core.paths import ChapterPaths
 from omniscan.core.schemas import BBox, IngestArtifact, Region
 from omniscan.edits import store
+from omniscan.pipeline.on_demand import group_models
 
 MARGIN_PX = 24  # room around the box, so the line detector sees whole lines at its edges
 
@@ -121,20 +122,11 @@ def read_region(paths: ChapterPaths, region_id: str, cfg: Config, models: Mappin
 
 @contextmanager
 def vision_models(cfg: Config) -> Iterator[Mapping[str, Any]]:
-    """The vision model group for one on-demand read, with exclusive GPU access; everything is released after."""
-    from omniscan.gpu.groups import VISION_GROUP, build_vram_manager
-    from omniscan.gpu.lock import acquire_gpu_lock, release_gpu_lock
+    """The vision model group (detector and OCR) for one on-demand action (pipeline/on_demand.py)."""
+    from omniscan.gpu.groups import VISION_GROUP
 
-    lock = acquire_gpu_lock() if cfg.gpu.device != "cpu" else None
-    try:
-        manager = build_vram_manager(cfg)
-        try:
-            yield manager.acquire(VISION_GROUP)
-        finally:
-            manager.release()
-    finally:
-        if lock is not None:
-            release_gpu_lock(lock)
+    with group_models(cfg, VISION_GROUP) as models:
+        yield models
 
 
 def read_region_now(paths: ChapterPaths, region_id: str, cfg: Config) -> Reading:
