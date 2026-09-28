@@ -661,9 +661,14 @@ def held_checks(regions: Sequence[Region], edits: ChapterEdits, english: Mapping
 def line_statuses(paths: ChapterPaths, touched: Collection[str] | None = None) -> dict[str, LineStatus]:
     """Each current region's line status: `checked` while a check still matches its source text and English,
     else `edited` when it carries a region edit or a hand-written line (`touched`: those ids, when the caller
-    has them from `edited_ids`), else `todo`."""
+    has them from `edited_ids`), else `todo`. A damaged final.json (an interrupted judge run) reads as no lines:
+    no check can be confirmed against it, so the Studio still opens and shows the other states."""
     regions = current_regions(paths)
-    held = held_checks(regions, load_edits(paths), final_lines(paths))
+    try:
+        english = final_lines(paths)
+    except OSError, ValueError:
+        english = {}
+    held = held_checks(regions, load_edits(paths), english)
     if touched is None:
         edited, translated = edited_ids(paths)
         touched = {*edited, *translated}

@@ -110,4 +110,10 @@ MUTANTS = [
         "            if True\n",
         "no-op checks keep the session dirty",
     ),
+    (
+        "src/omniscan/edits/store.py",
+        "    try:\n        english = final_lines(paths)\n    except OSError, ValueError:\n        english = {}\n    held",
+        "    english = final_lines(paths)\n    held",
+        "a damaged final.json breaks the statuses (the desktop Studio, GET edits, edit show)",
+    ),
 ]

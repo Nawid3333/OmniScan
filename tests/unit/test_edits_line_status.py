@@ -230,3 +230,19 @@ def test_checked_lines_over_the_web_api(paths: ChapterPaths, cfg: Config) -> Non
     assert undone.json()["checked_region_ids"] == ["r0002"]
     assert client.post(f"{url}/checked", json={"region_ids": ["r0009"]}).status_code == 404
     assert client.post(f"{url}/checked", json={"region_ids": []}).status_code == 422
+
+
+def test_a_damaged_final_json_confirms_no_check_and_still_opens(
+    paths: ChapterPaths, cfg: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store.set_checked(paths, ["r0001"])
+    store.update_region(paths, "r0002", direction="ltr", text="반가워요")
+    paths.artifact("final.json").write_text('{"judge_model": "ju', encoding="utf-8")  # a judge run cut short
+    assert store.line_statuses(paths) == {"r0001": "todo", "r0002": "edited", "r0003": "todo"}
+    assert [row.status for row in StudioSession(paths, direction="ltr").rows()] == ["todo", "edited", "todo"]
+    edits = TestClient(create_app(cfg)).get("/api/series/S/chapters/Chapter%201/edits")
+    assert edits.status_code == 200 and edits.json()["checked_region_ids"] == []
+    monkeypatch.setattr(edit_cli, "get_config", lambda: cfg)
+    shown = CliRunner().invoke(edit_cli.edit_app, ["show", *ARGS, "--json"])
+    assert shown.exit_code == 0
+    assert [r["status"] for r in json.loads(shown.output)["regions"]] == ["todo", "edited", "todo"]
