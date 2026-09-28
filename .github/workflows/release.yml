@@ -1,0 +1,127 @@
+# release: every push to main whose CI passes becomes a numbered GitHub release.
+#
+# Triggered by the finished `ci` run (workflow_run), not by the push itself, so a commit that fails
+# CI is never released. Only a successful run of a push to main in this repository counts, and only
+# while that commit is still main's tip: when several merges land close together, the older runs
+# stand down and the newest one releases them all in one version.
+#
+# scripts/release_version.py picks the version from the commits since the last vX.Y.Z tag
+# (`BREAKING CHANGE:` or [major] -> major, `feat:` or [minor] -> minor, anything else -> patch;
+# the first release keeps pyproject.toml's version). It is written into pyproject.toml,
+# src/omniscan/__init__.py and uv.lock, committed as "release: vX.Y.Z [skip ci]" (CI already passed
+# on everything in it, and [skip ci] keeps the commit from starting another release), tagged and
+# pushed. The GitHub release carries generated notes, the wheel and sdist and a SHA256SUMS that
+# `omniscan update` verifies downloads against. The platform zips (omniscan-<os>-<arch>.zip) come with
+# the packaging card (U4); until then `omniscan update download` reports that a release has no build.
+#
+# Run by hand from the Actions tab to release main now, optionally forcing the bump level.
+#
+# Pushing to main uses the RELEASE_PAT secret when it is set (needed if main is protected), else the
+# workflow's own token.
+
+name: release
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      level:
+        description: "Bump level (auto: from the commit messages)"
+        type: choice
+        options: [auto, patch, minor, major]
+        default: auto
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    # the branch is written out below, not taken from the event: a fork's run can name any branch
+    if: >
+      github.event_name == 'workflow_dispatch' || (
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0 # the tags and the commits since the last one
+          token: ${{ secrets.RELEASE_PAT || github.token }}
+
+      - name: Is there anything to release?
+        id: check
+        env:
+          CI_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          head=$(git rev-parse HEAD)
+          if [ -n "$CI_SHA" ] && [ "$CI_SHA" != "$head" ]; then
+            echo "main moved on to $head since CI passed on $CI_SHA; that commit's own CI run releases both."
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          elif git tag --points-at HEAD | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "main ($head) is already released as $(git tag --points-at HEAD | head -1)."
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0 (no floating major tags since v8: pinned)
+        if: steps.check.outputs.go == 'true'
+
+      - name: Version
+        id: version
+        if: steps.check.outputs.go == 'true'
+        env:
+          LEVEL: ${{ inputs.level || 'auto' }}
+        run: |
+          version=$(python3 scripts/release_version.py next --level "$LEVEL")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Releasing v$version"
+
+      - name: Commit, tag and push
+        id: push
+        if: steps.check.outputs.go == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          python3 scripts/release_version.py write "$VERSION"
+          uv lock
+          if ! git diff --quiet; then
+            git commit -am "release: v$VERSION [skip ci]"
+          fi
+          git tag -a "v$VERSION" -m "OmniScan v$VERSION"
+          # atomic: the tag never lands without the commit it names
+          if ! git push --atomic origin HEAD:main "v$VERSION"; then
+            echo "::warning::main moved on while releasing v$VERSION; the newer commit's CI run releases it."
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        if: steps.push.outputs.pushed == 'true'
+        run: |
+          uv build
+          cd dist
+          sha256sum -- * > ../SHA256SUMS
+          cat ../SHA256SUMS
+
+      - name: Publish the release
+        if: steps.push.outputs.pushed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: gh release create "v$VERSION" --verify-tag --title "OmniScan v$VERSION" --generate-notes dist/* SHA256SUMS
