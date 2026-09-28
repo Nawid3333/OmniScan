@@ -30,6 +30,7 @@ def translate_chapter(
     hints: TranslationHints | None = None,
     characters: Sequence[Character] = (),
     images: PageImages | None = None,
+    target: str = "en",
 ) -> tuple[Literal["done", "skipped"], CandidateRun | None]:
     """Run one translation profile over a chapter; write `translations/<profile>.json` (skip if present).
 
@@ -38,7 +39,8 @@ def translate_chapter(
     way of re-translating just what a hand edit or a glossary change touched. `hints` is the series' learned
     translation memory and preferred wording (learn/apply.py); `characters` its voices (translate/voices.py).
     `images` (the chapter's pages, shared by the profiles of one stage run) go to a profile with `images = true`;
-    a line sent without its page image is keyed as sent without one."""
+    a line sent without its page image is keyed as sent without one. `target` is the release language
+    (`[translate] target_lang`)."""
     output = paths.artifact(f"translations/{profile.name}.json")
     partial = paths.artifact(f"translations/.{profile.name}.partial.json")
     if output.is_file() and not force:
@@ -54,7 +56,12 @@ def translate_chapter(
     targets = translatable(artifact.regions)
     keys = {
         region.id: translation_key(
-            region, entries, profile, characters, pages.page_id(region, side) if pages is not None else None
+            region,
+            entries,
+            profile,
+            characters,
+            pages.page_id(region, side) if pages is not None else None,
+            target,
         )
         for region in targets
     }
@@ -79,10 +86,11 @@ def translate_chapter(
         hints=hints,
         characters=characters,
         images=pages,
+        target=target,
     )
     if pages is not None:  # a line that went out without its page image says so in its key
         keys |= {
-            region.id: translation_key(region, entries, profile, characters)
+            region.id: translation_key(region, entries, profile, characters, target=target)
             for region in targets
             if region.id not in reused and region.id not in pages.sent
         }

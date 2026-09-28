@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 RGB = tuple[int, int, int]
 Lang = Literal["ko", "zh", "ja", "en"]
+TargetLang = Literal["en", "de", "es"]  # release languages (`[translate] target_lang`)
 
 
 def utcnow() -> datetime:
@@ -644,7 +645,7 @@ class Contribution(Artifact):
 
     app_version: str
     series_id: str  # salted hash of the series name (the salt never leaves this install)
-    target_lang: Lang = "en"
+    target_lang: TargetLang = "en"
     chapters: list[ContributionChapter]
     glossary: list[ContributionTerm] = Field(default_factory=list)
 

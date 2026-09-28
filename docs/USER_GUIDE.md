@@ -834,6 +834,21 @@ uv run omniscan translate DemoSeries
 uv run omniscan translate DemoSeries --profile gemma4-12b-local --chapter "Chapter 1" --force
 ```
 
+**Release language.** English is the default. A series can be released in German or Spanish instead, set in its
+`series.toml`:
+
+```toml
+[translate]
+target_lang = "de"   # "en" (default), "de" or "es"
+```
+
+The translation and judge prompts then ask for that language (its own sound-effect examples included), the
+typo check (the Consistency page and the Studio's problems) uses that language's dictionary, and `omniscan pack`
+writes it into the CBZ's `LanguageISO`; contributions record it too. Changing it re-translates and re-judges the
+series' chapters once. Glossary targets are used as written, so give a German series German targets. The
+lettering presets' fonts cover German and Spanish letters; line breaking and the sound-effect lexicon are still
+tuned for English.
+
 ### `omniscan judge`
 
 Turn a chapter's candidate translation runs into one final English line per translatable region,

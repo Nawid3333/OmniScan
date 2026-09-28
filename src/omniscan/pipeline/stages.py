@@ -189,6 +189,7 @@ class TranslateStage:
             "fallbacks": {
                 name: stage_profile(fallback) for name, fallback in sorted(self._fallbacks.items())
             },
+            **_target_subset(cfg),
         }
 
     def run(self, ctx: ChapterContext, models: Mapping[str, Any]) -> Mapping[str, float]:
@@ -262,10 +263,17 @@ class TranslateStage:
             hints=hints,
             characters=characters,
             images=images,
+            target=ctx.cfg.translate.target_lang,
         )
         if run is None:
             raise RuntimeError(f"translate_chapter skipped {profile.name} despite force=True")
         return run
+
+
+def _target_subset(cfg: Config) -> dict[str, str]:
+    """The release language's part of a translate/judge config hash: nothing for English (older hashes hold)."""
+    target = cfg.translate.target_lang
+    return {} if target == "en" else {"target_lang": target}
 
 
 class JudgeStage:
@@ -313,7 +321,7 @@ class JudgeStage:
 
     def config_subset(self, cfg: Config) -> Mapping[str, Any]:
         """Only the config values that affect this stage's output (hashed for invalidation)."""
-        return self._judge_cfg.model_dump()
+        return {**self._judge_cfg.model_dump(), **_target_subset(cfg)}
 
     def run(self, ctx: ChapterContext, models: Mapping[str, Any]) -> Mapping[str, float]:
         """Do the work, write outputs, return metrics (seconds are added by the runner)."""
@@ -332,6 +340,7 @@ class JudgeStage:
             story_summary=series_story_context(ctx.series, ctx.paths.chapter),
             rate_limit_fallback=True,
             reuse=True,
+            target=ctx.cfg.translate.target_lang,
         )
         if stats is None:
             return {}

@@ -56,6 +56,11 @@ low_conf = 0.85
 drop_conf = 0.5
 lang = "ko"
 
+[translate]
+# the release language: translation, judge, CBZ metadata and contributions ("en", "de", "es"); set it
+# per series in series.toml. Changing it re-translates and re-judges the series' chapters
+target_lang = "en"
+
 [inpaint]
 pad_px = 8
 mask_dilate_px = 3

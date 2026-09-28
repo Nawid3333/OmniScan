@@ -102,6 +102,7 @@ def run_profile(
     characters: Sequence[Character] = (),
     images: PageImages | None = None,
     clock: Callable[[], float] = time.perf_counter,
+    target: str = "en",
 ) -> CandidateRun:
     """Translate the chapter's translatable regions with one profile and return its candidate run.
 
@@ -112,7 +113,8 @@ def run_profile(
     that English as is; the requests show similar memory lines and the preferred wording (chat_json).
     `characters` (the series' voices.toml): each request shows the voices of the characters who speak or are
     named in it (chat_json). `images` (the chapter's pages) are attached to each request when the profile asks
-    for them (`images = true`, chat_json); the requests are then cut to at most `images_per_request` images."""
+    for them (`images = true`, chat_json); the requests are then cut to at most `images_per_request` images.
+    `target` is the release language the regions are translated into (`[translate] target_lang`)."""
     start = clock()
     targets = translatable(regions)
     target_ids = {r.id for r in targets}
@@ -162,9 +164,10 @@ def run_profile(
                 hints,
                 characters,
                 images if profile.images else None,
+                target,
             )
         else:
-            _run_translategemma(client, profile, remaining, entries, by_id, save_partial, usage)
+            _run_translategemma(client, profile, remaining, entries, by_id, save_partial, usage, target)
     except BaseException:
         if partial_path is not None:
             _save_partial(partial_path, profile, targets, by_id, usage, clock() - start)
@@ -197,6 +200,7 @@ def _run_chat_json(
     hints: TranslationHints | None = None,
     characters: Sequence[Character] = (),
     images: PageImages | None = None,
+    target: str = "en",
 ) -> None:
     """Request the regions in chunks; repair missing ids, then save the partial after every chunk."""
     side = profile.image_side
@@ -220,6 +224,7 @@ def _run_chat_json(
             preferences=preferences,
             characters=voices,
             images=pages,
+            target=target,
         )
         missing = [r for r in chunk if r.id not in texts]
         for _ in range(max_repair_rounds):
@@ -238,6 +243,7 @@ def _run_chat_json(
                 preferences=preferences,
                 characters=voices,
                 images={r.id: pages[r.id] for r in missing if r.id in pages},  # only the pages still needed
+                target=target,
             )
             texts.update(repair)
             missing = [r for r in missing if r.id not in repair]
@@ -284,6 +290,7 @@ def _request_translations(
     preferences: Sequence[tuple[str, str]] = (),
     characters: Sequence[Character] = (),
     images: Mapping[str, PageImage] | None = None,
+    target: str = "en",
 ) -> dict[str, str]:
     """One chat_json request for `regions`; returns the usable id -> text pairs of the reply."""
     response = client.chat(
@@ -297,6 +304,7 @@ def _request_translations(
             preferences=preferences,
             characters=characters,
             images=images,
+            target=target,
         ),
         cloud=(profile.endpoint == "cloud"),
         format=TRANSLATIONS_SCHEMA,
@@ -315,12 +323,13 @@ def _run_translategemma(
     by_id: dict[str, Candidate],
     save_partial: Callable[[], None],
     usage: _Usage,
+    target: str = "en",
 ) -> None:
     """One request per region; saves the partial every `_PARTIAL_EVERY_REGIONS` regions."""
     for done, region in enumerate(remaining, 1):
         text = _unwrap_reply(
             _chat(
-                client, profile, [{"role": "user", "content": _prompt_for(region, entries)}], usage
+                client, profile, [{"role": "user", "content": _prompt_for(region, entries, target)}], usage
             ).content.strip(),
             source_text(region),
         )
@@ -330,9 +339,11 @@ def _run_translategemma(
             save_partial()
 
 
-def _prompt_for(region: Region, entries: Sequence[GlossaryEntry]) -> str:
-    """The translategemma prompt for one region: locked glossary terms pre-substituted."""
-    return translategemma_prompt(substitute_binding(source_text(region), entries, region.lang), region.lang)
+def _prompt_for(region: Region, entries: Sequence[GlossaryEntry], target: str = "en") -> str:
+    """The translategemma prompt for one region into `target`: locked glossary terms pre-substituted."""
+    return translategemma_prompt(
+        substitute_binding(source_text(region), entries, region.lang), region.lang, target
+    )
 
 
 def _chat(

@@ -15,7 +15,7 @@ from PIL import Image
 from rich.console import Console
 from rich.table import Table
 
-from omniscan.core.config import Config, get_config, get_secrets, series_config
+from omniscan.core.config import Config, SeriesConfigError, get_config, get_secrets, series_config
 from omniscan.core.paths import ChapterPaths, SeriesPaths, chapter_number, list_chapters, list_images
 from omniscan.core.schemas import GlossaryEntry, IngestArtifact, SlicesArtifact, TermType
 from omniscan.doctor import run_all_checks
@@ -213,6 +213,7 @@ def cmd_pack(
     chapters = chapter or [p.name for p in list_chapters(sp.output_dir)]
     formats = list(dict.fromkeys(fmt or [PackFormat.CBZ]))
     dest_dir = out or sp.output_dir / "_packaged"
+    language = _series_target(cfg, sp, "pack")
     written = 0
     for chap in chapters:
         images = list_images(sp.chapter(chap).output_dir)
@@ -225,7 +226,12 @@ def cmd_pack(
             dest = dest_dir / f"{stem}.{extension.value}"
             if extension is PackFormat.CBZ:
                 pack_cbz(
-                    images, dest, title=chap, series=series, number=(f"{n:g}" if n is not None else None)
+                    images,
+                    dest,
+                    title=chap,
+                    series=series,
+                    number=(f"{n:g}" if n is not None else None),
+                    language=language,
                 )
             else:
                 pack_pdf(images, dest)
@@ -684,13 +690,14 @@ def cmd_translate(
             typer.echo("translate: no enabled profiles in translation_profiles.toml", err=True)
             raise typer.Exit(2)
     entries = _glossary_entries(sp)
+    target = _series_target(cfg, sp, "translate")
     failed = 0
     with OllamaClient(cfg.ollama, get_secrets()) as client:
         for chap in chapters:
             paths = sp.chapter(chap)
             for prof in selected:
                 try:
-                    status, run = translate_chapter(client, paths, prof, entries, force=force)
+                    status, run = translate_chapter(client, paths, prof, entries, force=force, target=target)
                 except FileNotFoundError as exc:
                     typer.echo(f"{series}/{chap}: {exc}", err=True)
                     failed += 1
@@ -715,6 +722,16 @@ def cmd_translate(
                     typer.echo(f"{series}/{chap} {prof.name}: skipped")
     if failed:
         raise typer.Exit(1)
+
+
+def _series_target(cfg: Config, sp: SeriesPaths, name: str) -> str:
+    """The series' release language (`[translate] target_lang`, series.toml over config.toml); a broken
+    series.toml exits 2."""
+    try:
+        return series_config(cfg, sp.library_dir).translate.target_lang
+    except SeriesConfigError as exc:
+        typer.echo(f"{name}: {exc}", err=True)
+        raise typer.Exit(2) from exc
 
 
 def _glossary_entries(sp: SeriesPaths) -> list[GlossaryEntry]:
@@ -756,13 +773,14 @@ def cmd_judge(
         typer.echo(f"judge: {exc}", err=True)
         raise typer.Exit(2) from exc
     entries = _glossary_entries(sp)
+    target = _series_target(cfg, sp, "judge")
     failed = 0
     with OllamaClient(cfg.ollama, get_secrets()) as client:
         for chap in chapters:
             paths = sp.chapter(chap)
             try:
                 status, _artifact, stats = judge_chapter(
-                    client, paths, judge_cfg, entries, run_ids=run, force=force
+                    client, paths, judge_cfg, entries, run_ids=run, force=force, target=target
                 )
             except FileNotFoundError as exc:
                 typer.echo(f"{series}/{chap}: {exc}", err=True)

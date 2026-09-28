@@ -46,11 +46,12 @@ def suggest(
     hints: TranslationHints | None = None,
     characters: Sequence[Character] = (),
     images: PageImages | None = None,
+    target: str = "en",
 ) -> list[Suggestion]:
     """Translate the target regions with every profile; a profile that hits the Ollama rate limit is
     replaced by its fallback. `hints` (the series' learned memory) shows the models similar lines the editor
     translated and their preferred wording, never an old line as the answer. `images` (the chapter's pages)
-    go to the profiles that ask for them. ValueError names a target that is unknown or has nothing to
+    go to the profiles that ask for them; `target` is the release language. ValueError names a target that is unknown or has nothing to
     translate."""
     ordered = translatable(regions)
     known = {region.id for region in regions}
@@ -77,6 +78,7 @@ def suggest(
                 hints=hints,
                 characters=characters,
                 images=images,
+                target=target,
             )
         except OllamaRateLimitError:
             fallback = (fallbacks or {}).get(profile.name)
@@ -93,6 +95,7 @@ def suggest(
                 hints=hints,
                 characters=characters,
                 images=images,
+                target=target,
             )
         suggestions.extend(
             Suggestion(region_id=c.region_id, profile=used.name, model=used.model, text=c.text)

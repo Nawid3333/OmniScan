@@ -18,26 +18,28 @@ from omniscan.core.paths import natural_key
 from omniscan.core.schemas import GlossaryEntry, Region
 from omniscan.glossary.match import find_terms
 from omniscan.translate.images import attached
-from omniscan.translate.languages import region_language, source_language
+from omniscan.translate.languages import honorifics, region_language, source_language, target_language
 
 if TYPE_CHECKING:
     from omniscan.translate.images import PageImage
     from omniscan.translate.voices import Character
 
 
-def chat_json_system(lang: str) -> str:
-    """The chat_json system prompt for `lang`'s source language; "ko" is the tuned original."""
+def chat_json_system(lang: str, target: str = "en") -> str:
+    """The chat_json system prompt for `lang`'s source language into `target`; "ko" into "en" is the tuned
+    original."""
     sl = source_language(lang)
+    tl = target_language(target)
     return (
-        f"You are the translator for an official English release of a {sl.name} {sl.work}. Translate "
-        f"every numbered region from {sl.name} into natural, idiomatic English suited to comic "
+        f"You are the translator for an official {tl.name} release of a {sl.name} {sl.work}. Translate "
+        f"every numbered region from {sl.name} into natural, idiomatic {tl.name} suited to comic "
         "lettering: concise, in the character's voice, with no translator notes. Write each "
         "translation as one continuous line without manual line breaks (the letterer re-wraps it). "
-        f'{sl.honorifics}For a region of kind "sfx" (a sound effect) give the English sound effect an '
-        "official release would letter: one short, punchy onomatopoeia such as BOOM, THUD, WHOOSH or "
-        "BA-DUMP, never a description of the sound; a repeated sound stays repeated. Entries under "
+        f'{honorifics(sl, tl)}For a region of kind "sfx" (a sound effect) give the {tl.name} sound effect an '
+        f"official release would letter: one short, punchy onomatopoeia such as {tl.sfx_examples}, never a "
+        "description of the sound; a repeated sound stays repeated. Entries under "
         '"Glossary (binding)" are mandatory: whenever a source term appears'
-        f"{sl.particle_hint}, its target must appear in your English exactly as written. Entries "
+        f"{sl.particle_hint}, its target must appear in your {tl.name} exactly as written. Entries "
         'under "Glossary (suggested)" are preferred spellings but not mandatory. Answer with JSON '
         "only, "
         'in exactly this shape: {"translations":[{"id":"r0001","text":"..."}]} — one entry for every '
@@ -65,15 +67,17 @@ TRANSLATIONS_SCHEMA: dict[str, Any] = {
 
 # From scripts/probe_translation.py (tg_style) — translategemma's own training template, ending with
 # three newlines before the text.
-def translategemma_template(lang: str) -> str:
-    """The translategemma training template naming `lang`'s source language; "ko" is the original."""
+def translategemma_template(lang: str, target: str = "en") -> str:
+    """The translategemma training template from `lang`'s source language into `target`; "ko" into "en" is the
+    original."""
     sl = source_language(lang)
+    tl = target_language(target)
     return (
-        f"You are a professional {sl.name} ({sl.code}) to English (en) translator. Your goal is to "
+        f"You are a professional {sl.name} ({sl.code}) to {tl.name} ({tl.code}) translator. Your goal is to "
         "accurately convey the meaning and nuances of the original "
-        f"{sl.name} text while adhering to English grammar, vocabulary, and cultural sensitivities.\n"
-        "Produce only the English translation, without any additional explanations or commentary. "
-        f"Please translate the following {sl.name} text into English:\n\n\n"
+        f"{sl.name} text while adhering to {tl.name} grammar, vocabulary, and cultural sensitivities.\n"
+        f"Produce only the {tl.name} translation, without any additional explanations or commentary. "
+        f"Please translate the following {sl.name} text into {tl.name}:\n\n\n"
     )
 
 
@@ -148,8 +152,9 @@ def chat_json_messages(
     preferences: Sequence[tuple[str, str]] = (),
     characters: Sequence[Character] = (),
     images: Mapping[str, PageImage] | None = None,
+    target: str = "en",
 ) -> list[dict[str, Any]]:
-    """The chat_json prompt: system message plus story context, glossary sections and the regions list.
+    """The chat_json prompt (a release in `target`): system message plus story context, glossary sections and the regions list.
 
     `context` (translating a few regions on demand) adds the neighbouring lines, source and English, before
     the regions list; without it the prompt is exactly the whole-chapter one. `memory` (source, English)
@@ -234,7 +239,7 @@ def chat_json_messages(
     user: dict[str, Any] = {"role": "user", "content": "\n\n".join(parts)}
     if shown:
         user["images"] = [image.data for image in shown]
-    return [{"role": "system", "content": chat_json_system(region_language(regions))}, user]
+    return [{"role": "system", "content": chat_json_system(region_language(regions), target)}, user]
 
 
 def substitute_binding(text: str, entries: Sequence[GlossaryEntry], lang: str) -> str:
@@ -253,6 +258,6 @@ def substitute_binding(text: str, entries: Sequence[GlossaryEntry], lang: str) -
     return result
 
 
-def translategemma_prompt(text: str, lang: str = "ko") -> str:
-    """The one-region translategemma prompt (its own template, glossary pre-substituted upstream)."""
-    return translategemma_template(lang) + text
+def translategemma_prompt(text: str, lang: str = "ko", target: str = "en") -> str:
+    """The one-region translategemma prompt into `target` (its own template, glossary pre-substituted upstream)."""
+    return translategemma_template(lang, target) + text

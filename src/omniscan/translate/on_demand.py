@@ -78,6 +78,7 @@ def translate_now(
         hints=translation_hints(current_memory(series), cfg.learn) if cfg.learn.enabled else None,
         characters=load_voices(series),
         images=PageImages(paths),
+        target=cfg.translate.target_lang,
     )
     applied: list[FinalLine] = []
     if apply:
