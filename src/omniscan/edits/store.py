@@ -471,8 +471,12 @@ def final_lines(paths: ChapterPaths, name: str = "final.json") -> dict[str, str]
 
 
 def judged_lines(paths: ChapterPaths) -> dict[str, str]:
-    """The judge's own English lines (final_auto.json) by region id; {} when it has none."""
-    return final_lines(paths, FINAL_AUTO_FILE)
+    """The judge's own English lines (final_auto.json) by region id, a region's last line as every other reader
+    of final_auto.json takes it (the Studio's machine line, the judge's reuse); {} when it has none."""
+    path = paths.artifact(FINAL_AUTO_FILE)
+    if not path.is_file():
+        return {}
+    return {line.region_id: line.text for line in FinalArtifact.load(path).lines}
 
 
 def set_translations(

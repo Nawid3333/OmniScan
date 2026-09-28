@@ -320,8 +320,8 @@ def test_final_lines_read_the_lettered_and_the_judged_lines(paths: ChapterPaths)
     FinalArtifact(judge_model="judge", lines=lines).save(paths.artifact("final.json"))
     assert store.final_lines(paths) == {"r1": "one", "r2": "two"}  # a region's first line
     assert store.judged_lines(paths) == {}  # no final_auto.json yet
-    FinalArtifact(judge_model="judge", lines=lines[2:]).save(paths.artifact(store.FINAL_AUTO_FILE))
-    assert store.judged_lines(paths) == store.final_lines(paths, store.FINAL_AUTO_FILE) == {"r2": "two"}
+    FinalArtifact(judge_model="judge", lines=lines).save(paths.artifact(store.FINAL_AUTO_FILE))
+    assert store.judged_lines(paths) == {"r1": "twice", "r2": "two"}  # a region's last line, as before
     paths.artifact("final.json").write_text("{not json", encoding="utf-8")
     with pytest.raises(ValueError):
         store.final_lines(paths)
