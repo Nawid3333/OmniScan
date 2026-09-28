@@ -9,6 +9,7 @@ from __future__ import annotations
 import enum
 import json
 from collections.abc import Callable
+from dataclasses import asdict
 from typing import Annotated, cast
 
 import typer
@@ -23,6 +24,7 @@ from omniscan.edits import store
 from omniscan.edits.replace import FindReplace, apply_changes, plan
 from omniscan.llm.ollama import OllamaClient, OllamaError
 from omniscan.ocr.on_demand import Reading, read_region_now
+from omniscan.qa.problems import chapter_problems
 from omniscan.translate.on_demand import english_lines, translate_now
 from omniscan.translate.profiles import default_profile_paths, load_profiles
 from omniscan.translate.run import ChatClient
@@ -143,6 +145,30 @@ def edit_check(
     typer.echo(
         f"edit: {len(changed)} line(s) {'unchecked' if uncheck else 'checked'}; {done} of {len(status)} checked"
     )
+
+
+@edit_app.command("problems")
+def edit_problems(
+    series: Series,
+    chapter: Chapter,
+    unchecked: Annotated[
+        bool, typer.Option("--unchecked", help="Leave out the lines already checked.")
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Print the problems as JSON.")] = False,
+) -> None:
+    """List what a proofreader looks at first, in reading order: lines with no English, source script left in the
+    English, lettering that overflows, lines the judge was unsure of or that break a locked term, much too long
+    lines, typos, and what the last `omniscan qa` still read on the finished pages."""
+    _cfg, _series, paths = _chapter(series, chapter)
+    problems = [p for p in chapter_problems(paths) if not (unchecked and p.status == "checked")]
+    if as_json:
+        typer.echo(json.dumps([asdict(problem) for problem in problems], ensure_ascii=False, indent=2))
+        return
+    for problem in problems:
+        where = " (finished page)" if problem.finished_page else ""
+        checked = " [checked]" if problem.status == "checked" else ""
+        typer.echo(f"{problem.region_id}  {problem.kind}{where}: {problem.message}{checked}")
+    typer.echo(f"edit: {len(problems)} problem(s) in {series} / {chapter}")
 
 
 @edit_app.command("text")
