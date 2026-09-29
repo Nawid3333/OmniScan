@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { GlossaryEntry } from "./api";
-import { draftOf, filterTerms, parseAliases, replaceTerm, statusCounts, termChange } from "./glossary";
+import { draftOf, filterTerms, parseAliases, replaceTerm, selectionOf, statusCounts, termChange } from "./glossary";
 
 function entry(id: number, source: string, target: string, extra: Partial<GlossaryEntry> = {}): GlossaryEntry {
   return {
@@ -79,5 +79,14 @@ describe("glossary view helpers", () => {
   it("replaces an entry by id", () => {
     const locked = { ...GATE, status: "locked" as const };
     expect(replaceTerm([JINWOO, GATE], locked)).toEqual([JINWOO, locked]);
+  });
+
+  it("takes the selected text of a field, trimmed", () => {
+    expect(selectionOf("진우 씨, 게이트가!", 0, 2)).toBe("진우");
+    expect(selectionOf("진우 씨, 게이트가!", 6, 9)).toBe("게이트");
+    expect(selectionOf("Jinwoo-ssi, the Gate!", 15, 20)).toBe("Gate");
+    expect(selectionOf("abc", 1, 1)).toBe("");
+    expect(selectionOf("abc", 2, 1)).toBe("");
+    expect(selectionOf("abc", null, null)).toBe("");
   });
 });
