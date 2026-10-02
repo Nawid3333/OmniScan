@@ -135,7 +135,7 @@ def parse_result(stdout: str, returncode: int, dest: Path, *, messages: Sequence
             f"the downloader exited with code {returncode} without printing a result" + _tail(messages)
         )
     schema = data.get("schema", 1)
-    if schema not in SUPPORTED_SCHEMAS:
+    if not isinstance(schema, int) or schema not in SUPPORTED_SCHEMAS:
         raise DownloaderError(
             f"the downloader's result has schema {schema!r}, this OmniScan understands "
             f"{', '.join(map(str, sorted(SUPPORTED_SCHEMAS)))} — update OmniScan"

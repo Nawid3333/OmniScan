@@ -131,6 +131,12 @@ def test_an_unknown_schema_is_refused(tmp_path: Path, mangadl: list[str]) -> Non
         download("https://fake.test/schema9", tmp_path / "dl", command=mangadl)
 
 
+@pytest.mark.parametrize("schema", [[1], {"v": 1}, "1", None])
+def test_a_schema_that_is_not_a_number_is_refused(tmp_path: Path, schema: object) -> None:
+    with pytest.raises(DownloaderError, match="update OmniScan"):
+        parse_result(json.dumps({"schema": schema}), 0, tmp_path)
+
+
 def test_a_result_without_schema_reads_as_downloader_1_4(tmp_path: Path) -> None:
     stdout = json.dumps({"site": "x", "chapters": 1, "incomplete_chapters": []})
     result = parse_result(stdout, 0, tmp_path)
