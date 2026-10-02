@@ -49,6 +49,7 @@ def execute_import(
     not already .jpg/.jpeg are decoded and re-encoded as JPEG (quality 95) instead of being copied;
     a re-run finds the identical bytes already in place and skips them.
     """
+    _check_destinations(plan, library_root)
     total = sum(len(item.files) for item in plan.items)
     done = 0
     chapters_written: list[str] = []
@@ -94,6 +95,25 @@ def execute_import(
         files_converted=files_converted,
         converted=converted,
     )
+
+
+def _check_destinations(plan: ImportPlan, library_root: Path) -> None:
+    """Refuse a plan whose series or chapter names would write outside `library_root/<series>/` (before any write).
+
+    Names come from the command line, the desktop app's editable fields, archive member and folder names, or the
+    downloader's result; `..` or an absolute path in any of them must not reach outside the library. A series may
+    still name a folder inside another one (`--series "Series/_reference_en"`).
+    """
+    root = library_root.resolve()
+    series_dir = (library_root / plan.series).resolve()
+    if not series_dir.is_relative_to(root) or series_dir == root:
+        raise ImportPlanError(f"series {plan.series!r} would be written outside the library {library_root}")
+    for item in plan.items:
+        chapter_dir = (library_root / plan.series / item.chapter).resolve()
+        if not chapter_dir.is_relative_to(series_dir) or chapter_dir == series_dir:
+            raise ImportPlanError(
+                f"chapter {item.chapter!r} would be written outside the series folder {library_root / plan.series}"
+            )
 
 
 def converted_jpeg_bytes(source: Path) -> bytes:
