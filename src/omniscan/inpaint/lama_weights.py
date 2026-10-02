@@ -11,6 +11,8 @@ from omniscan.core.config import InpaintConfig
 from omniscan.packaging.names import safe_filename
 
 _CHUNK = 1 << 20  # 1 MiB: streamed download and hashing
+# A stalled server must fail, not hang the first LaMa run forever: at most this long to connect and between chunks.
+DOWNLOAD_TIMEOUT = httpx.Timeout(300.0, connect=30.0)
 
 
 def lama_path(models_dir: Path, cfg: InpaintConfig) -> Path:
@@ -40,7 +42,7 @@ def ensure_lama_weights(models_dir: Path, cfg: InpaintConfig, *, client: httpx.C
     path = lama_path(models_dir, cfg)
     if path.is_file() and sha256_file(path) == cfg.lama_sha256:
         return path
-    http = client if client is not None else httpx.Client(follow_redirects=True, timeout=None)
+    http = client if client is not None else httpx.Client(follow_redirects=True, timeout=DOWNLOAD_TIMEOUT)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         part = path.parent / (path.name + ".part")
