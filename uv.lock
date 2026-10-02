@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = "==3.14.*"
 resolution-markers = [
     "extra != 'extra-8-omniscan-cpu' and extra != 'extra-8-omniscan-cuda' and extra != 'extra-8-omniscan-mps' and extra != 'extra-8-omniscan-rocm-gfx1201' and extra == 'extra-8-omniscan-xpu'",
@@ -763,7 +763,7 @@ wheels = [
 
 [[package]]
 name = "omniscan"
-version = "0.1.4"
+version = "0.1.5"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
