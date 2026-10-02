@@ -237,7 +237,8 @@ chapter), or a flat dump of images whose filenames carry an explicit chapter mar
 `Chapter_02`, `ep3`, …). Archives are extracted to a temporary directory and planned with the same
 three shapes; a lone top-level wrapper folder is descended into, and the series name defaults to
 the archive's own name. Series and chapter are guessed from the folder names unless you override
-them.
+them. Files an operating system leaves behind are ignored: the `__MACOSX/` folder and `._<name>` twins of a zip
+made with macOS Finder's Compress, `.DS_Store`, `Thumbs.db` and `desktop.ini`.
 
 | Argument/option | Meaning |
 |---|---|

@@ -13,8 +13,8 @@ import json
 import re
 from pathlib import Path
 
-from omniscan.core.paths import IMAGE_SUFFIXES, list_images, natural_key
-from omniscan.importer.plan import ImportPlan, ImportPlanError, ImportPlanItem
+from omniscan.core.paths import IMAGE_SUFFIXES, natural_key
+from omniscan.importer.plan import ImportPlan, ImportPlanError, ImportPlanItem, chapter_images
 
 MANIFEST_FILE = "chapter_manifest.json"
 INCOMPLETE_FILE = "incomplete_chapters.json"
@@ -63,7 +63,7 @@ def plan_downloader_series(
                 "import it on its own with --series and --chapter"
             )
             continue
-        images = list_images(folder)
+        images = chapter_images(folder)
         problem = _unfinished(folder, images, manifest, incomplete)
         if problem is not None:
             warnings.append(

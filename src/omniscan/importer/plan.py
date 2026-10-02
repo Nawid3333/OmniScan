@@ -27,6 +27,20 @@ _EXPLICIT_CHAPTER_RE = re.compile(r"(?:chapter|chap|ch|episode|ep)[\s._-]*(\d+(?
 
 ARCHIVE_SUFFIXES = frozenset({".zip", ".cbz"})
 JPEG_SUFFIXES = frozenset({".jpg", ".jpeg"})
+# Files and folders an OS leaves behind, never part of a chapter: macOS's `__MACOSX/` tree in a zip made with
+# Finder's Compress, its `._<name>` resource-fork twins (which keep an image suffix: `._1.jpg`) on non-Apple
+# drives, `.DS_Store`, and Windows' `Thumbs.db` / `desktop.ini`.
+_OS_METADATA_NAMES = frozenset({"__macosx", ".ds_store", "thumbs.db", "desktop.ini"})
+
+
+def is_os_metadata(name: str) -> bool:
+    """True for a file or folder name an operating system created on its own (see `_OS_METADATA_NAMES`)."""
+    return name.startswith("._") or name.casefold() in _OS_METADATA_NAMES
+
+
+def chapter_images(folder: Path) -> list[Path]:
+    """`list_images(folder)` without OS metadata files (a `._1.jpg` is not a page)."""
+    return [image for image in list_images(folder) if not is_os_metadata(image.name)]
 
 
 def _explicit_chapter_number(name: str) -> float | None:
@@ -83,7 +97,7 @@ def _plan_folder(source: Path, *, series: str | None, chapter: str | None) -> Im
     source = source.resolve()
     if not source.is_dir():
         raise ImportPlanError(f"source folder not found: {source}")
-    entries = list(source.iterdir())
+    entries = [entry for entry in source.iterdir() if not is_os_metadata(entry.name)]
     if not entries:
         raise ImportPlanError(f"source folder is empty: {source}")
 
@@ -113,7 +127,7 @@ def _plan_folder(source: Path, *, series: str | None, chapter: str | None) -> Im
         return plan_downloader_series(source, dirs, files, series=series, chapter=chapter)
     if dirs:
         return _plan_folder_of_folders(source, dirs, series=series, chapter=chapter, warnings=warnings)
-    return _plan_flat(source, list_images(source), series=series, chapter=chapter, warnings=warnings)
+    return _plan_flat(source, chapter_images(source), series=series, chapter=chapter, warnings=warnings)
 
 
 def _plan_archive(source: Path, *, series: str | None, chapter: str | None) -> ImportPlan:
@@ -170,7 +184,7 @@ def _extract_member(archive: zipfile.ZipFile, member: zipfile.ZipInfo, dest: Pat
     if _UNSAFE_MEMBER_RE.search(member.filename):
         raise ImportPlanError(f"unsafe member name in {archive.filename}: {member.filename!r}")
     name = PurePosixPath(member.filename)
-    if member.is_dir() or not name.parts:
+    if member.is_dir() or not name.parts or any(is_os_metadata(part) for part in name.parts):
         return
     target = dest.joinpath(*name.parts).resolve()
     if target != dest and dest not in target.parents:
@@ -183,7 +197,7 @@ def _extract_member(archive: zipfile.ZipFile, member: zipfile.ZipInfo, dest: Pat
 def _unwrap(root: Path) -> Path:
     """Descend through a lone top-level wrapper folder (only when the root holds exactly that one child)."""
     while True:
-        entries = list(root.iterdir())
+        entries = [entry for entry in root.iterdir() if not is_os_metadata(entry.name)]
         if len(entries) == 1 and entries[0].is_dir():
             root = entries[0]
         else:
@@ -214,7 +228,8 @@ def _plan_folder_of_folders(
     return ImportPlan(
         series=series,
         items=[
-            ImportPlanItem(chapter=subdir.name, files=list_images(subdir)) for subdir in list_chapters(source)
+            ImportPlanItem(chapter=subdir.name, files=chapter_images(subdir))
+            for subdir in list_chapters(source)
         ],
         warnings=warnings,
     )

@@ -320,3 +320,39 @@ def test_files_to_convert_lists_only_non_jpegs(tmp_path: Path) -> None:
     assert [p.name for p in files_to_convert(plan)] == ["p2.png", "p3.bmp"]
     all_jpeg = plan_import(_make_zip(tmp_path / "alljpg.zip", {"Chapter 1/1.jpg": b"i"}))
     assert files_to_convert(all_jpeg) == []
+
+
+def test_a_zip_made_with_macos_finder_ignores_its_metadata(tmp_path: Path) -> None:
+    """Finder's Compress adds a `__MACOSX/` tree of `._<name>` twins and `.DS_Store`: none of it is a chapter."""
+    members: dict[str, bytes] = {"My Series/.DS_Store": b"\x00\x00\x00\x01Bud1"}
+    for chapter in ("Chapter 1", "Chapter 2"):
+        for page in ("1.jpg", "2.jpg"):
+            members[f"My Series/{chapter}/{page}"] = b"img"
+            members[f"__MACOSX/My Series/{chapter}/._{page}"] = b"\x00\x05\x16\x07"
+    plan = plan_import(_make_zip(tmp_path / "My Series.zip", members))
+    try:
+        assert [(item.chapter, [f.name for f in item.files]) for item in plan.items] == [
+            ("Chapter 1", ["1.jpg", "2.jpg"]),
+            ("Chapter 2", ["1.jpg", "2.jpg"]),
+        ]
+        assert plan.warnings == []
+    finally:
+        plan.cleanup()
+
+
+def test_resource_fork_twins_in_a_folder_are_not_pages(tmp_path: Path) -> None:
+    """A folder copied from a Mac to a USB drive carries `._1.jpg` next to `1.jpg`; converting it would fail."""
+    src = tmp_path / "raws" / "Chapter 3"
+    _write_files(src, ["1.jpg", "2.jpg", "._1.jpg", "._2.jpg", ".DS_Store", "Thumbs.db"])
+
+    plan = plan_import(src, series="S")
+
+    assert [f.name for f in plan.items[0].files] == ["1.jpg", "2.jpg"]
+    assert plan.warnings == []
+
+
+def test_a_folder_holding_only_os_metadata_is_empty(tmp_path: Path) -> None:
+    src = tmp_path / "raws" / "Chapter 4"
+    _write_files(src, [".DS_Store", "._1.jpg"])
+    with pytest.raises(ImportPlanError, match="empty"):
+        plan_import(src, series="S")
