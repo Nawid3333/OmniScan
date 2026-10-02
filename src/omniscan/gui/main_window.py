@@ -28,6 +28,7 @@ from omniscan.core.config import Config, load_config
 from omniscan.gui.import_view import ImportView
 from omniscan.gui.library_view import LibraryView
 from omniscan.gui.models_view import ModelsView
+from omniscan.gui.queue_view import QueueView
 from omniscan.gui.reader_view import ReaderView
 from omniscan.gui.run_view import RunView
 from omniscan.gui.services.hardware import HardwareService
@@ -38,7 +39,7 @@ from omniscan.gui.studio_view import StudioView
 from omniscan.gui.theme import MODE_PAGES, Appearance, set_role
 
 # new pages go last so the first five keep their indices (scripts/gui_screenshots.py hard-codes them).
-PAGES = ("Library", "Reader", "Run", "Models", "Settings", "Import", "Studio")
+PAGES = ("Library", "Reader", "Run", "Models", "Settings", "Import", "Studio", "Queue")
 # the platform's own icon set (Segoe Fluent on Windows, SF Symbols on macOS, the icon theme on Linux)
 _ICONS = {
     "Library": QIcon.ThemeIcon.FolderOpen,
@@ -48,13 +49,14 @@ _ICONS = {
     "Settings": QIcon.ThemeIcon.DocumentProperties,
     "Import": QIcon.ThemeIcon.DocumentOpen,
     "Studio": QIcon.ThemeIcon.InsertText,
+    "Queue": QIcon.ThemeIcon.ListAdd,
 }
 _SIDEBAR_WIDTH = 190
 _CONTENT_MARGINS = (24, 16, 24, 12)
 
 
 class MainWindow(QMainWindow):
-    """One window: sidebar over the five pages plus the status bar (device, running job)."""
+    """One window: sidebar over the pages plus the status bar (device, running job)."""
 
     def __init__(
         self,
@@ -80,6 +82,7 @@ class MainWindow(QMainWindow):
         self.settings_view = SettingsView(self._cfg, hardware=hardware_service, qsettings=self._qsettings)
         self.import_view = ImportView(importer_service or ImporterService(self._cfg))
         self.studio_view = StudioView(self._cfg)
+        self.queue_view = QueueView(self._cfg)
 
         self.stack = QStackedWidget()
         for view in (
@@ -90,6 +93,7 @@ class MainWindow(QMainWindow):
             self.settings_view,
             self.import_view,
             self.studio_view,
+            self.queue_view,
         ):
             self.stack.addWidget(view)
         self.sidebar = QListWidget()
@@ -140,6 +144,7 @@ class MainWindow(QMainWindow):
         self.library_view.chapter_opened.connect(self._on_chapter_opened)
         self.run_view.busy_changed.connect(self._on_busy_changed)
         self.studio_view.busy_changed.connect(self._on_busy_changed)
+        self.queue_view.busy_changed.connect(self._on_busy_changed)
         self.settings_view.settings_changed.connect(self._reload_config)
         self.settings_view.appearance_changed.connect(self.apply_mode)
         self.reader_view.reading_changed.connect(self._on_reading_changed)
@@ -206,6 +211,7 @@ class MainWindow(QMainWindow):
         self.settings_view.reconfigure(self._cfg)
         self.import_view.reconfigure(ImporterService(self._cfg))
         self.studio_view.reconfigure(self._cfg)
+        self.queue_view.reconfigure(self._cfg)
         self._show_device()
 
     # ------------------------------------------------------------------ internals

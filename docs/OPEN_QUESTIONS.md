@@ -25,6 +25,14 @@ Each has the **default I will use until you answer**, so nothing is blocked unle
 | X3 | **Accounts for uploads**: anonymous, or a free account (needed for deletion requests and group roles)? | X4 design | Account required |
 | ~~X4~~ | ~~Page images in contributions~~ | — | **Decided 2026-09-27: full pages + corrections, on by default with a clear opt-out. See Decisions.** |
 
+## G. Running without a strong GPU (2026-10-02, `docs/CLOUD_MODE.md`)
+
+| ID | Question | Blocks / why it matters | Default until answered |
+|---|---|---|---|
+| G1 | **Hosted service or bring-your-own?** Should OmniScan ever offer a hosted "cloud" (accounts, a GPU server the project runs, billing), or only connect to the user's own cloud accounts (Ollama Cloud, an OpenAI-compatible key) and to a group's own GPU server? | Whether C in `docs/CLOUD_MODE.md` (remote worker) grows into a product | Bring-your-own only: light local mode + cloud translation, remote worker for groups |
+| G2 | **Which cloud providers first** for translation (and later OCR): Ollama Cloud only (today), OpenAI-compatible endpoints, DeepL/Google as judge candidates? | The profile types to build (D) | Ollama Cloud, then one OpenAI-compatible profile type |
+| G3 | **Cloud OCR of pages**: may page crops of copyrighted works go to a cloud vision model for OCR (B), under the same terms as cloud translation (C3)? | Whether a CPU-only machine can be fast, not just possible | Local OCR only until answered |
+
 ## B. Platforms, distribution and the universal app
 
 | ID | Question | Blocks / why it matters | Default until answered |

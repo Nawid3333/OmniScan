@@ -21,8 +21,21 @@ from typing import Protocol
 
 from omniscan.core.config import get_config, series_config
 from omniscan.core.paths import ChapterPaths, SeriesPaths
-from omniscan.core.schemas import Artifact, FinalArtifact, LayoutArtifact, Region, RegionsArtifact
+from omniscan.core.schemas import (
+    Artifact,
+    BBox,
+    FinalArtifact,
+    LayoutArtifact,
+    Region,
+    RegionKind,
+    RegionsArtifact,
+)
 from omniscan.edits import store
+from omniscan.edits.apply import match_layout_edits
+
+LayoutFields = dict[
+    str, object
+]  # LayoutEdit's style fields (font, size_px, color, …) as the Studio sets them
 
 
 def _load[T: Artifact](cls: type[T], path: Path) -> T | None:
@@ -55,6 +68,7 @@ class StudioRow:
     edited: bool  # the region or its English was changed by hand (saved or not)
     speaker: str = ""  # who says the line (translate/voices.py), "" when nobody is set
     status: str = "todo"  # the line's review state: todo, edited or checked (edits.store.line_statuses)
+    lettered: bool = False  # the lettering was set by hand (saved or not)
 
 
 class StudioSession:
@@ -92,7 +106,11 @@ class StudioSession:
         self._status: dict[str, store.LineStatus] = (
             store.line_statuses(self.paths, self._edited) if readable else {}
         )
+        self._saved_layouts: dict[str, LayoutFields] = self._read_layouts() if readable else {}
         self._sources: dict[str, str] = {}
+        self._boxes: dict[str, BBox] = {}
+        self._kinds: dict[str, RegionKind] = {}
+        self._layouts: dict[str, LayoutFields | None] = {}  # None: back to the typesetter's lettering
         self._speakers: dict[str, str] = {}  # "": no speaker
         self._english: dict[str, str | None] = {}  # None: back to the judge's line
         self._removed: list[str] = []
@@ -104,11 +122,31 @@ class StudioSession:
         """Whether detection has run for this chapter (there is something to edit)."""
         return bool(self._all)
 
+    def _read_layouts(self) -> dict[str, LayoutFields]:
+        """region id -> its saved hand lettering's style fields (edits.json's layout edits, matched to the
+        current regions like the typeset stage matches them)."""
+        try:
+            edits = store.load_edits(self.paths)
+        except OSError, ValueError:
+            return {}
+        claims = match_layout_edits(self._all, edits)
+        return {
+            region_id: edits.layout[index].model_dump(exclude={"region_id", "anchor"}, exclude_none=True)
+            for index, region_id in claims.items()
+        }
+
     @property
     def dirty(self) -> bool:
         """Whether there are unsaved changes."""
         return bool(
-            self._sources or self._speakers or self._english or self._removed or self._pending_checks()
+            self._sources
+            or self._speakers
+            or self._english
+            or self._removed
+            or self._boxes
+            or self._kinds
+            or self._layouts
+            or self._pending_checks()
         )
 
     def regions(self) -> list[Region]:
@@ -117,13 +155,32 @@ class StudioSession:
         return [self._pending(region) for region in self._all if region.id not in removed]
 
     def _pending(self, region: Region) -> Region:
-        """`region` with its unsaved source text and speaker applied."""
+        """`region` with its unsaved source text, speaker, box and kind applied."""
         update: dict[str, object] = {}
         if region.id in self._sources:
             update["text"] = self._sources[region.id]
         if region.id in self._speakers:
             update["speaker"] = self._speakers[region.id] or None
+        if region.id in self._boxes:
+            update["bbox"] = self._boxes[region.id]
+        if region.id in self._kinds:
+            update["kind"] = self._kinds[region.id]
         return region.model_copy(update=update) if update else region
+
+    def pages(self) -> list[int]:
+        """The slice indices that hold a remaining region, ascending."""
+        return sorted({region.slice_index for region in self.regions()})
+
+    def counts(self) -> dict[str, int]:
+        """How many lines are todo, edited and checked (as a save would leave them)."""
+        counts = {"todo": 0, "edited": 0, "checked": 0}
+        for row in self.rows():
+            counts[row.status] += 1
+        return counts
+
+    def machine_line(self, region_id: str) -> str:
+        """The judge's own English line for a region ("" before translation)."""
+        return self._machine.get(region_id, "")
 
     def translations(self) -> dict[str, str]:
         """The effective English per region: the judge's lines with the hand-written ones on top."""
@@ -155,6 +212,7 @@ class StudioSession:
                     edited=region.id in self._edited or unsaved,
                     speaker=region.speaker or "",
                     status=self._row_status(region.id, unsaved, pending),
+                    lettered=self.layout_of(region.id) is not None,
                 )
             )
         return rows
@@ -213,6 +271,65 @@ class StudioSession:
         else:
             self._speakers[region_id] = name.strip()
 
+    def set_bbox(self, region_id: str, bbox: BBox) -> None:
+        """Move or resize a region's text box (strip space); the OCR lines become one line of this box."""
+        self._require(region_id)
+        saved = next(region.bbox for region in self._all if region.id == region_id)
+        if bbox == saved:
+            self._boxes.pop(region_id, None)
+        else:
+            self._boxes[region_id] = bbox
+
+    def set_kind(self, region_id: str, kind: RegionKind) -> None:
+        """Make a region bubble text, free text, a sound effect or a watermark."""
+        self._require(region_id)
+        saved = next(region.kind for region in self._all if region.id == region_id)
+        if kind == saved:
+            self._kinds.pop(region_id, None)
+        else:
+            self._kinds[region_id] = kind
+
+    def layout_of(self, region_id: str) -> LayoutFields | None:
+        """A region's hand-set lettering (style fields, saved and unsaved merged), None when the typesetter
+        letters it."""
+        if region_id in self._layouts:
+            return self._layouts[region_id]
+        return self._saved_layouts.get(region_id)
+
+    def set_layout(self, region_id: str, fields: LayoutFields) -> None:
+        """Set some of a region's lettering by hand (LayoutEdit's style fields: font, size_px, color, stroke_px,
+        stroke_color, align, angle, box, lines, hidden); fields not given keep their hand-set value, so one
+        dialog can restyle many regions at once. A field set to None goes back to the typesetter's choice."""
+        self._require(region_id)
+        merged = dict(self.layout_of(region_id) or {})
+        for key, value in fields.items():
+            if value is None:
+                merged.pop(key, None)
+            else:
+                merged[key] = value
+        if merged == self._saved_layouts.get(region_id):
+            self._layouts.pop(region_id, None)
+        else:
+            self._layouts[region_id] = merged
+
+    def revert_layout(self, region_id: str) -> None:
+        """Give a region back to the typesetter (drops its hand lettering on save)."""
+        self._require(region_id)
+        if region_id in self._saved_layouts:
+            self._layouts[region_id] = None
+        else:
+            self._layouts.pop(region_id, None)
+
+    def add_region(self, bbox: BBox, kind: RegionKind = "bubble_text", text: str = "") -> str:
+        """Draw a new region (text the detector missed); unsaved changes are saved first and the new region
+        is written at once, as its own undo step. Returns its id (m0001, …)."""
+        self.save()
+        direction = self._direction if self._direction is not None else self._series_direction()
+        self._start_ocr_json()
+        region = store.add_region(self.paths, bbox, direction=direction, kind=kind, text=text)
+        self._reload()
+        return region.id
+
     def set_translation(self, region_id: str, text: str) -> None:
         """Set a region's English line; setting it back to the machine's line clears the hand-written one."""
         self._require(region_id)
@@ -232,8 +349,14 @@ class StudioSession:
         self._checks[region_id] = checked
 
     def _unsaved(self, region_id: str) -> bool:
-        """Whether the region has an unsaved source text, speaker or English line."""
-        return region_id in self._sources or region_id in self._speakers or region_id in self._english
+        """Whether the region has an unsaved source text, speaker, box, kind or English line."""
+        return (
+            region_id in self._sources
+            or region_id in self._speakers
+            or region_id in self._boxes
+            or region_id in self._kinds
+            or region_id in self._english
+        )
 
     def _rewrites(self, region_id: str) -> bool:
         """Whether the region has an unsaved source text or English line (which a saved check does not approve)."""
@@ -256,6 +379,9 @@ class StudioSession:
             self._removed.append(region_id)
         self._sources.pop(region_id, None)
         self._speakers.pop(region_id, None)
+        self._boxes.pop(region_id, None)
+        self._kinds.pop(region_id, None)
+        self._layouts.pop(region_id, None)
         self._english.pop(region_id, None)
         self._checks.pop(region_id, None)
 
@@ -269,14 +395,21 @@ class StudioSession:
         )
         self._start_ocr_json()
         with store.edit_group(self.paths):  # one save is one undo step
-            for region_id in {*self._sources, *self._speakers}:
+            for region_id in {*self._sources, *self._speakers, *self._boxes, *self._kinds}:
                 store.update_region(
                     self.paths,
                     region_id,
                     direction=direction,
+                    kind=self._kinds.get(region_id),
+                    bbox=self._boxes.get(region_id),
                     text=self._sources.get(region_id),
                     speaker=self._speakers.get(region_id),
                 )
+            for region_id, fields in self._layouts.items():
+                if fields is None:
+                    store.revert_layout(self.paths, region_id)
+                else:
+                    store.set_layout(self.paths, region_id, dict(fields))
             for region_id, line in self._english.items():
                 if line is None:
                     store.revert_translation(self.paths, region_id, direction=direction)
@@ -290,7 +423,14 @@ class StudioSession:
                 if ids:
                     store.set_checked(self.paths, ids, checked=checked)
         count = (
-            len(self._sources) + len(self._speakers) + len(self._english) + len(self._removed) + len(pending)
+            len(self._sources)
+            + len(self._speakers)
+            + len(self._boxes)
+            + len(self._kinds)
+            + len(self._layouts)
+            + len(self._english)
+            + len(self._removed)
+            + len(pending)
         )
         self._reload()
         return count

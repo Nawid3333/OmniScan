@@ -1,5 +1,11 @@
 # Next session — work plan and builder queue
 
+> **2026-10-02:** the owner restarted with "version 1.0" as the goal (a tool translators can use end to end). The
+> desktop Studio and a Queue page were rebuilt in a cloud session (top of `docs/CHECKPOINT.md`); the first thing on
+> the owner's PC is still the real-chapter pass below, now also through the desktop Studio (`omniscan gui` → Studio →
+> move a box, Translate, Lettering…, Preview, Re-letter) and the Queue page. The no-GPU / cloud question is explored
+> in `docs/CLOUD_MODE.md` and waits on questions G1–G3.
+
 > **Development paused on 2026-09-25** (owner's decision; back in some years or when the program is needed).
 > Start with the "Development paused" section at the top of `docs/HANDOFF.md` — it has the state and the resume steps.
 

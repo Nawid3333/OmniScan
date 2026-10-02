@@ -77,8 +77,10 @@ def test_pages_in_sidebar_order(qapp: QApplication, cfg: Config, tmp_path: Path)
     qsettings = QSettings(str(tmp_path / "gui.ini"), QSettings.Format.IniFormat)
     window = _window(cfg, qsettings)
 
-    assert window.sidebar.count() == 7
-    for index, name in enumerate(("Library", "Reader", "Run", "Models", "Settings", "Import", "Studio")):
+    assert window.sidebar.count() == 8
+    for index, name in enumerate(
+        ("Library", "Reader", "Run", "Models", "Settings", "Import", "Studio", "Queue")
+    ):
         window.show_page(index)
         assert window.stack.currentIndex() == index
         assert window.sidebar.item(index).text() == name

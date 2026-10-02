@@ -148,6 +148,11 @@ inpaint patches, layout), so every manual change is just a better version of a s
 - Not started: the app itself (candidates: Qt for Android/iOS from this code base, or Flutter), sync of reading
   progress, and serving the library over the LAN.
 
+### X7 — Runs on a weak PC (explored 2026-10-02, `docs/CLOUD_MODE.md`)
+A "light" local preset (CPU torch, PP-OCRv5 mobile, cloud translation, LaMa off), an OpenAI-compatible
+translation profile type, a cloud vision model as an OCR engine once qualified, and the desktop app talking
+to a remote `omniscan serve` worker for groups. Waits on questions G1–G3.
+
 ### X5 — Sources and languages
 - Use the downloader being built in the `manhwa-manga-downloader` repository as an optional source for
   `omniscan import` (a plug-in, not a hard dependency), keeping the existing legal boundary (no DRM platforms).

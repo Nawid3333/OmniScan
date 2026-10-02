@@ -1657,7 +1657,7 @@ uv run omniscan gui          # or: uv run python -m omniscan.gui
 
 Without the extra installed the command prints one line naming the extra and exits 2.
 
-The window has seven pages in the left sidebar (also `Ctrl+1`…`Ctrl+7`; Quick mode hides Models and Studio). The status bar shows the
+The window has eight pages in the left sidebar (also `Ctrl+1`…`Ctrl+8`; Quick mode hides Models, Studio and Queue). The status bar shows the
 configured GPU device and the job state; window size and the last open page are remembered across
 restarts.
 
@@ -1738,18 +1738,49 @@ archives, since there both extraction and the archive itself would need separate
 
 **Studio** is the translator's workbench for one chapter (after detection and OCR have run). The raw strip is on
 the left with every text region outlined; the table on the right has one row per region: page, kind, source
-text, English and issues. Click a box to jump to its row, or a row to jump to its box.
+text, English, status (`todo` / `edited` / `checked`, plus `lettered` when its lettering is hand-set) and
+issues. Click a box to jump to its row, or a row to jump to its box. Several rows can be selected at once
+(Ctrl/Shift-click) and every action below applies to all of them.
 
-- Double-click a **Source** cell to fix the OCR text, or an **English** cell to write your own line (the
-  machine's line stays in the tooltip). `Remove box` deletes a false detection.
+- **Pages and chapters.** `Page` steps through the pages that hold text (`Page Up` / `Page Down`; `Only this page`
+  shows just its rows), the `◀` `▶` next to the chapter switch chapters (`Ctrl+Shift+Left` / `Right`), and the
+  counter on the right says how many lines are still `todo`, `edited` and `checked`.
+- **Boxes.** Drag the selected box to move it, drag one of its eight handles to resize it, or nudge it with the
+  arrow keys (Shift: 10 px). `Draw box` (`Ctrl+B`, or hold Shift while dragging) draws a region the detector
+  missed, of the kind picked in the `Kind…` menu; it is saved at once as its own undo step. The `Kind…` menu
+  turns the selected regions into bubble text, free text, a sound effect or a watermark; `Remove box`
+  (`Delete`) drops false detections.
+- **Text.** Double-click a **Source** cell to fix the OCR text, or an **English** cell to write your own line (the
+  machine's line stays in the tooltip). `Read again` reads the selected box with the series' OCR engine (the
+  models load for the read); `Translate` asks the translation model — every enabled profile, or the one picked
+  next to it — for the selected lines, with the chapter's neighbouring lines, glossary, story and learned memory
+  as context; both put their result into the table, to keep with `Save` or overwrite. `Revert English` goes back
+  to the machine's line. `Mark checked` / `Unmark` approve lines for proofreading (the status column).
+- **Lettering…** sets the font, size, colour, outline, alignment, angle or hides the lettering of the selected
+  regions. Only the styles you tick change, so one dialog can give twenty balloons the same size and leave their
+  colours alone; *Give the lettering back to the typesetter* drops every hand-set style.
 - `Check` runs the automatic quality check: lines with no English, Korean/Chinese/Japanese left in the English,
   lettering that does not fit its balloon, lines the judge was unsure about or that miss a locked glossary term,
-  and English far longer than the source. `Only lines with issues` hides the rest.
-- `Save` records your changes in the chapter's `edits.json`, the same edits the web Studio and `omniscan edit`
-  make (see "Studio: editing by hand" below): they are applied to `ocr.json` / `final.json` at once, kept by
-  every re-run, learned from, and one `Save` is one undo step. Nothing leaves your computer.
+  English far longer than the source, and typos (`Not a typo` accepts the selected lines' unknown words for the
+  series). `Only lines with issues` hides the rest.
+- `Preview` shows, between the strip and the table, the current page as the release will look — cleaned,
+  hand cleanup and the lettering with every saved edit — rendered on the spot (CPU) and scrolling with the raw
+  strip. It re-renders after a save, undo, redo or re-letter.
+- `Save` (`Ctrl+S`) records your changes in the chapter's `edits.json`, the same edits the web Studio and
+  `omniscan edit` make (see "Studio: editing by hand" below): they are applied to `ocr.json` / `final.json` at
+  once, kept by every re-run, learned from, and one `Save` is one undo step. `Undo` (`Ctrl+Z`) and `Redo`
+  (`Ctrl+Y`) walk the chapter's shared edit history. Nothing leaves your computer.
 - `Re-letter` saves, then re-runs `typeset` and `export` for the chapter, so the Reader shows the new output. A
-  changed source line needs a translate/judge run (Run page) before the machine's English follows it.
+  changed source line needs a translate/judge run (Run page) — or `Translate` — before the English follows it.
+
+**Queue** is the batch page: the same job queue as `omniscan queue` (one SQLite file, `work_root/queue.db`).
+Pick a series, all or some of its chapters, the stages, a priority and `Force re-run`, then `Add job`; the
+table lists every job with its status, attempts, stages, chapters and last error. `Run queue` drains the queue
+on a background thread — every queued job, highest priority first, one at a time, until the queue is empty —
+and the status bar shows `job: running` meanwhile; `Pause` / `Resume` / `Cancel` / `Retry` act on the selected
+job and `Clear finished` deletes the done and cancelled ones (failed jobs stay so you can retry them). Jobs
+survive restarts. Exactly one worker per queue: do not run `omniscan queue run` or `omniscan serve` on the
+same library while the page is draining.
 
 ## Studio: editing by hand
 

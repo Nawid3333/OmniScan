@@ -3,6 +3,37 @@
 > **Development paused on 2026-09-25** (owner's decision; back in some years or when the program is needed).
 > Start with the "Development paused" section at the top of `docs/HANDOFF.md` — it has the state and the resume steps.
 
+## 2026-10-02 session (director, cloud session on branch `claude/loving-tesla-66luul`, no card)
+Owner: bring OmniScan and the downloader "to a version 1.0", usable as a tool by translators of manhwa, manhua
+and manga — project management with batch processing and page navigation, smooth text-box manipulation,
+multi-selection for styles, undo/redo, overriding the AI's OCR and translation, and a preview of the output.
+Done, CPU-verified in this container (Python 3.14.8, the PyPI torch wheel standing in for `cpu`; full
+`pytest -m "not gpu"`, ruff and pyright clean):
+1. **Desktop Studio rebuilt** (`gui/studio_view.py`): multi-row selection with every action applying to all
+   selected rows (remove, kind, mark checked / unmark, revert English, lettering styles, translate); page
+   navigation (`Page` spinner, Page Up/Down, "only this page", prev/next chapter, todo/edited/checked
+   counter); Undo/Redo over the chapter's shared history; `Translate` (on-demand, every enabled profile or a
+   picked one) and `Read again` (OCR) on worker threads whose results land in the table to keep on Save;
+   `Lettering…` dialog (`gui/lettering_dialog.py`: tick only the styles to change, so one dialog restyles
+   twenty balloons); `Preview` strip rendering the current page with `typeset/page_preview.py` on a worker
+   thread, scroll-linked to the raw strip; status column with `lettered`.
+2. **Box editing on the canvas** (`gui/strip_view.py`): the selected box moves by drag, resizes by eight
+   handles, nudges with the arrow keys; `Draw box` / Shift-drag draws a new region; in-memory tiles
+   (`provide_image`) for the preview.
+3. **Session layer** (`edits/session.py`): pending boxes, kinds and hand lettering (merged per region,
+   `None` drops a field), `add_region` (saves pending edits first, then its own undo step), `pages()`,
+   `counts()`, `machine_line()`; the Qt-free `gui/services/studio.py` wraps translate-now, read-again, the
+   page renderer and the fonts list.
+4. **Cloud / no-GPU exploration** written up in `docs/CLOUD_MODE.md` (what exists, what is heavy, options A–E,
+   a recommendation) with questions G1–G3 in `docs/OPEN_QUESTIONS.md` and X7 in the roadmap.
+5. The downloader (`manhwa-manga-downloader`) got Madara, MangaDex and a best-effort generic driver, content
+   sniffing for unknown domains and a non-interactive CLI (see that repository's commits).
+Not done here (no GPU, no Hugging Face, no Ollama in the container): running the Studio against a real
+chapter with the real models; the real-chapter lettering pass of 2026-09-25 is still the first thing to do on
+the owner's PC. Next for the Studio: the lettering *box* on the canvas (today only the region box is
+draggable; the lettering box is set through the dialog's typesetter), hand cleanup (brush) in the desktop app,
+and a Queue page for batch jobs (`omniscan queue` exists on the CLI).
+
 ## 2026-09-25 session (director, cloud session on branch `claude/epic-fermi-90xyvh`, no card)
 Owner: "make it … on the level of when a company translates manhwa and manga … no weird artefacts, good font
 matching and SFX text stylistically matched … the end result is what matters and how it looks". Done, all
