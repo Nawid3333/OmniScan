@@ -1514,6 +1514,12 @@ Run the web app: the API and, once built (`npm run build` in `webui/`), the Stud
 | `--ui` / `--no-ui` | serve the built web UI at `/` too. Default: on (API only while `webui/dist` is not built) |
 | `--open` | open the Studio in the browser |
 
+The server answers only requests addressed to the names it is reached by: `localhost`, `127.0.0.1`, `::1` and
+the `--host` value (anything else gets `400 Invalid host header`). That stops a web page from reaching the API
+through DNS rebinding, i.e. pointing its own domain at `127.0.0.1`. Binding every interface
+(`--host 0.0.0.0` or `::`) turns the check off, because the machine's LAN names are not known. Only do that on a
+network you trust: the API has no login.
+
 Serves existing artifacts read-only: `/api/series`, `/api/series/{s}/chapters`,
 `/api/series/{s}/chapters/{c}/ingest`, `/api/series/{s}/chapters/{c}/slices`,
 `/api/series/{s}/chapters/{c}/ocr` (the OCR stage's `ocr.json`),

@@ -37,7 +37,7 @@ from omniscan.core.schemas import (
 )
 from omniscan.glossary.store import GlossaryStore
 from omniscan.inpaint.patches import save_patches
-from omniscan.web.app import create_app
+from omniscan.web.app import create_app, host_name, serve_hosts
 
 SERIES = "Solo Leveling"
 CHAPTER = "Chapter 1"
@@ -1282,3 +1282,58 @@ def test_run_worker_off_by_default_leaves_jobs_queued(tmp_path: Path) -> None:
         job_id = response.json()["job_id"]
         time.sleep(0.2)
         assert client.get(f"/api/jobs/{job_id}").json()["status"] == "queued"
+
+
+# ---- Host allowlist (DNS rebinding) -----------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("header", "name"),
+    [
+        ("localhost:8000", "localhost"),
+        ("127.0.0.1", "127.0.0.1"),
+        ("[::1]:8000", "::1"),
+        ("LocalHost", "localhost"),
+    ],
+)
+def test_host_name_strips_the_port(header: str, name: str) -> None:
+    assert host_name(header) == name
+
+
+def test_serve_answers_only_the_names_it_is_reached_by() -> None:
+    assert serve_hosts("127.0.0.1") == ("localhost", "127.0.0.1", "::1")
+    assert serve_hosts("192.168.1.5") == ("localhost", "127.0.0.1", "::1", "192.168.1.5")
+    assert (
+        serve_hosts("0.0.0.0") is None and serve_hosts("::") is None
+    )  # every interface: its LAN names are unknown
+
+
+def test_a_rebound_host_name_is_refused(tmp_path: Path) -> None:
+    """A page that points its own domain at 127.0.0.1 sends that domain as the Host: it must not reach the API."""
+    client = TestClient(create_app(make_cfg(tmp_path), allowed_hosts=serve_hosts("127.0.0.1")))
+
+    refused = client.get("/api/series", headers={"host": "rebind.attacker.example:8000"})
+    assert refused.status_code == 400 and refused.text == "Invalid host header"
+    for host in ("localhost:8000", "127.0.0.1:8000", "[::1]:8000"):
+        assert client.get("/api/series", headers={"host": host}).status_code == 200
+
+
+def test_serve_passes_its_host_allowlist(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import uvicorn
+
+    import omniscan.cli
+    import omniscan.web.app
+
+    built: dict[str, object] = {}
+    real_create_app = omniscan.web.app.create_app
+
+    def recording_create_app(cfg: Config, **kwargs: object):
+        built.update(kwargs)
+        return real_create_app(cfg, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(omniscan.cli, "get_config", lambda: make_cfg(tmp_path))
+    monkeypatch.setattr(omniscan.web.app, "create_app", recording_create_app)
+    monkeypatch.setattr(uvicorn, "run", lambda *args, **kwargs: None)
+    omniscan.cli.cmd_serve(host="127.0.0.1", port=8000, reload=False, ui=False, open_browser=False)
+
+    assert built["allowed_hosts"] == ("localhost", "127.0.0.1", "::1")

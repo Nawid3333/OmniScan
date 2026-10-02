@@ -7,7 +7,7 @@ import binascii
 import io
 import mimetypes
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
@@ -18,10 +18,12 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import Field, ValidationError
+from starlette.datastructures import Headers
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from omniscan.cleanup import store as cleanup_store
 from omniscan.cleanup.lama_now import clean_with_lama
@@ -252,6 +254,50 @@ class NewRegionBody(Model):
     bubble_bbox: BBox | None = None
 
 
+LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "::1")
+_ALL_INTERFACES = frozenset({"", "0.0.0.0", "::"})
+
+
+def serve_hosts(bind: str) -> tuple[str, ...] | None:
+    """The Host names `omniscan serve` answers when bound to `bind`: the loopback names and `bind` itself.
+
+    None (any name) for a bind to every interface, whose LAN names this cannot know. Answering only the names the
+    server is reached by is what stops DNS rebinding: a web page that points its own domain at 127.0.0.1 sends
+    that domain as the Host and would otherwise read and change the library through the browser.
+    """
+    if bind.strip() in _ALL_INTERFACES:
+        return None
+    return tuple(dict.fromkeys((*LOOPBACK_HOSTS, bind.strip().lower())))
+
+
+def host_name(header: str) -> str:
+    """The host part of a Host header, lower-cased: `localhost:8000` -> `localhost`, `[::1]:8000` -> `::1`."""
+    value = header.strip().lower()
+    if value.startswith("["):
+        end = value.find("]")
+        return value[1:end] if end != -1 else value
+    return value.rsplit(":", 1)[0] if value.count(":") == 1 else value
+
+
+class HostAllowlist:
+    """ASGI middleware: refuse (400) any request whose Host header is not one of `hosts`."""
+
+    def __init__(self, app: ASGIApp, hosts: Iterable[str]) -> None:
+        """Wrap `app`; `hosts` are host names without a port (`localhost`, `127.0.0.1`, `::1`)."""
+        self._app = app
+        self._hosts = frozenset(host.lower() for host in hosts)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Pass allowed requests on; answer the others with 400 before any route sees them."""
+        if (
+            scope["type"] in ("http", "websocket")
+            and host_name(Headers(scope=scope).get("host", "")) not in self._hosts
+        ):
+            await PlainTextResponse("Invalid host header", status_code=400)(scope, receive, send)
+            return
+        await self._app(scope, receive, send)
+
+
 def _under(root: Path, candidate: Path) -> bool:
     """True if `candidate` resolves to a location inside `root` (blocks `..` / absolute escapes)."""
     return candidate.resolve().is_relative_to(root.resolve())
@@ -292,6 +338,7 @@ def create_app(
     ] = find_on_page_now,  # tests fake it
     ui_dir: Path | None = None,
     lama_cleaner: Callable[..., CleanupPatch] = clean_with_lama,  # cleans a "lama" stroke; tests pass a fake
+    allowed_hosts: Sequence[str] | None = None,
 ) -> FastAPI:
     """Build the debug API app: series/chapter browsing + ingest/slices artifacts + raw pages.
 
@@ -301,7 +348,8 @@ def create_app(
     should leave it `False` (the default here) to avoid touching the GPU/queue at all. `chat_client`
     builds the LLM client of the on-demand translation route (tests pass a fake), `ocr_reader` reads one region
     again for the OCR route (tests pass a fake). `ui_dir` (the built web UI,
-    see `built_ui`) is served at `/`, so the API and the Studio share one address.
+    see `built_ui`) is served at `/`, so the API and the Studio share one address. `allowed_hosts` (`serve_hosts`)
+    limits the Host headers answered; None answers any.
     """
 
     @asynccontextmanager
@@ -323,6 +371,8 @@ def create_app(
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
         allow_headers=["*"],
     )
+    if allowed_hosts is not None:
+        app.add_middleware(HostAllowlist, hosts=allowed_hosts)
 
     def series_paths(series: str) -> SeriesPaths:
         """SeriesPaths for a validated series name (404 on any escape attempt)."""

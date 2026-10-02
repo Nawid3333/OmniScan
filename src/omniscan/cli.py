@@ -1250,7 +1250,7 @@ def cmd_serve(
 
     import uvicorn
 
-    from omniscan.web.app import UI_DIST, built_ui, create_app
+    from omniscan.web.app import UI_DIST, built_ui, create_app, serve_hosts
 
     ui_dir = built_ui() if ui else None
     url = f"http://{host}:{port}/"
@@ -1263,7 +1263,7 @@ def cmd_serve(
             f"serve: API only at {url}api — the web UI is not built ({UI_DIST} has no index.html): "
             "run `npm install && npm run build` in webui/ once, or `npm run dev` there while developing"
         )
-    web_app = create_app(get_config(), run_worker=True, ui_dir=ui_dir)
+    web_app = create_app(get_config(), run_worker=True, ui_dir=ui_dir, allowed_hosts=serve_hosts(host))
     uvicorn.run(web_app, host=host, port=port, reload=reload)
 
 
