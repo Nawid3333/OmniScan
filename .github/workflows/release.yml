@@ -10,9 +10,9 @@
 # the first release keeps pyproject.toml's version). It is written into pyproject.toml,
 # src/omniscan/__init__.py and uv.lock, committed as "release: vX.Y.Z [skip ci]" (CI already passed
 # on everything in it, and [skip ci] keeps the commit from starting another release), tagged and
-# pushed. The GitHub release carries generated notes, the wheel and sdist and a SHA256SUMS that
-# `omniscan update` verifies downloads against. The platform zips (omniscan-<os>-<arch>.zip) come with
-# the packaging card (U4); until then `omniscan update download` reports that a release has no build.
+# pushed. The GitHub release carries generated notes, the wheel and sdist, the packaged desktop app for
+# Windows, macOS and Linux (omniscan-<os>-<arch>.zip, built by build.yml on the release commit) and a
+# SHA256SUMS over all of them that `omniscan update` verifies downloads against.
 #
 # Run by hand from the Actions tab to release main now, optionally forcing the bump level.
 #
@@ -138,17 +138,62 @@ jobs:
           fi
           echo "pushed=true" >> "$GITHUB_OUTPUT"
 
-      - name: Build
+      - name: Build the wheel and sdist
         if: steps.push.outputs.pushed == 'true' || steps.check.outputs.resume != ''
         run: |
+          git checkout -q "v${{ steps.version.outputs.version || steps.check.outputs.resume }}"
           uv build
+
+      - uses: actions/upload-artifact@v6
+        if: steps.push.outputs.pushed == 'true' || steps.check.outputs.resume != ''
+        with:
+          name: omniscan-python
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+    outputs:
+      # the version to publish (empty when there is nothing to release)
+      version: ${{ (steps.push.outputs.pushed == 'true' && steps.version.outputs.version) || steps.check.outputs.resume }}
+
+  # The packaged desktop app for every OS, built on the release commit (main's tip once the release
+  # commit is pushed; build.yml checks out the default branch).
+  apps:
+    needs: release
+    if: needs.release.outputs.version != ''
+    uses: ./.github/workflows/build.yml
+    permissions:
+      contents: read
+
+  publish:
+    needs: [release, apps]
+    if: needs.release.outputs.version != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: v${{ needs.release.outputs.version }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          mkdir -p dist
+          mv artifacts/* dist/
           cd dist
+          ls -la
           sha256sum -- * > ../SHA256SUMS
           cat ../SHA256SUMS
 
       - name: Publish the release
-        if: steps.push.outputs.pushed == 'true' || steps.check.outputs.resume != ''
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.version || steps.check.outputs.resume }}
+          VERSION: ${{ needs.release.outputs.version }}
         run: gh release create "v$VERSION" --verify-tag --title "OmniScan v$VERSION" --generate-notes dist/* SHA256SUMS

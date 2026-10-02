@@ -1682,6 +1682,31 @@ jikan: HTTP 504
 cover saved: ~/omniscan/library/Solo Leveling/_meta/cover.jpg (anilist)
 ```
 
+## Installing the packaged app
+
+Every release and every build of `main` produces one zip per platform — `omniscan-windows-x64.zip`,
+`omniscan-macos-arm64.zip`, `omniscan-linux-x64.zip` (the `build` workflow; `scripts/build_app.py` makes the
+same zip on your own PC with `uv run --with pyinstaller python scripts/build_app.py --smoke`). Unzip it anywhere:
+the folder holds **`OmniScan`** (the desktop app; `OmniScan.exe` on Windows, double-click it), **`omniscan`**
+(the command line, the same commands this guide describes), and the `config/` and `fonts/` folders. No Python,
+no `uv`, no Node is needed.
+
+What the packaged app contains and what it does not:
+
+- It runs on any PC: the build carries the CPU build of PyTorch, so every stage works everywhere, slowly on a
+  machine without a GPU. On first start open **Settings → Hardware** and press **Optimise for this PC** (or run
+  `omniscan tune --apply`): it sets the device, memory budget, OCR engine, batch sizes and the LaMa default to
+  what the machine can do.
+- GPU acceleration needs the matching PyTorch build (`omniscan tune` names it: `cuda`, `rocm-gfx1201`, `xpu`
+  or `mps`). Today that still means the developer install (`uv sync --extra <name> --extra gui`, see
+  "Requirements" in the README); downloading the GPU runtime into the packaged app on first start is the next
+  packaging step (`docs/ROADMAP.md`, X2).
+- Ollama (local or cloud) is still installed separately for translation; `omniscan doctor` says whether it is
+  reachable. The OCR, detection and inpainting models download on first use or with `omniscan models
+  download --required` (Models page).
+- The builds are not code-signed yet: Windows SmartScreen and macOS Gatekeeper warn on first start
+  ("More info → Run anyway"; on macOS right-click → Open, or `xattr -dr com.apple.quarantine OmniScan`).
+
 ## Desktop app
 
 `omniscan gui` opens a native desktop window over the same library and config the CLI uses. The GUI
@@ -1692,6 +1717,10 @@ uv run omniscan gui          # or: uv run python -m omniscan.gui
 ```
 
 Without the extra installed the command prints one line naming the extra and exits 2.
+
+The first start opens a **setup checklist** (also Settings → Hardware → `Setup checklist…`): what the PC offers
+and the tuning plan for it with `Optimise for this PC` (the same as `omniscan tune --apply`), a button to the
+Models page for the required downloads, and whether Ollama answers. Nothing is changed without a click.
 
 The window has eight pages in the left sidebar (also `Ctrl+1`…`Ctrl+8`; Quick mode hides Models, Studio and Queue). The status bar shows the
 configured GPU device and the job state; window size and the last open page are remembered across
@@ -1757,9 +1786,10 @@ plain name and one help line; hover the name for its config key (e.g. `gpu.devic
   `translation_profiles.toml`; ticking a profile enables it (written to the user file), and a
   translate run runs exactly the enabled profiles.
 - **Appearance** — OLED black (default) or light theme, the accent colour, and Quick / Standard / Pro mode.
-- **Hardware** — the machine snapshot from `hw detect` plus one row per catalog model that does not
-  fit (level, device, why). Detection runs when you open the tab (it imports torch) or on
-  `Re-detect`.
+- **Hardware** — the machine snapshot from `hw detect`, the tuning plan for it (`omniscan tune`) with
+  `Optimise for this PC`, which writes the plan's device, memory budget, OCR engine, batch sizes and LaMa
+  default to the config, `Setup checklist…` (the first-start dialog), plus one row per catalog model that does
+  not fit (level, device, why). Detection runs when you open the tab (it imports torch) or on `Re-detect`.
 
 A successful settings write reloads the config into every page (the Library re-scans, the Run page
 re-lists series). The window never touches `secrets.env`; translation runs read it exactly as the

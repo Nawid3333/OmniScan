@@ -123,4 +123,8 @@ def test_release_workflow() -> None:
     assert "scripts/release_version.py next" in steps_text
     assert "uv lock" in steps_text
     assert "[skip ci]" in steps_text  # the release commit must not start CI (and a release) again
-    assert "SHA256SUMS" in steps_text  # omniscan update verifies downloads against it
+    publish_text = "\n".join(str(step.get("run", "")) for step in data["jobs"]["publish"]["steps"])
+    assert "SHA256SUMS" in publish_text  # omniscan update verifies downloads against it
+    assert "gh release create" in publish_text
+    assert data["jobs"]["apps"]["uses"] == "./.github/workflows/build.yml"  # the platform zips
+    assert data["jobs"]["publish"]["needs"] == ["release", "apps"]

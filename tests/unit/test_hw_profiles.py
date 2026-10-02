@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 
 from omniscan.core.config import Config, get_config
@@ -130,7 +132,7 @@ def test_the_plan_for_each_profile(name: str) -> None:
     assert plan.overrides[("ocr", "engine")] == plan.ocr_engine
     assert (("gpu", "vram_budget_gib") in plan.overrides) == (plan.vram_budget_gib is not None)
     assert describe(plan)[0] == f"tier: {plan.tier}"
-    assert plan_json(plan)["overrides"]["gpu.device"] == plan.device
+    assert cast(dict[str, object], plan_json(plan)["overrides"])["gpu.device"] == plan.device
 
 
 @pytest.mark.parametrize("name", profiles.profile_names())

@@ -1,5 +1,10 @@
 # Next session — work plan and builder queue
 
+> **2026-10-02, later:** machine profiles + `omniscan tune` + the first-start checklist + the `build` and
+> `hardware-profiles` workflows landed (second entry at the top of `docs/CHECKPOINT.md`). On the owner's PC:
+> `uv run omniscan tune` (expect `rocm-gfx1201`, `cuda:1`, PaddleOCR-VL, LaMa on), then the real-chapter pass.
+> Next packaging step: the GPU runtime download into the packaged app (`docs/ROADMAP.md` X2).
+
 > **2026-10-02:** the owner restarted with "version 1.0" as the goal (a tool translators can use end to end). The
 > desktop Studio and a Queue page were rebuilt in a cloud session (top of `docs/CHECKPOINT.md`); the first thing on
 > the owner's PC is still the real-chapter pass below, now also through the desktop Studio (`omniscan gui` → Studio →

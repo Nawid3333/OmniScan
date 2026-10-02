@@ -83,6 +83,7 @@ class SettingsView(QWidget):
     """Tabbed settings editor; every successful write emits `settings_changed` once."""
 
     settings_changed = Signal()
+    welcome_requested = Signal()  # the user wants the first-run checklist again (Hardware tab button)
     appearance_changed = Signal(object)  # the new Appearance, after it was saved and applied
 
     def __init__(
@@ -555,8 +556,11 @@ class SettingsView(QWidget):
         set_role(self.plan_status_label, "muted")
         layout.addWidget(self.hardware_header_label)
         buttons = QHBoxLayout()
+        self.welcome_button = QPushButton("Setup checklist…", page)
+        self.welcome_button.setToolTip("The first-start checklist: hardware plan, models, Ollama")
         buttons.addWidget(self.hardware_button)
         buttons.addWidget(self.optimise_button)
+        buttons.addWidget(self.welcome_button)
         buttons.addStretch(1)
         layout.addLayout(buttons)
         layout.addWidget(self.plan_label)
@@ -572,6 +576,7 @@ class SettingsView(QWidget):
 
         self.hardware_button.clicked.connect(self._load_hardware)
         self.optimise_button.clicked.connect(self.apply_plan)
+        self.welcome_button.clicked.connect(self.welcome_requested)
         return page
 
     def apply_plan(self) -> int:

@@ -46,6 +46,14 @@ packaged into CBZ/PDF.
 "working" = usable from the CLI today. "module only" = the code and its own sub-commands exist, but no
 pipeline stage consumes it yet.
 
+## Download
+
+The `build` workflow packages the desktop app and the command line for Windows, macOS and Linux
+(`omniscan-<os>-<arch>.zip`: unzip, run `OmniScan`; no Python needed). See "Installing the packaged app"
+in [docs/USER_GUIDE.md](docs/USER_GUIDE.md). The packaged build runs on any PC on the CPU; **Settings →
+Hardware → Optimise for this PC** (or `omniscan tune --apply`) fits the settings to the machine, and the
+GPU builds of PyTorch still come from the developer install below.
+
 ## Requirements
 
 Windows, macOS or Linux. Real-hardware numbers are measured on the reference machine (Windows 11, AMD RX 9070 XT,

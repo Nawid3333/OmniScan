@@ -37,6 +37,7 @@ from omniscan.gui.services.models import ModelsService
 from omniscan.gui.settings_view import SettingsView
 from omniscan.gui.studio_view import StudioView
 from omniscan.gui.theme import MODE_PAGES, Appearance, set_role
+from omniscan.gui.welcome_dialog import OllamaCheck, WelcomeDialog
 
 # new pages go last so the first five keep their indices (scripts/gui_screenshots.py hard-codes them).
 PAGES = ("Library", "Reader", "Run", "Models", "Settings", "Import", "Studio", "Queue")
@@ -67,8 +68,9 @@ class MainWindow(QMainWindow):
         importer_service: Any | None = None,
         qsettings: QSettings | None = None,
         config_loader: Callable[[], Config] | None = None,
+        ollama_check: OllamaCheck | None = None,
     ) -> None:
-        """Build the shell; the services, QSettings and config loader are injectable for tests."""
+        """Build the shell; the services, QSettings, config loader and Ollama check are injectable for tests."""
         super().__init__()
         self._config_loader = config_loader or load_config
         self._cfg = cfg or self._config_loader()
@@ -79,7 +81,12 @@ class MainWindow(QMainWindow):
         self.reader_view = ReaderView(self._cfg, qsettings=self._qsettings)
         self.run_view = RunView(self._cfg)
         self.models_view = ModelsView(models_service or ModelsService(self._cfg))
-        self.settings_view = SettingsView(self._cfg, hardware=hardware_service, qsettings=self._qsettings)
+        self._hardware_service = hardware_service or HardwareService(self._cfg)
+        self._ollama_check = ollama_check
+        self.welcome_dialog: WelcomeDialog | None = None
+        self.settings_view = SettingsView(
+            self._cfg, hardware=self._hardware_service, qsettings=self._qsettings
+        )
         self.import_view = ImportView(importer_service or ImporterService(self._cfg))
         self.studio_view = StudioView(self._cfg)
         self.queue_view = QueueView(self._cfg)
@@ -147,12 +154,25 @@ class MainWindow(QMainWindow):
         self.queue_view.busy_changed.connect(self._on_busy_changed)
         self.settings_view.settings_changed.connect(self._reload_config)
         self.settings_view.appearance_changed.connect(self.apply_mode)
+        self.settings_view.welcome_requested.connect(self.show_welcome)
         self.reader_view.reading_changed.connect(self._on_reading_changed)
         self._was_maximized = False
 
         self._show_device()
         self._restore()
         self.apply_mode(self.settings_view.appearance)  # after restore: a hidden last page falls back
+        if not self._qsettings.value("welcome/shown", False, type=bool):
+            self.show_welcome()
+
+    def show_welcome(self) -> WelcomeDialog:
+        """Open the first-run checklist (hardware plan, models, Ollama); remembered as shown once closed."""
+        dialog = WelcomeDialog(self._hardware_service, ollama_check=self._ollama_check, parent=self)
+        dialog.plan_applied.connect(self._reload_config)
+        dialog.models_requested.connect(lambda: self.show_page(PAGES.index("Models")))
+        dialog.finished.connect(lambda _result: self._qsettings.setValue("welcome/shown", True))
+        self.welcome_dialog = dialog
+        dialog.show()
+        return dialog
 
     # ------------------------------------------------------------------ state
 

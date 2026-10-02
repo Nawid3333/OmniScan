@@ -1,0 +1,79 @@
+# build: the packaged desktop app for every OS (scripts/build_app.py: PyInstaller, one folder with the
+# desktop app and the command line, config and fonts next to them, one zip per platform).
+#
+# Runs on every push to main and every pull request that touches the app, and by hand. Each build is
+# smoke-tested (the packaged command line starts and plans for a simulated machine) before it is zipped,
+# and the zips are uploaded as workflow artifacts; release.yml attaches the same zips to a release. The
+# builds carry the `cpu` torch backend: they run on every PC, and `omniscan tune` names the GPU extra.
+
+name: build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "packaging/**"
+      - "scripts/build_app.py"
+      - "config/**"
+      - "fonts/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/build.yml"
+  pull_request:
+    paths:
+      - "packaging/**"
+      - "scripts/build_app.py"
+      - ".github/workflows/build.yml"
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  UV_LOCKED: "1"
+
+jobs:
+  app:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            key: linux-x64
+          - os: windows-latest
+            key: windows-x64
+          - os: macos-latest
+            key: macos-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0 (no floating major tags since v8: pinned)
+
+      - name: Qt runtime libraries (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q libegl1 libxkbcommon0 libfontconfig1 libgl1
+
+      - name: Sync (cpu + gui)
+        run: uv sync --extra cpu --extra gui
+
+      - name: Build and smoke-test
+        run: uv run --with pyinstaller==6.22.3 python scripts/build_app.py --smoke
+
+      - name: Check the zip name
+        run: test -f "dist/omniscan-${{ matrix.key }}.zip" && ls -la dist/*.zip
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: omniscan-${{ matrix.key }}
+          path: dist/omniscan-${{ matrix.key }}.zip
+          if-no-files-found: error
+          retention-days: 14
