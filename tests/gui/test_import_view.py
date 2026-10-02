@@ -17,6 +17,7 @@ from PySide6.QtWidgets import QApplication, QTreeWidgetItem
 
 from omniscan.gui.import_view import ImportView
 from omniscan.importer.execute import ImportResult
+from omniscan.importer.from_url import DownloadResult
 from omniscan.importer.plan import ImportPlan, ImportPlanError, ImportPlanItem
 from omniscan.legal import NOTICE
 
@@ -71,6 +72,13 @@ class FakeService:
             converted=["p2.png"],
         )
         self.execute_error: Exception | None = None
+        self.downloaded: list[tuple[str, str | None, str | None]] = []
+        self.download_threads: list[int] = []
+        self.download_release = threading.Event()
+        self.download_release.set()
+        self.download_finished = True
+        self.download_error: Exception | None = None
+        self.discarded: list[DownloadResult] = []
 
     def hardware_line(self) -> str:
         return self._hardware_line
@@ -81,6 +89,28 @@ class FakeService:
         if self.plan_error is not None:
             raise self.plan_error
         return self._canned
+
+    def download(
+        self, url: str, *, series: str | None = None, chapters: str | None = None, on_line: Any = None
+    ) -> tuple[ImportPlan, DownloadResult]:
+        self.downloaded.append((url, series, chapters))
+        self.download_threads.append(threading.get_ident())
+        on_line("Site: fake")
+        self.download_release.wait(WAIT_S)
+        if self.download_error is not None:
+            raise self.download_error
+        result = DownloadResult(
+            out_dir=Path("C:/work/_downloads/abc"),
+            series="fake",
+            complete=["num1_Chapter 1"],
+            incomplete=[] if self.download_finished else ["num10_Chapter 10"],
+            finished=self.download_finished,
+        )
+        return self._canned, result
+
+    def discard_download(self, result: DownloadResult) -> bool:
+        self.discarded.append(result)
+        return True
 
     def execute(self, plan: ImportPlan, *, move: bool = False, on_progress: Any = None) -> ImportResult:
         self.executed.append(plan)
@@ -491,3 +521,104 @@ def test_real_service_end_to_end_through_the_view(qapp: QApplication, tmp_path: 
     assert (tmp_path / "lib" / "Real Series" / "Chapter 1" / "1.jpg").is_file()
     assert (tmp_path / "lib" / "Real Series" / "Chapter 2" / "1.jpg").is_file()  # the PNG, converted
     assert not (tmp_path / "lib" / "Real Series" / "Chapter 2" / "1.png").exists()
+
+
+# ---------------------------------------------------------------- downloading a URL
+
+
+def downloaded_view(qapp: QApplication, service: FakeService) -> ImportView:
+    """A view whose URL download has finished and whose plan has loaded."""
+    view = view_of(qapp, service)
+    view.url_edit.setText("https://fake.test/series")
+    view.chapters_edit.setText("1-10")
+    view.download_button.click()
+    pump(qapp, lambda: view.tree.topLevelItemCount() > 0)
+    return view
+
+
+def test_download_button_needs_a_url(qapp: QApplication) -> None:
+    view = view_of(qapp, FakeService(plan(MIXED)))
+    assert not view.download_button.isEnabled()
+    view.url_edit.setText("https://fake.test/series")
+    assert view.download_button.isEnabled()
+
+
+def test_download_runs_on_a_worker_and_shows_the_plan(qapp: QApplication) -> None:
+    service = FakeService(plan(MIXED))
+    view = view_of(qapp, service)
+    view.series_edit.setText("Solo Leveling")
+    view.url_edit.setText("https://fake.test/series")
+    view.download_button.click()
+    pump(qapp, lambda: view.tree.topLevelItemCount() > 0)
+
+    assert service.downloaded == [("https://fake.test/series", "Solo Leveling", None)]
+    assert service.download_threads[0] != threading.get_ident()
+    assert chapter_texts(view)[0].startswith("Chapter 1")
+    assert not view.move_toggle.isEnabled()  # the download folder is removed after the import anyway
+    assert view.import_button.isEnabled()
+
+
+def test_download_messages_reach_the_status_line(qapp: QApplication) -> None:
+    service = FakeService(plan(MIXED))
+    service.download_release.clear()
+    view = view_of(qapp, service)
+    view.url_edit.setText("https://fake.test/series")
+    view.download_button.click()
+    pump(qapp, lambda: view.status_label.text() == "Downloading … Site: fake")
+
+    assert not view.download_button.isEnabled() and not view.plan_button.isEnabled()  # one task at a time
+    service.download_release.set()
+    pump(qapp, lambda: view.tree.topLevelItemCount() > 0)
+
+
+def test_download_failure_surfaces_red(qapp: QApplication) -> None:
+    service = FakeService(plan(MIXED))
+    service.download_error = ImportPlanError("can't find the downloader 'mangadl'")
+    view = view_of(qapp, service)
+    view.url_edit.setText("https://fake.test/series")
+    view.download_button.click()
+    pump(qapp, lambda: "ImportPlanError" in view.status_label.text())
+
+    assert view.status_label.property("role") == "error"
+    assert view.tree.topLevelItemCount() == 0 and not view.import_button.isEnabled()
+    assert view.download_button.isEnabled()  # the user can retry
+
+
+def test_a_finished_download_is_removed_after_its_import(qapp: QApplication) -> None:
+    service = FakeService(plan(MIXED))
+    view = downloaded_view(qapp, service)
+    assert service.downloaded == [("https://fake.test/series", None, "1-10")]
+
+    service.execute_release.set()
+    view.import_button.click()
+    pump(qapp, lambda: view.status_label.text().startswith("Imported:"))
+
+    assert [result.finished for result in service.discarded] == [True]
+    assert view.tree.topLevelItemCount() == 0  # its files are gone: nothing left to import twice
+    assert not view.import_button.isEnabled()
+
+
+def test_a_partial_download_is_kept_for_the_next_run(qapp: QApplication) -> None:
+    service = FakeService(plan(MIXED))
+    service.download_finished = False
+    view = downloaded_view(qapp, service)
+
+    service.execute_release.set()
+    view.import_button.click()
+    pump(qapp, lambda: view.status_label.text().startswith("Imported:"))
+
+    assert service.discarded == []
+    assert view.tree.topLevelItemCount() == 2
+
+
+def test_a_folder_plan_after_a_download_is_not_treated_as_one(qapp: QApplication) -> None:
+    service = FakeService(plan(MIXED))
+    view = downloaded_view(qapp, service)
+    view.set_source(Path("C:/raws"))
+    pump(qapp, lambda: len(service.planned) == 1 and view.tree.topLevelItemCount() > 0)
+    assert view.move_toggle.isEnabled()
+
+    service.execute_release.set()
+    view.import_button.click()
+    pump(qapp, lambda: view.status_label.text().startswith("Imported:"))
+    assert service.discarded == []

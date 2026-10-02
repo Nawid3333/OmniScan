@@ -122,3 +122,8 @@ examples = 5
 # share hand corrections (with the pages they were made on) so OmniScan improves; false opts out (here for this
 # machine, in a series.toml for that series). Nothing is uploaded yet: see "Contributing corrections" in the guide
 enabled = true
+
+[importer]
+# `omniscan import --from-url` runs manhwa-manga-downloader: its `mangadl` executable on PATH, a path to it,
+# or the whole command as a list, e.g. ["C:/mmd/.venv/Scripts/python.exe", "C:/mmd/main.py"]
+downloader = "mangadl"

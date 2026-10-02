@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -9,7 +10,7 @@ from typing import Any
 import pytest
 from PIL import Image
 
-from omniscan.core.config import Config, PathsConfig
+from omniscan.core.config import Config, ImporterConfig, PathsConfig
 from omniscan.gui.services.importer import (
     ImporterService,
     conversion_text,
@@ -20,7 +21,9 @@ from omniscan.gui.services.importer import (
     split_chapter,
 )
 from omniscan.importer.execute import execute_import
+from omniscan.importer.from_url import download_dir
 from omniscan.importer.plan import ImportPlan, ImportPlanItem, plan_import
+from tests.fixtures import fake_mangadl
 
 # ---------------------------------------------------------------- fixtures
 
@@ -96,6 +99,29 @@ def test_execute_writes_into_the_configured_library(tmp_path: Path) -> None:
 
     assert (tmp_path / "lib" / "My Series" / "Chapter 1" / "p1.jpg").is_file()
     assert result.chapters_written == ["Chapter 1", "Chapter 2"]
+
+
+def test_download_plans_what_the_downloader_finished_and_discard_removes_it(tmp_path: Path) -> None:
+    cfg = Config(
+        paths=PathsConfig(
+            library_root=tmp_path / "lib", work_root=tmp_path / "work", models_dir=tmp_path / "models"
+        ),
+        importer=ImporterConfig(downloader=[sys.executable, str(Path(fake_mangadl.__file__))]),
+    )
+    service = ImporterService(cfg)
+    lines: list[str] = []
+
+    plan, result = service.download("https://fake.test/complete", chapters="1-2", on_line=lines.append)
+
+    assert result.out_dir == download_dir(tmp_path / "work", "https://fake.test/complete")
+    assert plan.series == "solo-leveling" and [item.chapter for item in plan.items] == [
+        "Chapter 1",
+        "Chapter 2",
+    ]
+    assert lines == ["Site: fake (complete)"]
+    service.execute(plan)
+    assert service.discard_download(result) and not result.out_dir.exists()
+    assert (tmp_path / "lib" / "solo-leveling" / "Chapter 2" / "0001.jpg").is_file()
 
 
 def test_execute_reports_progress(tmp_path: Path) -> None:

@@ -136,6 +136,7 @@ Every key in `config/default.toml`:
 | `learn.min_count` | a word fix, a preferred wording or a deletion acts after this many matching corrections | yes |
 | `learn.examples` | how many similar lines of the translation memory each translation request shows the model | yes |
 | `share.enabled` | whether the series' hand corrections may be shared to improve OmniScan (on by default; see "Contributing corrections") | yes (`omniscan contribute export`) |
+| `importer.downloader` | how `omniscan import --from-url` runs manhwa-manga-downloader: the `mangadl` executable (found on PATH, the default), a path to it, or the whole command as a list, e.g. `["C:/mmd/.venv/Scripts/python.exe", "C:/mmd/main.py"]` | yes (`omniscan import --from-url`) |
 | `ollama.local_url` | local Ollama base URL | yes (`doctor`) |
 | `ollama.cloud_url` | Ollama cloud base URL | yes (`doctor`) |
 | `ollama.request_timeout_s` | per-request timeout | used by the LLM client module (no pipeline stage yet) |
@@ -240,11 +241,13 @@ them.
 
 | Argument/option | Meaning |
 |---|---|
-| `source` | folder, or `.zip`/`.cbz` archive (required) |
+| `source` | folder, or `.zip`/`.cbz` archive (required unless `--from-url` is given) |
 | `--series <str>` | override the destination series name |
 | `--chapter <str>` | override the destination chapter name |
 | `--move` | move instead of copy; delete the source after import |
 | `--dry-run` | print the plan without writing anything |
+| `--from-url <URL>` | download a series or chapter URL with manhwa-manga-downloader first, then import it (see below) |
+| `--chapters <RANGE>` | with `--from-url`: the chapters to download (`all`, `5`, `1-10`, `1,3,5-7`; default all) |
 
 Files whose name does not end in `.jpg`/`.jpeg` are converted to plain baseline JPEG (quality 95)
 on the way in — alpha is flattened over white and EXIF rotation is applied, exactly like the ingest
@@ -276,6 +279,33 @@ after the site's numeric id and MangaDex after the manga's UUID, so pass `--seri
 ```bash
 uv run omniscan import ../manhwa-manga-downloader/downloads/wfwf504/1234 --series "Solo Leveling" --dry-run
 ```
+
+**Straight from a URL (`--from-url`).** `import --from-url URL` runs the downloader for you and then imports
+what it downloaded, so there is no folder to find. The downloader stays a separate program: install
+[manhwa-manga-downloader](https://github.com/Nawid3333/manhwa-manga-downloader) so its `mangadl` command is on
+PATH, or set `[importer] downloader` in `config.toml` to its command (a list such as
+`["<its venv python>", "<its main.py>"]` runs it from a source checkout). OmniScan talks to it only through its
+documented `--json` result, and refuses a result version it does not know (update OmniScan then).
+
+- The download goes to `work_root/_downloads/<hash of the URL>`, the same folder every time for that URL.
+- Pages are downloaded as the site serves them and converted to JPEG once, by the import.
+- Only the chapters this run finished are imported. A chapter that is still missing pages after the
+  downloader's retries is left out with a warning; run the same command again to finish it. The downloader
+  resumes, so pages it already has are not downloaded again.
+- The folder is removed once a run finished every chapter and the import succeeded.
+- `--dry-run` still downloads but writes nothing to the library. The download is kept, so the real import that
+  follows does not download again.
+- The series is named after the downloader's series folder. wfwf504 and MangaDex use an id there, so pass
+  `--series`.
+- Exit 2 when the downloader is missing or fails (its error message is shown), or when nothing finished.
+  `--move` does not apply.
+
+```bash
+uv run omniscan import --from-url https://mangadex.org/title/<uuid> --chapters 1-5 --series "Hyouka" --dry-run
+```
+
+The same download is on the desktop app's import page: enter the URL (and optionally the chapters), press
+**Download and plan**, then fix and commit the plan as for a folder.
 
 The standalone GUI import page (`ImportView`, demoed by `scripts/gui_import_demo.py`) wraps the
 same pipeline with a plan preview you can fix before committing: rename the series, move or

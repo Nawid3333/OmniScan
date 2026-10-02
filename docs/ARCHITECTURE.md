@@ -176,6 +176,9 @@ host buffers + `non_blocking=True` for transfers (measured: pinned H2D 49 GB/s v
 `get_config()` merges defaults → `config/default.toml` → `~/.config/omniscan/config.toml` → env
 `OMNISCAN_<SECTION>__<KEY>`. Secrets (`OLLAMA_API_KEY`) come only
 from env or `~/.config/omniscan/secrets.env` via `get_secrets()`; never log them.
+`[importer] downloader` (`ImporterConfig`) is the command `omniscan import --from-url` runs (`importer/from_url.py`):
+manhwa-manga-downloader stays a subprocess plug-in, read only through its versioned `--json` result object
+(`schema` 1; a missing field reads as 1, any other value is refused).
 
 ## Render pass (inpaint → typeset → export)
 Stage outputs stay JSON / `.npz`; the pixels of the final chapter are produced only by `export`, which decodes the strip once and edits it in place.

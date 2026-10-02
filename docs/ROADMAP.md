@@ -159,6 +159,8 @@ to a remote `omniscan serve` worker for groups. Waits on questions G1–G3.
 ### X5 — Sources and languages
 - Use the downloader being built in the `manhwa-manga-downloader` repository as an optional source for
   `omniscan import` (a plug-in, not a hard dependency), keeping the existing legal boundary (no DRM platforms).
+  Done (#71): `omniscan import --from-url URL [--chapters RANGE]` and the desktop import page's URL field run
+  its `mangadl --json` as a subprocess (`importer/from_url.py`, `[importer] downloader`).
 - More target languages than English once the Studio exists (the prompts and glossary are already per language).
 
 ## Order

@@ -15,6 +15,15 @@ from omniscan.core.config import Config
 from omniscan.core.paths import chapter_number
 from omniscan.hw.detect import HardwareInfo, detect_hardware
 from omniscan.importer.execute import ImportResult, execute_import
+from omniscan.importer.from_url import (
+    DownloadResult,
+    LineSink,
+    discard_download,
+    download,
+    download_dir,
+    downloader_command,
+    plan_download,
+)
 from omniscan.importer.plan import ImportPlan, ImportPlanItem, files_to_convert, plan_import
 
 _Progress = Callable[[int, int | None], None]
@@ -40,6 +49,31 @@ class ImporterService:
     def plan(self, source: Path, *, series: str | None = None, chapter: str | None = None) -> ImportPlan:
         """Plan an import from a folder or .zip/.cbz archive (archives extract to a temp dir)."""
         return plan_import(source, series=series, chapter=chapter)
+
+    def download(
+        self,
+        url: str,
+        *,
+        series: str | None = None,
+        chapters: str | None = None,
+        on_line: LineSink | None = None,
+    ) -> tuple[ImportPlan, DownloadResult]:
+        """Download `url` with manhwa-manga-downloader into `work_root/_downloads/`, then plan what it finished.
+
+        `on_line` receives the downloader's messages as they arrive (on the calling worker thread).
+        """
+        command = downloader_command(self._cfg.importer.downloader)
+        dest = download_dir(self._cfg.paths.work_root, url)
+        result = download(url, dest, command=command, chapters=chapters, on_line=on_line)
+        return plan_download(result, series=series), result
+
+    def discard_download(self, result: DownloadResult) -> bool:
+        """Remove an imported download's folder; False when it could not be removed (it is then left in place)."""
+        try:
+            discard_download(result)
+        except OSError:
+            return False
+        return True
 
     def execute(
         self, plan: ImportPlan, *, move: bool = False, on_progress: _Progress | None = None
