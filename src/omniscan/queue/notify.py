@@ -26,8 +26,25 @@ def log_notifier(event: str, job: Job | None) -> None:
     log.info(message)
 
 
+def redacted_url(url: str) -> str:
+    """`url` with only its scheme and host kept: webhook URLs carry their secret in the path or query
+    (`https://discord.com/api/webhooks/<id>/<token>`), so a log line must never show the rest."""
+    parsed = httpx.URL(url)
+    return f"{parsed.scheme}://{parsed.host}/…" if parsed.host else "<webhook>"
+
+
+def _failure(exc: httpx.HTTPError) -> str:
+    """What went wrong, without the request URL httpx puts in its own messages."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"HTTP {exc.response.status_code}"
+    return f"{type(exc).__name__}: {exc}"
+
+
 def webhook_notifier(url: str, *, timeout: float = 5.0, client: httpx.Client | None = None) -> Notifier:
-    """POST each event as JSON to `url`; HTTP and transport errors are logged at WARNING and swallowed."""
+    """POST each event as JSON to `url`; HTTP and transport errors are logged at WARNING and swallowed.
+
+    The log names only the webhook's host (`redacted_url`): the rest of a webhook URL is its secret.
+    """
 
     def _notify(event: str, job: Job | None) -> None:
         payload = {"event": event, "job": None if job is None else _job_payload(job)}
@@ -39,7 +56,7 @@ def webhook_notifier(url: str, *, timeout: float = 5.0, client: httpx.Client | N
                 response = client.post(url, json=payload)
             response.raise_for_status()
         except httpx.HTTPError as exc:
-            log.warning("webhook %s failed for event %s: %s", url, event, exc)
+            log.warning("webhook %s failed for event %s: %s", redacted_url(url), event, _failure(exc))
 
     return _notify
 
