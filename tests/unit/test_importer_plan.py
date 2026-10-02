@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+import omniscan.importer.plan as plan_module
 from omniscan.importer.plan import (
     ImportPlanError,
     ImportPlanItem,
@@ -356,3 +358,27 @@ def test_a_folder_holding_only_os_metadata_is_empty(tmp_path: Path) -> None:
     _write_files(src, [".DS_Store", "._1.jpg"])
     with pytest.raises(ImportPlanError, match="empty"):
         plan_import(src, series="S")
+
+
+def test_an_archive_that_would_fill_the_drive_is_refused_before_extracting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A zip bomb's members compress to almost nothing; their recorded sizes say what extraction would write."""
+    archive = tmp_path / "bomb.cbz"
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("Chapter 1/1.png", b"\0" * (20 * 1024**2))  # 20 MB of zeros, a few KB packed
+    assert archive.stat().st_size < 1024**2
+    written: list[Path] = []
+    monkeypatch.setattr(plan_module, "_extract_member", lambda archive, member, dest: written.append(dest))
+    monkeypatch.setattr(plan_module.shutil, "disk_usage", lambda path: SimpleNamespace(free=520 * 1024**2))
+
+    with pytest.raises(ImportPlanError, match=r"unpacks to 20 MB, but only 520 MB is free"):
+        plan_import(archive, series="S")
+    assert written == []
+
+
+def test_an_archive_with_too_many_files_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(plan_module, "MAX_ARCHIVE_FILES", 2)
+    archive = _make_zip(tmp_path / "many.zip", {f"Chapter 1/{n}.jpg": b"i" for n in range(3)})
+    with pytest.raises(ImportPlanError, match="holds 3 files"):
+        plan_import(archive, series="S")

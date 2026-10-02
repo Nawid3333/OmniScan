@@ -155,13 +155,43 @@ def _extract_archive(source: Path, dest: Path) -> Path:
     dest = dest.resolve()
     try:
         with zipfile.ZipFile(source) as archive:
-            for member in archive.infolist():
+            members = archive.infolist()
+            _check_extraction_size(source, members, dest)
+            for member in members:
                 _extract_member(archive, member, dest)
     except ImportPlanError:
         raise
     except (zipfile.BadZipFile, RuntimeError, OSError) as exc:  # truncated/corrupt, or encrypted members
         raise ImportPlanError(f"can't read archive {source.resolve()}: {exc}") from exc
     return dest
+
+
+MAX_ARCHIVE_FILES = 100_000  # a whole series is a few thousand pages
+_FREE_SPACE_MARGIN = 512 * 1024**2  # what the extraction must leave free on the temp drive
+
+
+def _check_extraction_size(source: Path, members: list[zipfile.ZipInfo], dest: Path) -> None:
+    """Refuse an archive that would fill the temp drive (a zip bomb, or simply too big) before writing anything.
+
+    The sizes are the archive's own records; `zipfile` never reads a member past its recorded size, so they bound
+    what extraction can write.
+    """
+    files = [member for member in members if not member.is_dir()]
+    if len(files) > MAX_ARCHIVE_FILES:
+        raise ImportPlanError(
+            f"archive {source.resolve()} holds {len(files)} files (at most {MAX_ARCHIVE_FILES})"
+        )
+    needed = sum(member.file_size for member in files)
+    free = shutil.disk_usage(dest).free
+    if needed > free - _FREE_SPACE_MARGIN:
+        raise ImportPlanError(
+            f"archive {source.resolve()} unpacks to {_size(needed)}, but only {_size(free)} is free in {dest.parent}"
+        )
+
+
+def _size(count: int) -> str:
+    """A byte count for a message: `1.5 GB`, or `20 MB` below a gigabyte."""
+    return f"{count / 1024**3:.1f} GB" if count >= 1024**3 else f"{count / 1024**2:.0f} MB"
 
 
 _UNSAFE_MEMBER_RE = re.compile(r"^[A-Za-z]:|\\")  # a Windows drive prefix, or any backslash
