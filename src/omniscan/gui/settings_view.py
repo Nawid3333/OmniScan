@@ -50,6 +50,7 @@ from omniscan.gui.theme import (
     set_role,
 )
 from omniscan.gui.workers import run_task
+from omniscan.hw.tune import Plan, describe
 
 # words that find a whole tab in the search (its own rows are matched one by one)
 _TAB_KEYWORDS = {
@@ -105,6 +106,7 @@ class SettingsView(QWidget):
         self._editors: dict[tuple[str, str], QWidget] = {}
         self._pages: dict[str, QWidget] = {}
         self._hardware_loaded = False
+        self._plan: Plan | None = None
         self._search_rows: list[_SearchRow] = []
         self._qsettings = qsettings or QSettings("OmniScan", "gui")
         self.appearance = load_appearance(self._qsettings)
@@ -176,6 +178,7 @@ class SettingsView(QWidget):
         self._rebuild("series")
         self._rebuild("profiles")
         self._hardware_loaded = False
+        self._plan = None
         self._on_tab_changed(self.tabs.currentIndex())  # re-detect at once if Hardware is open
 
     def _rebuild(self, name: str) -> None:
@@ -541,8 +544,23 @@ class SettingsView(QWidget):
         self.hardware_header_label = QLabel("hardware: not detected yet", page)
         self.hardware_header_label.setWordWrap(True)
         self.hardware_button = QPushButton("Re-detect", page)
+        self.plan_label = QLabel("", page)
+        self.plan_label.setWordWrap(True)
+        self.optimise_button = QPushButton("Optimise for this PC", page)
+        self.optimise_button.setToolTip(
+            "Write the plan's device, memory budget, OCR engine, batch sizes and LaMa default to the config"
+        )
+        self.optimise_button.setEnabled(False)
+        self.plan_status_label = QLabel("", page)
+        set_role(self.plan_status_label, "muted")
         layout.addWidget(self.hardware_header_label)
-        layout.addWidget(self.hardware_button)
+        buttons = QHBoxLayout()
+        buttons.addWidget(self.hardware_button)
+        buttons.addWidget(self.optimise_button)
+        buttons.addStretch(1)
+        layout.addLayout(buttons)
+        layout.addWidget(self.plan_label)
+        layout.addWidget(self.plan_status_label)
 
         self.hardware_table = QTableWidget(0, 4, page)
         self.hardware_table.setHorizontalHeaderLabels(("Model", "Fit", "Device", "Messages"))
@@ -553,7 +571,23 @@ class SettingsView(QWidget):
         layout.addWidget(self.hardware_table, 1)
 
         self.hardware_button.clicked.connect(self._load_hardware)
+        self.optimise_button.clicked.connect(self.apply_plan)
         return page
+
+    def apply_plan(self) -> int:
+        """Write the tuning plan's settings to the user config (one `settings_changed`); how many."""
+        plan = self._plan
+        if plan is None:
+            return 0
+        try:
+            for (section, key), value in plan.overrides.items():
+                settings.set_global(section, key, value, path=self._config_path)
+        except settings.SettingError as error:
+            self.plan_status_label.setText(f"refused: {error}")
+            return 0
+        self.plan_status_label.setText(f"wrote {len(plan.overrides)} setting(s); the pages reload them")
+        self.settings_changed.emit()
+        return len(plan.overrides)
 
     def _on_tab_changed(self, index: int) -> None:
         """Detect the first time the Hardware tab is opened (the snapshot costs a torch import)."""
@@ -571,6 +605,9 @@ class SettingsView(QWidget):
     def _on_hardware_ready(self, report: HardwareReport) -> None:
         """Show the snapshot line and one row per model warning."""
         self.hardware_header_label.setText(hardware_header(report.info))
+        self._plan = report.plan
+        self.plan_label.setText("\n".join(describe(report.plan)) if report.plan is not None else "")
+        self.optimise_button.setEnabled(report.plan is not None)
         self.hardware_table.setRowCount(len(report.warnings))
         for row, warning in enumerate(report.warnings):
             self.hardware_table.setItem(row, 0, QTableWidgetItem(warning.name))

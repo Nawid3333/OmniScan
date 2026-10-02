@@ -110,14 +110,39 @@ def doctor(
         raise typer.Exit(1)
 
 
+def _simulated_hardware(simulate: str | None) -> Any:
+    """The hardware snapshot, real or the named profile; exit 2 for an unknown profile name."""
+    from omniscan.hw.detect import detect_hardware
+
+    try:
+        return detect_hardware(get_config().paths.models_dir, simulate=simulate)
+    except ValueError as exc:
+        typer.echo(f"hardware: {exc}", err=True)
+        raise typer.Exit(2) from None
+
+
 @app.command()
 def hardware(
     as_json: Annotated[bool, typer.Option("--json", help="Emit the machine-readable form.")] = False,
+    simulate: Annotated[
+        str | None,
+        typer.Option(
+            "--simulate", help="Report a named machine profile instead of this PC (see --profiles)."
+        ),
+    ] = None,
+    profiles: Annotated[bool, typer.Option("--profiles", help="List the machine profiles and exit.")] = False,
 ) -> None:
     """Report this machine's OS, CPU, RAM, GPUs, torch build, best device and free disk."""
-    from omniscan.hw.detect import detect_hardware
+    if profiles:
+        from omniscan.hw.profiles import PROFILES
 
-    hw = detect_hardware(get_config().paths.models_dir)
+        for name, info in PROFILES.items():
+            gpu = info.gpus[0].name if info.gpus else "no GPU"
+            _echo_text(
+                f"{name:18} {info.os}/{info.arch}  {gpu}  RAM {info.ram_gb:g} GB  torch {info.torch_build}"
+            )
+        return
+    hw = _simulated_hardware(simulate)
     if as_json:
         _echo_text(json.dumps(asdict(hw), indent=2, ensure_ascii=False))
         return
@@ -132,6 +157,36 @@ def hardware(
     providers = ", ".join(hw.onnxruntime_providers) if hw.onnxruntime_providers else "none"
     _echo_text(f"onnxruntime providers: {providers}")
     _echo_text(f"free disk at the models folder: {hw.disk_free_gb:.1f} GB")
+
+
+@app.command()
+def tune(
+    apply: Annotated[
+        bool, typer.Option("--apply", help="Write the plan's settings to the user config.toml.")
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Emit the plan as JSON.")] = False,
+    simulate: Annotated[
+        str | None,
+        typer.Option("--simulate", help="Plan for a named machine profile instead of this PC."),
+    ] = None,
+) -> None:
+    """Scan the hardware and say (or set) the settings that fit it: device, memory budget, OCR engine, batches, LaMa."""
+    from omniscan.hw.tune import describe, plan_for, plan_json
+
+    plan = plan_for(_simulated_hardware(simulate))
+    if as_json:
+        _echo_text(json.dumps(plan_json(plan), indent=2))
+    else:
+        for line in describe(plan):
+            _echo_text(line)
+    if not apply:
+        return
+    from omniscan.core.config import set_user_setting
+
+    written = None
+    for (section, key), value in plan.overrides.items():
+        written = set_user_setting(section, key, value)
+    _echo_text(f"wrote {len(plan.overrides)} setting(s) to {written}")
 
 
 def cmd_import(
@@ -1057,7 +1112,7 @@ def cmd_run(
             series,
             chapter,
             stages=names,
-            lama=not no_lama,
+            lama=False if no_lama else None,
             force=force,
             client=client,
             gpu=gpu,

@@ -689,3 +689,21 @@ def test_step_mode_gates_skipped_stages_and_force_reruns_phase_a(
     assert result.ok
     assert statuses == ["done"] * len(STAGE_ORDER)  # force reaches phase A
     assert len(calls) == len(STAGE_ORDER)
+
+
+def test_the_lama_stage_follows_the_config_default_unless_told(
+    cfg: Config, fake_stages: dict[str, FakeStage]
+) -> None:
+    """`lama=None` reads `inpaint.lama`; an explicit True/False wins over it."""
+    calls = wire_calls(fake_stages)
+    off = cfg.model_copy(update={"inpaint": cfg.inpaint.model_copy(update={"lama": False})})
+    assert run_pipeline(off, SERIES, ["A"], client=FakeClient(), gpu=FakeScheduler()).ok
+    assert "inpaint_lama(A)" not in calls and "inpaint(A)" in calls
+    calls.clear()
+    assert run_pipeline(
+        off, SERIES, ["A"], client=FakeClient(), gpu=FakeScheduler(), lama=True, force=True
+    ).ok
+    assert "inpaint_lama(A)" in calls
+    calls.clear()
+    assert run_pipeline(cfg, SERIES, ["A"], client=FakeClient(), gpu=FakeScheduler(), force=True).ok
+    assert "inpaint_lama(A)" in calls

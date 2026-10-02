@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from omniscan.core.config import Config
 from omniscan.gui.services.models import ModelsService
 from omniscan.hw.detect import HardwareInfo
+from omniscan.hw.tune import Plan, plan_for
 from omniscan.models.rows import ModelRow
 
 
@@ -32,6 +33,9 @@ class HardwareReport:
 
     info: HardwareInfo
     warnings: tuple[ModelWarning, ...]
+    plan: Plan | None = (
+        None  # the tuning plan for the snapshot (hw.tune), None when a caller built the report by hand
+    )
 
 
 class HardwareService:
@@ -51,6 +55,7 @@ class HardwareService:
         rows, hw = self._rows()
         return HardwareReport(
             info=hw,
+            plan=plan_for(hw),
             warnings=tuple(
                 ModelWarning(
                     name=row.name, level=row.fit_level, device=row.fit_device, messages=row.fit_messages

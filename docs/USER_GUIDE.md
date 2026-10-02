@@ -125,6 +125,7 @@ Every key in `config/default.toml`:
 | `ocr.lang` | language code recorded on every OCR'd region | yes |
 | `export.jpeg_quality` | JPEG quality of the exported slices | yes (`omniscan export`) |
 | `export.subsampling` | chroma subsampling of the exported slices: `444`, `422` or `420` | yes (`omniscan export`) |
+| `inpaint.lama` | run the LaMa inpaint stage by default (`omniscan run` without `--no-lama`; `omniscan tune` sets it false on a CPU-only machine) | yes (`omniscan run`) |
 | `inpaint.lama_url` | where the LaMa TorchScript weights are downloaded from | yes (`omniscan inpaint --lama`) |
 | `inpaint.lama_sha256` | expected sha256 of the LaMa weights, checked after every download | yes (`omniscan inpaint --lama`) |
 | `inpaint.lama_file` | file name of the weights inside `<models_dir>/lama/` | yes (`omniscan inpaint --lama`) |
@@ -183,13 +184,48 @@ future settings screen reads, and `omniscan models list` assesses each catalog m
 | Option | Meaning |
 |---|---|
 | `--json` | emit the hardware snapshot as one JSON object |
+| `--simulate <name>` | report a named machine profile instead of this PC (`rtx4090`, `rtx3060`, `gtx1650-laptop`, `rx9070xt`, `rx7800xt-linux`, `arc-b580`, `m2-air`, `m4-max`, `cpu-laptop`, `igpu-only`, `cpu-server-linux`); the `OMNISCAN_SIMULATE_HARDWARE` environment variable does the same for every command and the desktop app |
+| `--profiles` | list the machine profiles and exit |
 
 Never fails when torch is missing or broken: it then reports no GPUs and `best device: cpu`. Writes
-nothing.
+nothing. A simulated profile replaces only the *snapshot* (what the tuning plan, the model fit check and the
+settings screen read); the models still run on whatever device is really there.
 
 ```bash
 uv run omniscan hardware
 uv run omniscan hardware --json
+uv run omniscan hardware --simulate arc-b580
+```
+
+### `omniscan tune`
+
+Scan the hardware and say which settings fit it — the torch backend extra to install, `gpu.device`, the GPU
+memory budget, the OCR engine (PaddleOCR-VL from 8 GB of GPU memory, PP-OCR below), the recognition, crop and
+detector batch sizes, whether the LaMa inpaint stage is worth running (off on a CPU-only machine, where it takes
+about a minute per page) and whether translation should stay with the cloud profile (a local model needs 9 GB).
+The same plan is behind *Optimise for this PC* on the Settings page's Hardware tab.
+
+| Option | Meaning |
+|---|---|
+| `--apply` | write the plan's settings to the user `config.toml` (`gpu.device`, `gpu.vram_budget_gib`, `ocr.engine`, `ocr.rec_batch_size`, `ocr.crop_batch_size`, `detect.batch_size`, `inpaint.lama`) |
+| `--json` | emit the plan as JSON (`overrides` keyed `section.key`) |
+| `--simulate <name>` | plan for a machine profile instead of this PC (see `omniscan hardware --profiles`) |
+
+```bash
+uv run omniscan tune
+uv run omniscan tune --apply
+uv run omniscan tune --simulate cpu-laptop --json
+```
+
+```text
+tier: light
+torch backend to install: uv sync --extra cuda --extra gui
+device: cuda:0 (NVIDIA GeForce GTX 1650, 4 GB)
+GPU memory budget: 2.5 GiB
+OCR: ppocr (recognition batch 32, crop batch 8, detector batch 4)
+LaMa inpainting: on
+translation: cloud
+note: translation stays with the cloud profile: a local model needs 9 GB of GPU memory for its fallback (Ollama on this machine would run it on the CPU)
 ```
 
 ### `omniscan import`
@@ -476,7 +512,7 @@ is resumable through the chapter manifests, so a re-run only executes what chang
 | `series` | series name (required) |
 | `--chapter`, `-c <str>` | chapter folder name; repeatable. Default: all |
 | `--stage`, `-s <name>` | stage name; repeatable. Default: all ten (`ingest`, `slice`, `detect`, `ocr`, `translate`, `judge`, `inpaint`, `inpaint_lama`, `typeset`, `export`) |
-| `--no-lama` | skip the LaMa inpaint stage (`inpaint_lama`) |
+| `--no-lama` | skip the LaMa inpaint stage (`inpaint_lama`); without it the stage runs when `inpaint.lama` is true (the default; `omniscan tune` turns it off on a CPU-only machine) |
 | `--force` | re-run stages even if up to date |
 | `--step` | step-by-step mode: preview one chapter after every stage and decide before continuing |
 | `--preview-chapter <name>` | which chapter step mode previews. Default: the first chapter. Needs `--step` |

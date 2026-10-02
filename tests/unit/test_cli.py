@@ -183,3 +183,24 @@ def test_cli_slice_unaffected(cfg: Config, monkeypatch: pytest.MonkeyPatch) -> N
     assert result.exit_code == 0
     assert f"{SERIES}/Chapter 1 slice: done" in result.output
     assert (cfg.paths.work_root / SERIES / "Chapter 1" / "slices.json").is_file()
+
+
+def test_hardware_and_tune_simulate_a_profile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    listed = runner.invoke(app, ["hardware", "--profiles"])
+    assert listed.exit_code == 0 and "rtx3060" in listed.stdout and "cpu-laptop" in listed.stdout
+    shown = runner.invoke(app, ["hardware", "--simulate", "rtx3060", "--json"])
+    assert shown.exit_code == 0 and json.loads(shown.stdout)["best_device"] == "cuda:0"
+    unknown = runner.invoke(app, ["hardware", "--simulate", "nope"])
+    assert unknown.exit_code == 2
+    plan = runner.invoke(app, ["tune", "--simulate", "cpu-laptop", "--json"])
+    assert plan.exit_code == 0
+    data = json.loads(plan.stdout)
+    assert data["tier"] == "cpu" and data["overrides"]["inpaint.lama"] is False
+    text = runner.invoke(app, ["tune", "--simulate", "rtx4090"])
+    assert text.exit_code == 0 and "uv sync --extra cuda --extra gui" in text.stdout
+    user_toml = tmp_path / "config.toml"
+    monkeypatch.setattr("omniscan.core.config.USER_TOML", user_toml)
+    applied = runner.invoke(app, ["tune", "--simulate", "gtx1650-laptop", "--apply"])
+    assert applied.exit_code == 0 and "wrote" in applied.stdout
+    written = user_toml.read_text(encoding="utf-8")
+    assert 'device = "cuda:0"' in written and "rec_batch_size = 32" in written and "lama = true" in written

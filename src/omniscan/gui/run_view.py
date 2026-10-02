@@ -77,7 +77,7 @@ class RunView(QWidget):
         self.stage_group = QGroupBox("Stages (Subset mode)", self)
         self.stage_boxes: dict[str, QCheckBox] = {}
         self.lama_checkbox = QCheckBox("LaMa inpainting (inpaint_lama)", self)
-        self.lama_checkbox.setChecked(True)
+        self.lama_checkbox.setChecked(cfg.inpaint.lama)
         self.force_checkbox = QCheckBox("Force re-run (ignore up-to-date manifests)", self)
         self.preview_combo = QComboBox(self)
         self.error_label = QLabel("", self)
