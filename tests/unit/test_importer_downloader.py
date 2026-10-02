@@ -62,6 +62,15 @@ def test_numeric_series_folder_needs_series(tmp_path: Path) -> None:
         plan_import(src)
 
 
+def test_uuid_series_folder_needs_series(tmp_path: Path) -> None:
+    src = tmp_path / "8f3e1818-a015-491d-bd81-3addc4d7d56a"  # MangaDex names it after the manga's UUID
+    _chapter(src, "num1_Chapter 1", 1)
+
+    with pytest.raises(ImportPlanError, match="--series"):
+        plan_import(src)
+    assert plan_import(src, series="Hyouka").series == "Hyouka"
+
+
 def test_incomplete_chapter_is_skipped_with_warning(tmp_path: Path) -> None:
     src = tmp_path / "series"
     _chapter(src, "num1_Chapter 1", 2)

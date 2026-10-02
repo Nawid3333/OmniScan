@@ -23,6 +23,9 @@ PART_SUFFIX = ".part"  # the downloader writes each image to `<name>.part` and r
 
 _FOLDER_RE = re.compile(r"num([^_]*)_(.+)")
 _NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
+# Series folders the downloader names after the site's id rather than a title: wfwf's numeric toon id, MangaDex's
+# manga UUID. Neither makes a usable series name.
+_SITE_ID_RE = re.compile(r"\d+|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 
 
 def is_downloader_series(dirs: list[Path]) -> bool:
@@ -42,7 +45,7 @@ def plan_downloader_series(
     if chapter is not None:
         raise ImportPlanError("--chapter is ambiguous here: every subfolder already names its own chapter")
     if series is None:
-        if source.name.isdigit():
+        if _SITE_ID_RE.fullmatch(source.name):
             raise ImportPlanError(
                 f"the downloader named this series folder after the site's id ({source.name}) — pass --series"
             )

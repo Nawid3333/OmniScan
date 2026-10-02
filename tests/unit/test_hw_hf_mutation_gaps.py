@@ -225,12 +225,6 @@ def test_hf_marker_without_file_sizes_is_corrupt(tmp_path: Path) -> None:
     assert model_status(entry, tmp_path, ollama_names=None) == "corrupt"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AttributeError,
-    reason="a marker that is valid JSON but not an object crashes model_status "
-    "(AttributeError) instead of returning corrupt",
-)
 def test_hf_marker_that_is_a_json_list_is_corrupt(tmp_path: Path) -> None:
     folder = tmp_path / "ocr-rec-x"
     folder.mkdir()
