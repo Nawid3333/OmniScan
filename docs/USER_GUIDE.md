@@ -235,7 +235,7 @@ file, or one with fewer pages than `chapter_manifest.json` recorded is left out 
 Re-run the downloader to finish it, then import again (chapters already imported are skipped as
 duplicates). Folders the downloader could not number (`num0_<slug>`, `numunknown_chapter`) are left
 out too; import one on its own with `--series` and `--chapter`. wfwf504 names the series folder
-after the site's numeric id, so pass `--series` there.
+after the site's numeric id and MangaDex after the manga's UUID, so pass `--series` there.
 
 ```bash
 uv run omniscan import ../manhwa-manga-downloader/downloads/wfwf504/1234 --series "Solo Leveling" --dry-run
