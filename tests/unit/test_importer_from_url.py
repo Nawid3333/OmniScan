@@ -83,15 +83,23 @@ def test_download_passes_the_documented_flags_and_reads_the_result(
     )
     argv = json.loads((tmp_path / "dl.argv.json").read_text(encoding="utf-8"))
     assert argv == [
-        "https://fake.test/complete",
-        "--out",
-        str(dest),
+        f"--out={dest}",
         "--yes",
         "--json",
         "--no-convert",
-        "--chapters",
-        "1-2",
+        "--chapters=1-2",
+        "--",
+        "https://fake.test/complete",
     ]
+
+
+def test_a_url_or_range_starting_with_a_dash_stays_a_value(tmp_path: Path, mangadl: list[str]) -> None:
+    """`--from-url "--out=/elsewhere"` must not become one of the downloader's own options."""
+    dest = tmp_path / "dl"
+    download("--out=/elsewhere/unknown", dest, command=mangadl, chapters="-3")
+    argv = json.loads((tmp_path / "dl.argv.json").read_text(encoding="utf-8"))
+    assert argv[-2:] == ["--", "--out=/elsewhere/unknown"] and "--chapters=-3" in argv
+    assert next(arg for arg in argv if arg.startswith("--out=")) == f"--out={dest}"
 
 
 def test_messages_go_to_on_line_when_given(tmp_path: Path, mangadl: list[str]) -> None:

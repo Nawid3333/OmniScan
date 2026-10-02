@@ -4,7 +4,7 @@ It follows the documented contract: chapter folders under `--out`, its bookkeepi
 object on stdout, messages on stderr, exit 0 / 2 / 1. The scenario is the URL's last path segment. It also
 writes its own argv next to the output folder (`<out>.argv.json`) so a test can check the flags it got.
 
-Usage: python fake_mangadl.py URL --out DIR [--chapters RANGE] --yes --json --no-convert
+Usage: python fake_mangadl.py --out=DIR [--chapters=RANGE] --yes --json --no-convert -- URL
 """
 
 from __future__ import annotations
@@ -30,8 +30,8 @@ def _write_json(path: Path, data: object) -> None:
 
 def main(args: list[str]) -> int:
     """Act out the scenario named by the URL; returns the exit code."""
-    url = args[0]
-    out = Path(args[args.index("--out") + 1])
+    url = args[args.index("--") + 1]
+    out = Path(next(arg for arg in args if arg.startswith("--out=")).removeprefix("--out="))
     _write_json(out.parent / (out.name + ".argv.json"), args)
     scenario = url.rsplit("/", 1)[-1]
     result: dict[str, Any] = {

@@ -90,9 +90,12 @@ def download(
     (the desktop app). Pages are kept as the site serves them (`--no-convert`): the import converts them to
     JPEG once, at its own quality.
     """
-    argv = [*command, url, "--out", str(dest), "--yes", "--json", "--no-convert"]
+    # Options in `--name=value` form and the URL after `--`: a "URL" or a range that starts with `-` must reach
+    # the downloader as a value, never as one of its options.
+    argv = [*command, f"--out={dest}", "--yes", "--json", "--no-convert"]
     if chapters is not None:
-        argv += ["--chapters", chapters]
+        argv.append(f"--chapters={chapters}")
+    argv += ["--", url]
     dest.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, "PYTHONIOENCODING": "utf-8"}  # its messages decode the same way on every OS
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if on_line is not None else 0
