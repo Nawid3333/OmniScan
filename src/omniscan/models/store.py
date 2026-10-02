@@ -67,6 +67,8 @@ def model_status(
             data = json.loads(marker.read_text(encoding="utf-8"))
         except OSError, ValueError:
             return "corrupt"
+        if not isinstance(data, dict):  # valid JSON but not the object download.py writes
+            return "corrupt"
         if data.get("revision") != entry.upstream_revision:
             return "corrupt"
         sizes = data.get("file_sizes")
@@ -93,6 +95,8 @@ def model_status(
         try:
             data = json.loads(marker.read_text(encoding="utf-8"))
         except OSError, ValueError:
+            return "corrupt"
+        if not isinstance(data, dict):
             return "corrupt"
         return "installed" if data.get("sha256") == entry.sha256 else "corrupt"
     # file

@@ -225,6 +225,13 @@ def test_zip_unparsable_marker_is_corrupt(tmp_path: Path) -> None:
     assert model_status(zip_entry(), tmp_path, ollama_names=None) == "corrupt"
 
 
+@pytest.mark.parametrize("marker", ["[1, 2]", '"text"', "null", "3"])
+def test_zip_marker_that_is_not_an_object_is_corrupt(tmp_path: Path, marker: str) -> None:
+    (tmp_path / "det").mkdir()
+    (tmp_path / "det" / MARKER_NAME).write_text(marker, encoding="utf-8")
+    assert model_status(zip_entry(), tmp_path, ollama_names=None) == "corrupt"
+
+
 def test_zip_matching_marker_is_installed(tmp_path: Path) -> None:
     install_fake_zip(tmp_path, "det")
     assert model_status(zip_entry(), tmp_path, ollama_names=None) == "installed"
