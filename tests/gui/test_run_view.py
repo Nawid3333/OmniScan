@@ -215,3 +215,10 @@ def test_run_failure_surfaces_inline(qapp: QApplication, cfg: Config) -> None:
     assert "RuntimeError" in view.error_label.text()
     assert "no ollama daemon" in view.error_label.text()
     assert view.start_button.isEnabled()
+
+
+def test_the_lama_checkbox_starts_from_the_config(qapp: QApplication, cfg: Config) -> None:
+    """`inpaint.lama = false` (what `omniscan tune` writes on a CPU-only machine) unticks LaMa by default."""
+    assert RunView(cfg).lama_checkbox.isChecked()
+    off = cfg.model_copy(update={"inpaint": cfg.inpaint.model_copy(update={"lama": False})})
+    assert not RunView(off).lama_checkbox.isChecked()

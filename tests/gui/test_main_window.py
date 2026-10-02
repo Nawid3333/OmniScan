@@ -69,6 +69,7 @@ def _window(
         importer_service=FakeImporterService(),
         qsettings=qsettings,
         config_loader=config_loader,
+        ollama_check=lambda: "fake Ollama",
     )
 
 
@@ -77,8 +78,10 @@ def test_pages_in_sidebar_order(qapp: QApplication, cfg: Config, tmp_path: Path)
     qsettings = QSettings(str(tmp_path / "gui.ini"), QSettings.Format.IniFormat)
     window = _window(cfg, qsettings)
 
-    assert window.sidebar.count() == 7
-    for index, name in enumerate(("Library", "Reader", "Run", "Models", "Settings", "Import", "Studio")):
+    assert window.sidebar.count() == 8
+    for index, name in enumerate(
+        ("Library", "Reader", "Run", "Models", "Settings", "Import", "Studio", "Queue")
+    ):
         window.show_page(index)
         assert window.stack.currentIndex() == index
         assert window.sidebar.item(index).text() == name
@@ -139,3 +142,20 @@ def test_geometry_and_last_page_are_remembered(qapp: QApplication, cfg: Config, 
     reopened = _window(cfg, QSettings(str(ini), QSettings.Format.IniFormat))
     assert reopened.sidebar.currentRow() == 3
     assert reopened.stack.currentIndex() == 3
+
+
+def test_the_welcome_dialog_shows_once(qapp: QApplication, cfg: Config, tmp_path: Path) -> None:
+    """The first start opens the checklist; closing it is remembered, so the next window starts without it."""
+    qsettings = QSettings(str(tmp_path / "gui.ini"), QSettings.Format.IniFormat)
+    window = _window(cfg, qsettings)
+    dialog = window.welcome_dialog
+    assert dialog is not None and dialog.isVisible()
+    dialog.models_requested.emit()
+    assert window.stack.currentIndex() == 3  # the Models page
+    dialog.accept()
+    qapp.processEvents()
+    assert qsettings.value("welcome/shown", False, type=bool) is True
+    again = _window(cfg, qsettings)
+    assert again.welcome_dialog is None
+    again.settings_view.welcome_requested.emit()  # Settings → Hardware → Setup checklist…
+    assert again.welcome_dialog is not None and again.welcome_dialog.isVisible()

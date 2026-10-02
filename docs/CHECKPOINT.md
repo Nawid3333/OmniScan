@@ -3,6 +3,74 @@
 > **Development paused on 2026-09-25** (owner's decision; back in some years or when the program is needed).
 > Start with the "Development paused" section at the top of `docs/HANDOFF.md` — it has the state and the resume steps.
 
+## 2026-10-02, second round (same cloud session): every GPU without owning one, and the packaged app
+Owner: "test otherwise — simulate other GPUs — create tests and workflows; make sure the program is later an
+exe most people can run, user-friendly, hardware agnostic: it scans the hardware and optimises for it; ask
+before anything that needs my PC". Done in the cloud (CPU suite, ruff, pyright clean):
+1. **Machine profiles** (`hw/profiles.py`): eleven `HardwareInfo` snapshots — RTX 4090 / 3060 / GTX 1650
+   laptop (NVIDIA), RX 9070 XT on Windows and RX 7800 XT on Linux (AMD), Arc B580 (Intel), M2 Air / M4 Max
+   (Apple), a CPU-only laptop, an integrated-only desktop, a CPU server. `omniscan hardware --simulate
+   <name>` / `--profiles` and `OMNISCAN_SIMULATE_HARDWARE` swap the detected snapshot for a profile. Only
+   the planning side is simulated (device choice, VRAM budget, model fit, settings screen); tensors still run
+   on the real device — the `gpu`-marked tests still need real hardware.
+2. **Tuning plan** (`hw/tune.py`, `omniscan tune [--apply] [--json]`): tier, torch extra to install, device,
+   VRAM budget (total − 1.5 GB), OCR engine (PaddleOCR-VL from 8 GB, PP-OCR below), recognition / crop /
+   detector batch sizes by VRAM, LaMa default (off without ≥ 3 GB of GPU memory), cloud vs local translation
+   (local needs 9 GB), notes (integrated-only, Linux AMD without an extra yet, tight RAM). New config key
+   `inpaint.lama` (the run default; `--no-lama` and the Run page checkbox still win). Settings → Hardware
+   shows the plan with **Optimise for this PC**; the first start opens a **setup checklist** dialog
+   (`gui/welcome_dialog.py`: hardware plan, Models page, Ollama reachability; Settings → `Setup checklist…`
+   reopens it).
+3. **Tests** (`tests/unit/test_hw_profiles.py`, CLI, runner, GUI): every profile's plan is pinned in a
+   table, every override validates against the config model, every catalogue model is assessed on every
+   profile, the env var simulation, the Run page's LaMa default, the welcome dialog and the Optimise button.
+4. **Workflows**: `ci.yml` gained a `hardware-profiles` job (three OSes: the profile tests, then
+   `hardware --simulate`, `tune --simulate` and `models list` for each profile); new `build.yml`
+   (PyInstaller via `packaging/omniscan.spec` + `scripts/build_app.py --smoke`: one folder with `OmniScan`
+   (desktop app) and `omniscan` (CLI), `config/` and `fonts/` beside them, smoke-run, zipped as
+   `omniscan-<os>-<arch>.zip` — the name `omniscan update` expects — and uploaded as artifacts);
+   `release.yml` now builds the apps on the release commit and publishes them with the wheel, the sdist and
+   one SHA256SUMS over everything.
+5. The packaged build carries the `cpu` torch: it runs on every PC. GPU acceleration still needs the
+   developer install with the backend extra; the on-demand GPU runtime download for the packaged app is
+   the next packaging step (X2). Verified here: `uv pip install --target DIR --python-version 3.14
+   --python-platform <triple>` installs wheels for another platform without an interpreter, so a bundled
+   `uv` can fetch the GPU torch into a runtime folder later.
+**Needs the owner's PC** (ask before): a real-GPU run of `omniscan tune --apply` + `omniscan run` on the
+RX 9070 XT, opening the packaged Windows zip from the `build` workflow's artifacts, and the real-chapter
+lettering pass that is still pending since 2026-09-25.
+
+## 2026-10-02 session (director, cloud session on branch `claude/loving-tesla-66luul`, no card)
+Owner: bring OmniScan and the downloader "to a version 1.0", usable as a tool by translators of manhwa, manhua
+and manga — project management with batch processing and page navigation, smooth text-box manipulation,
+multi-selection for styles, undo/redo, overriding the AI's OCR and translation, and a preview of the output.
+Done, CPU-verified in this container (Python 3.14.8, the PyPI torch wheel standing in for `cpu`; full
+`pytest -m "not gpu"`, ruff and pyright clean):
+1. **Desktop Studio rebuilt** (`gui/studio_view.py`): multi-row selection with every action applying to all
+   selected rows (remove, kind, mark checked / unmark, revert English, lettering styles, translate); page
+   navigation (`Page` spinner, Page Up/Down, "only this page", prev/next chapter, todo/edited/checked
+   counter); Undo/Redo over the chapter's shared history; `Translate` (on-demand, every enabled profile or a
+   picked one) and `Read again` (OCR) on worker threads whose results land in the table to keep on Save;
+   `Lettering…` dialog (`gui/lettering_dialog.py`: tick only the styles to change, so one dialog restyles
+   twenty balloons); `Preview` strip rendering the current page with `typeset/page_preview.py` on a worker
+   thread, scroll-linked to the raw strip; status column with `lettered`.
+2. **Box editing on the canvas** (`gui/strip_view.py`): the selected box moves by drag, resizes by eight
+   handles, nudges with the arrow keys; `Draw box` / Shift-drag draws a new region; in-memory tiles
+   (`provide_image`) for the preview.
+3. **Session layer** (`edits/session.py`): pending boxes, kinds and hand lettering (merged per region,
+   `None` drops a field), `add_region` (saves pending edits first, then its own undo step), `pages()`,
+   `counts()`, `machine_line()`; the Qt-free `gui/services/studio.py` wraps translate-now, read-again, the
+   page renderer and the fonts list.
+4. **Cloud / no-GPU exploration** written up in `docs/CLOUD_MODE.md` (what exists, what is heavy, options A–E,
+   a recommendation) with questions G1–G3 in `docs/OPEN_QUESTIONS.md` and X7 in the roadmap.
+5. The downloader (`manhwa-manga-downloader`) got Madara, MangaDex and a best-effort generic driver, content
+   sniffing for unknown domains and a non-interactive CLI (see that repository's commits).
+Not done here (no GPU, no Hugging Face, no Ollama in the container): running the Studio against a real
+chapter with the real models; the real-chapter lettering pass of 2026-09-25 is still the first thing to do on
+the owner's PC. Next for the Studio: the lettering *box* on the canvas (today only the region box is
+draggable; the lettering box is set through the dialog's typesetter), hand cleanup (brush) in the desktop app,
+and a Queue page for batch jobs (`omniscan queue` exists on the CLI).
+
 ## 2026-09-25 session (director, cloud session on branch `claude/epic-fermi-90xyvh`, no card)
 Owner: "make it … on the level of when a company translates manhwa and manga … no weird artefacts, good font
 matching and SFX text stylistically matched … the end result is what matters and how it looks". Done, all

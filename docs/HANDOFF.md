@@ -139,6 +139,13 @@ branch. Details and gotchas: `docs/CHECKPOINT.md`.
 - **A local LLM's own runtime settings can silently sabotage measurements.** Ollama's app-level context-length slider (not anything in this repo) applies to *every* model it serves; at 256K it pushed 11 of translategemma:12b's 49 layers onto the CPU with no error, just a ~2.6x slowdown, and it also let two local models stay resident in VRAM at once (measured: 34s → 87s for one profile). `OllamaClient` now sends its own `num_ctx` per request and `VramManager.evict_ollama(keep=...)` enforces one local model at a time — but the lesson generalises: benchmark the actual served config, not just this repo's code, before trusting a timing number.
 - **A wrong performance hypothesis is normal — reverse it when real hardware disagrees, three times if needed.** PaddleOCR-VL's slowness was first blamed on lacking batching (O1f); batching turned out to be 3-32x *slower*, confirmed on real hardware three separate ways, before the actual cause (`use_cache: false` inherited from the model's training config) was found. Don't defend an earlier design assumption once measurement contradicts it.
 
+- **Working in a cloud container without the AMD index (2026-10-02):** `uv sync` fails there because `uv.lock` resolves a few
+  pure-Python packages from AMD's ROCm index. What worked: a final Python 3.14 (3.14.0rc2 breaks pydantic's `_eval_type` call),
+  then `uv venv -p 3.14 && uv pip install --no-config --no-sources --index-url https://pypi.org/simple -e ".[cpu,gui]" pytest
+  pytest-xdist ruff pyright` (the PyPI torch wheel stands in for the `cpu` extra), `apt-get install libegl1 libgl1 libxkbcommon0
+  libfontconfig1 libdbus-1-3` for offscreen Qt, and `pyright --pythonpath .venv/bin/python`. The GPU suite, Hugging Face and
+  Ollama are out of reach there: anything touching real models still has to be verified on the owner's PC.
+
 ## Environment (verified)
 Windows 11, Ryzen 5 7600X, 64 GB, RX 9070 XT 16 GB (+ iGPU), Python 3.14, uv, Node 24, git + `gh` (logged in as Nawid3333), Ollama 0.34.2 on
 Windows (local models: translategemma:12b, gemma4:12b, …; cloud models via the same daemon). Paths: repo `V:\OmniScan`, builder worktrees

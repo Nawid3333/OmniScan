@@ -28,6 +28,7 @@ from omniscan.core.config import Config, load_config
 from omniscan.gui.import_view import ImportView
 from omniscan.gui.library_view import LibraryView
 from omniscan.gui.models_view import ModelsView
+from omniscan.gui.queue_view import QueueView
 from omniscan.gui.reader_view import ReaderView
 from omniscan.gui.run_view import RunView
 from omniscan.gui.services.hardware import HardwareService
@@ -36,9 +37,10 @@ from omniscan.gui.services.models import ModelsService
 from omniscan.gui.settings_view import SettingsView
 from omniscan.gui.studio_view import StudioView
 from omniscan.gui.theme import MODE_PAGES, Appearance, set_role
+from omniscan.gui.welcome_dialog import OllamaCheck, WelcomeDialog
 
 # new pages go last so the first five keep their indices (scripts/gui_screenshots.py hard-codes them).
-PAGES = ("Library", "Reader", "Run", "Models", "Settings", "Import", "Studio")
+PAGES = ("Library", "Reader", "Run", "Models", "Settings", "Import", "Studio", "Queue")
 # the platform's own icon set (Segoe Fluent on Windows, SF Symbols on macOS, the icon theme on Linux)
 _ICONS = {
     "Library": QIcon.ThemeIcon.FolderOpen,
@@ -48,13 +50,14 @@ _ICONS = {
     "Settings": QIcon.ThemeIcon.DocumentProperties,
     "Import": QIcon.ThemeIcon.DocumentOpen,
     "Studio": QIcon.ThemeIcon.InsertText,
+    "Queue": QIcon.ThemeIcon.ListAdd,
 }
 _SIDEBAR_WIDTH = 190
 _CONTENT_MARGINS = (24, 16, 24, 12)
 
 
 class MainWindow(QMainWindow):
-    """One window: sidebar over the five pages plus the status bar (device, running job)."""
+    """One window: sidebar over the pages plus the status bar (device, running job)."""
 
     def __init__(
         self,
@@ -65,8 +68,9 @@ class MainWindow(QMainWindow):
         importer_service: Any | None = None,
         qsettings: QSettings | None = None,
         config_loader: Callable[[], Config] | None = None,
+        ollama_check: OllamaCheck | None = None,
     ) -> None:
-        """Build the shell; the services, QSettings and config loader are injectable for tests."""
+        """Build the shell; the services, QSettings, config loader and Ollama check are injectable for tests."""
         super().__init__()
         self._config_loader = config_loader or load_config
         self._cfg = cfg or self._config_loader()
@@ -77,9 +81,15 @@ class MainWindow(QMainWindow):
         self.reader_view = ReaderView(self._cfg, qsettings=self._qsettings)
         self.run_view = RunView(self._cfg)
         self.models_view = ModelsView(models_service or ModelsService(self._cfg))
-        self.settings_view = SettingsView(self._cfg, hardware=hardware_service, qsettings=self._qsettings)
+        self._hardware_service = hardware_service or HardwareService(self._cfg)
+        self._ollama_check = ollama_check
+        self.welcome_dialog: WelcomeDialog | None = None
+        self.settings_view = SettingsView(
+            self._cfg, hardware=self._hardware_service, qsettings=self._qsettings
+        )
         self.import_view = ImportView(importer_service or ImporterService(self._cfg))
         self.studio_view = StudioView(self._cfg)
+        self.queue_view = QueueView(self._cfg)
 
         self.stack = QStackedWidget()
         for view in (
@@ -90,6 +100,7 @@ class MainWindow(QMainWindow):
             self.settings_view,
             self.import_view,
             self.studio_view,
+            self.queue_view,
         ):
             self.stack.addWidget(view)
         self.sidebar = QListWidget()
@@ -140,14 +151,28 @@ class MainWindow(QMainWindow):
         self.library_view.chapter_opened.connect(self._on_chapter_opened)
         self.run_view.busy_changed.connect(self._on_busy_changed)
         self.studio_view.busy_changed.connect(self._on_busy_changed)
+        self.queue_view.busy_changed.connect(self._on_busy_changed)
         self.settings_view.settings_changed.connect(self._reload_config)
         self.settings_view.appearance_changed.connect(self.apply_mode)
+        self.settings_view.welcome_requested.connect(self.show_welcome)
         self.reader_view.reading_changed.connect(self._on_reading_changed)
         self._was_maximized = False
 
         self._show_device()
         self._restore()
         self.apply_mode(self.settings_view.appearance)  # after restore: a hidden last page falls back
+        if not self._qsettings.value("welcome/shown", False, type=bool):
+            self.show_welcome()
+
+    def show_welcome(self) -> WelcomeDialog:
+        """Open the first-run checklist (hardware plan, models, Ollama); remembered as shown once closed."""
+        dialog = WelcomeDialog(self._hardware_service, ollama_check=self._ollama_check, parent=self)
+        dialog.plan_applied.connect(self._reload_config)
+        dialog.models_requested.connect(lambda: self.show_page(PAGES.index("Models")))
+        dialog.finished.connect(lambda _result: self._qsettings.setValue("welcome/shown", True))
+        self.welcome_dialog = dialog
+        dialog.show()
+        return dialog
 
     # ------------------------------------------------------------------ state
 
@@ -206,6 +231,7 @@ class MainWindow(QMainWindow):
         self.settings_view.reconfigure(self._cfg)
         self.import_view.reconfigure(ImporterService(self._cfg))
         self.studio_view.reconfigure(self._cfg)
+        self.queue_view.reconfigure(self._cfg)
         self._show_device()
 
     # ------------------------------------------------------------------ internals

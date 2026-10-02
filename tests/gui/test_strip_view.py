@@ -10,8 +10,8 @@ import pytest
 pytest.importorskip("PySide6")
 
 from PIL import Image
-from PySide6.QtCore import QPoint, QPointF, Qt
-from PySide6.QtGui import QWheelEvent
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+from PySide6.QtGui import QColor, QImage, QMouseEvent, QWheelEvent
 from PySide6.QtWidgets import QApplication
 
 from omniscan.gui import strip_view as strip_module
@@ -303,3 +303,101 @@ def test_plain_wheel_scrolls(qapp: QApplication, tmp_path: Path) -> None:
     assert view.verticalScrollBar().value() > before
     assert view.strip_y() > 0.0
     assert received == [view.strip_y()]
+
+
+# ---------------------------------------------------------------------- box editing (the Studio)
+
+
+def _mouse(kind: QEvent.Type, x: float, y: float, *, shift: bool = False) -> QMouseEvent:
+    """A left-button mouse event at viewport position (x, y)."""
+    modifiers = Qt.KeyboardModifier.ShiftModifier if shift else Qt.KeyboardModifier.NoModifier
+    return QMouseEvent(
+        kind, QPointF(x, y), QPointF(x, y), Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, modifiers
+    )
+
+
+def _drag(
+    view: StripView, start: tuple[float, float], end: tuple[float, float], *, shift: bool = False
+) -> None:
+    """Press at `start`, move to `end`, release."""
+    view.mousePressEvent(_mouse(QEvent.Type.MouseButtonPress, *start, shift=shift))
+    view.mouseMoveEvent(_mouse(QEvent.Type.MouseMove, *end, shift=shift))
+    view.mouseReleaseEvent(_mouse(QEvent.Type.MouseButtonRelease, *end, shift=shift))
+
+
+def _editable(qapp: QApplication, tmp_path: Path) -> tuple[StripView, list[tuple]]:
+    """An editable view at zoom 1 with one selected box (10,10)-(30,30), recording overlay_changed."""
+    view = _prepare(qapp, tmp_path, zoom=1.0, vp=(60, 100))
+    view.set_overlays([("a", 10, 10, 30, 30), ("b", 40, 60, 55, 80)], "a")
+    view.set_editable(True)
+    changes: list[tuple] = []
+    view.overlay_changed.connect(lambda *args: changes.append(args))
+    return view, changes
+
+
+def test_dragging_inside_the_selected_box_moves_it(qapp: QApplication, tmp_path: Path) -> None:
+    view, changes = _editable(qapp, tmp_path)
+    assert view.handle_at(QPointF(20, 20)) == "move"
+    _drag(view, (20, 20), (25, 28))
+    assert changes == [("a", 15, 18, 35, 38)]
+    assert view.overlays()[0] == ("a", 15, 18, 35, 38)
+
+
+def test_dragging_a_handle_resizes_the_box(qapp: QApplication, tmp_path: Path) -> None:
+    view, changes = _editable(qapp, tmp_path)
+    assert view.handle_at(QPointF(30, 30)) == "se" and view.handle_at(QPointF(10, 20)) == "w"
+    _drag(view, (30, 30), (34, 36))
+    assert changes == [("a", 10, 10, 34, 36)]
+    _drag(view, (10, 23), (4, 23))  # the west edge; a drag that would invert is clamped to the minimum size
+    assert changes[-1] == ("a", 4, 10, 34, 36)
+
+
+def test_clicking_another_box_selects_it_and_a_drag_then_moves_that_one(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    view, changes = _editable(qapp, tmp_path)
+    clicked: list[str] = []
+    view.overlay_clicked.connect(clicked.append)
+    _drag(view, (47, 70), (49, 72))  # the middle of b: a move, not its west handle
+    assert clicked == ["b"] and view.selected() == "b"
+    assert changes == [("b", 42, 62, 57, 82)]
+
+
+def test_a_shift_drag_or_draw_mode_draws_a_new_box(qapp: QApplication, tmp_path: Path) -> None:
+    view, changes = _editable(qapp, tmp_path)
+    drawn: list[tuple] = []
+    view.box_drawn.connect(lambda *args: drawn.append(args))
+    _drag(view, (40, 20), (55, 45), shift=True)
+    assert drawn == [(40, 20, 55, 45)] and changes == []
+    view.set_draw_mode(True)
+    assert view.is_drawing()
+    _drag(view, (50, 10), (42, 2))  # drawn upwards: the corners are sorted
+    assert drawn[-1] == (42, 2, 50, 10)
+    _drag(view, (5, 5), (6, 6))  # too small: nothing
+    assert len(drawn) == 2
+    view.set_editable(False)
+    assert not view.is_drawing() and view.handle_at(QPointF(20, 20)) is None
+
+
+def test_arrow_keys_nudge_the_selected_box(qapp: QApplication, tmp_path: Path) -> None:
+    from PySide6.QtTest import QTest
+
+    view, changes = _editable(qapp, tmp_path)
+    view.setFocus()
+    QTest.keyClick(view, Qt.Key.Key_Right)
+    QTest.keyClick(view, Qt.Key.Key_Down, Qt.KeyboardModifier.ShiftModifier)
+    assert changes == [("a", 11, 10, 31, 30), ("a", 11, 20, 31, 40)]
+    view.nudge(100, 0)  # clamped to the strip, keeping the size
+    assert changes[-1] == ("a", 40, 20, 60, 40)
+
+
+def test_a_provided_image_is_drawn_without_a_file(qapp: QApplication, tmp_path: Path) -> None:
+    tiles = (Tile(0, 100, Path("preview") / "0", "page 1: not rendered yet", "image"),)
+    view = _prepare(qapp, tmp_path, tiles=tiles, zoom=1.0, vp=(60, 100))
+    assert _pixel(view.viewport().grab().toImage(), 30, 50) != GREEN  # a hatched gap
+    image = QImage(60, 100, QImage.Format.Format_RGB888)
+    image.fill(QColor(*GREEN))
+    view.provide_image(Path("preview") / "0", image)
+    assert _pixel(view.viewport().grab().toImage(), 30, 50) == GREEN
+    view.set_tiles(tiles, STRIP_WIDTH, 100)  # new tiles drop the provided images
+    assert _pixel(view.viewport().grab().toImage(), 30, 50) != GREEN

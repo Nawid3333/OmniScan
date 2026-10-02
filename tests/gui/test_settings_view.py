@@ -234,3 +234,30 @@ def test_global_rows_use_plain_names_with_the_key_as_tooltip(qapp: QApplication,
     labels = {label.text(): label.toolTip() for label in view._pages["global"].findChildren(QLabel)}
     assert labels["Graphics card"] == "gpu.device"
     assert labels["Hardware usage"] == "gpu.usage"
+
+
+def test_optimise_for_this_pc_writes_the_plan(qapp: QApplication, cfg: Config, tmp_path: Path) -> None:
+    """The Hardware tab shows the tuning plan; the button writes its settings and emits settings_changed once."""
+    from omniscan.hw.profiles import profile
+    from omniscan.hw.tune import plan_for
+
+    class FakePlannedHardware(FakeHardware):
+        def report(self) -> HardwareReport:
+            self.calls += 1
+            info = profile("gtx1650-laptop")
+            return HardwareReport(info=info, warnings=(), plan=plan_for(info))
+
+    toml = tmp_path / "config.toml"
+    fake = FakePlannedHardware()
+    view = SettingsView(cfg, hardware=fake, config_path=toml)  # type: ignore[arg-type]
+    emitted: list[int] = []
+    view.settings_changed.connect(lambda: emitted.append(1))
+    assert not view.optimise_button.isEnabled()
+    view.tabs.setCurrentWidget(view._pages["hardware"])
+    assert _settle(qapp, lambda: view.optimise_button.isEnabled())
+    assert "tier: light" in view.plan_label.text() and "GTX 1650" in view.hardware_header_label.text()
+    assert view.apply_plan() == 7
+    data = tomllib.loads(toml.read_text(encoding="utf-8"))
+    assert data["gpu"]["device"] == "cuda:0" and data["gpu"]["vram_budget_gib"] == 2.5
+    assert data["ocr"]["engine"] == "ppocr" and data["inpaint"]["lama"] is True
+    assert emitted == [1] and view.plan_status_label.text().startswith("wrote 7 setting(s)")

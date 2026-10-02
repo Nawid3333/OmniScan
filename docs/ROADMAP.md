@@ -86,11 +86,14 @@ Each one ends in something a user can run. Card IDs follow the existing scheme (
   need one backend).
 
 ### X2 — Installers and first run
-- One installer per OS (PyInstaller first, Nuitka evaluated): Windows `.exe`, macOS `.dmg` (signed later), Linux
-  AppImage. The installer stays small; the matching torch runtime and the models download on first run after
-  hardware detection (`omniscan hardware` already produces what that screen needs). Answers open questions B4/B11.
-- First-run wizard in the desktop app: pick GPU/backend, data folder, download required models, connect Ollama
-  (local or cloud) or pick a cloud translation provider.
+- Built so far (2026-10-02): `build.yml` packages the desktop app and the CLI with PyInstaller for Windows,
+  macOS and Linux (`omniscan-<os>-<arch>.zip`, smoke-tested, attached to releases with a SHA256SUMS), carrying
+  the `cpu` torch so it runs on any PC; the first start opens a setup checklist (hardware plan with *Optimise
+  for this PC* = `omniscan tune --apply`, models, Ollama).
+- Next: the GPU runtime on demand — a bundled `uv` installs the backend extra `omniscan tune` names into a
+  per-user runtime folder (`uv pip install --target … --python-version 3.14 --python-platform …` needs no
+  interpreter; verified), and the app puts that folder first on `sys.path`. Then signed installers (`.exe`
+  setup, `.dmg`, AppImage; questions B4/B8/B11), model downloads from the checklist, and a data-folder picker.
 
 ### X3 — Translator Studio (the manual workbench)
 Built so far (2026-09-27): the Studio page with region boxes over the raw strip, editable source and English,
@@ -147,6 +150,11 @@ inpaint patches, layout), so every manual change is just a better version of a s
   `ComicInfo.xml` (`omniscan pack`) stays the format for other readers (Tachiyomi/Mihon, Komga, Kavita).
 - Not started: the app itself (candidates: Qt for Android/iOS from this code base, or Flutter), sync of reading
   progress, and serving the library over the LAN.
+
+### X7 — Runs on a weak PC (explored 2026-10-02, `docs/CLOUD_MODE.md`)
+A "light" local preset (CPU torch, PP-OCRv5 mobile, cloud translation, LaMa off), an OpenAI-compatible
+translation profile type, a cloud vision model as an OCR engine once qualified, and the desktop app talking
+to a remote `omniscan serve` worker for groups. Waits on questions G1–G3.
 
 ### X5 — Sources and languages
 - Use the downloader being built in the `manhwa-manga-downloader` repository as an optional source for

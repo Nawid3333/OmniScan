@@ -87,8 +87,16 @@ def is_integrated(name: str, vram_gb: float, vendor: str) -> bool:
     return False
 
 
-def detect_hardware(models_dir: Path | None = None) -> HardwareInfo:
-    """Snapshot this machine: OS, CPU, RAM, torch-visible GPUs (best first) and free disk at models_dir."""
+def detect_hardware(models_dir: Path | None = None, *, simulate: str | None = None) -> HardwareInfo:
+    """Snapshot this machine: OS, CPU, RAM, torch-visible GPUs (best first) and free disk at models_dir.
+
+    `simulate` (or the `OMNISCAN_SIMULATE_HARDWARE` environment variable) names a machine profile
+    (`hw.profiles`) to return instead, so the planning side can be exercised for any GPU on any PC."""
+    from omniscan.hw.profiles import profile, simulated_profile
+
+    name = simulate or simulated_profile()
+    if name is not None:
+        return profile(name)
     ram_gb = round(psutil.virtual_memory().total / GIB, 1)
     gpus, torch_build = _detect_gpus(ram_gb)
     return HardwareInfo(

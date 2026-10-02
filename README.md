@@ -34,16 +34,25 @@ packaged into CBZ/PDF.
 | chapter projects | working — `omniscan project pack` / `unpack` / `show`: a chapter's raw pages and all its work (stage outputs, hand edits with undo history, cleanup) in one `.omniscan` file, to pass between group members; unpacking checks every file and never overwrites without `--force` |
 | job queue | working — `omniscan queue add` / `list` / `run` / `pause` / `resume` / `cancel` / `retry` / `clear` |
 | models | working — `omniscan models list` / `download` / `remove` / `verify` |
-| hardware | working — `omniscan hardware [--json]` |
+| hardware | working — `omniscan hardware [--json] [--simulate <profile>]` (eleven machine profiles stand in for GPUs we do not own) |
+| tune | working — `omniscan tune [--apply]` picks the device, memory budget, OCR engine, batch sizes and LaMa default for this machine (the Settings page's *Optimise for this PC*) |
 | studio (manual editing) | working — the web UI's Studio view: draw/move/resize/delete text boxes, fix OCR text, write English lines, translate one region or a page on demand, clean by hand with a brush (inpaint, fill, clone, restore), hand-set the lettering (font, size, colours, outline, angle, box, line breaks) with a live preview of the finished page, choose where the output images split (Slicer view); edits survive every re-run (`edits.json`, `cleanup.json`); the same edits from the command line with `omniscan edit`; LabelPlus files in and out (`omniscan labelplus`), layered PSD pages (`omniscan psd export`), BallonsTranslator projects in and out (`omniscan ballons`), manga-image-translator text files in (`omniscan mit import`); undo/redo of every hand edit, find & replace across a series, a consistency report (`omniscan consistency`), and a per-line status for proofreading (todo / edited / checked; `omniscan edit check`) |
 | learning | working — each series learns from your Studio corrections: repeated OCR fixes, deletions and watermark/sound-effect labels apply to later chapters, your English lines become a translation memory and your rewritten names/terms the model's preferred wording (`memory.json`; Learned view, `omniscan learn`) |
 | contributing | working (local files only) — `omniscan contribute export` writes a series' hand corrections with the pages they were made on to a zip archive (no names, paths or image metadata); on by default, `[share] enabled = false` opts out; no upload yet |
 | web viewer | working — `omniscan serve` (the built UI at the API's address; Slicer, OCR, Translation, Reader and Filtered views — read-only except the Filtered view's Restore button; the OCR/Translation views need an `ocr.json`) |
-| desktop app | working — `omniscan gui` (PySide6: Library, Reader, Run, Models, Settings, Import) |
+| desktop app | working — `omniscan gui` (PySide6: Library, Reader, Run, Models, Settings, Import, Studio — the translator's workbench: move/resize/draw boxes on the strip, fix OCR and English in a table with multi-selection, translate or re-read lines on demand, lettering styles for many balloons at once, proofreading status, undo/redo, page navigation and a live preview of the finished page; Queue — batch jobs over series and chapters, the same queue as `omniscan queue`) |
 | update | working — `omniscan update check` / `download` |
 
 "working" = usable from the CLI today. "module only" = the code and its own sub-commands exist, but no
 pipeline stage consumes it yet.
+
+## Download
+
+The `build` workflow packages the desktop app and the command line for Windows, macOS and Linux
+(`omniscan-<os>-<arch>.zip`: unzip, run `OmniScan`; no Python needed). See "Installing the packaged app"
+in [docs/USER_GUIDE.md](docs/USER_GUIDE.md). The packaged build runs on any PC on the CPU; **Settings →
+Hardware → Optimise for this PC** (or `omniscan tune --apply`) fits the settings to the machine, and the
+GPU builds of PyTorch still come from the developer install below.
 
 ## Requirements
 

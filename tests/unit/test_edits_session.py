@@ -189,3 +189,60 @@ def test_an_unreadable_ocr_json_opens_as_no_regions(paths: ChapterPaths) -> None
     paths.artifact("ocr.json").write_text("{}", encoding="utf-8")
     session = StudioSession(paths)
     assert not session.has_regions and session.rows() == []
+
+
+def test_boxes_and_kinds_stay_pending_until_save(paths: ChapterPaths) -> None:
+    session = open_session(paths)
+    session.set_bbox("r0001", BBox(x0=20, y0=20, x1=120, y1=60))
+    session.set_kind("r0002", "sfx")
+    assert session.dirty and session.pages() == [0, 1]
+    assert session.regions()[0].bbox == BBox(x0=20, y0=20, x1=120, y1=60)
+    assert session.regions()[1].kind == "sfx"
+    assert [row.edited for row in session.rows()] == [True, True, False]
+    session.set_bbox("r0001", BBox(x0=10, y0=10, x1=110, y1=60))  # back to the saved box
+    session.set_kind("r0002", "bubble_text")
+    assert not session.dirty
+    session.set_bbox("r0001", BBox(x0=20, y0=20, x1=120, y1=60))
+    session.set_kind("r0002", "sfx")
+    assert session.save() == 2
+    regions = {r.id: r for r in store.current_regions(paths)}
+    assert regions["r0001"].bbox == BBox(x0=20, y0=20, x1=120, y1=60) and regions["r0002"].kind == "sfx"
+    assert session.counts() == {"todo": 1, "edited": 2, "checked": 0}
+
+
+def test_hand_lettering_merges_and_reverts(paths: ChapterPaths) -> None:
+    session = open_session(paths)
+    assert session.layout_of("r0001") is None
+    session.set_layout("r0001", {"size_px": 30, "color": [255, 0, 0]})
+    session.set_layout("r0001", {"size_px": 24, "align": "left"})
+    assert session.layout_of("r0001") == {"size_px": 24, "color": [255, 0, 0], "align": "left"}
+    assert session.rows()[0].lettered and not session.rows()[0].edited
+    assert session.save() == 1
+    (edit,) = store.load_edits(paths).layout
+    assert (edit.region_id, edit.size_px, edit.color, edit.align) == ("r0001", 24, (255, 0, 0), "left")
+    reopened = open_session(paths)
+    assert reopened.layout_of("r0001") == {
+        "size_px": 24,
+        "color": (255, 0, 0),
+        "align": "left",
+        "hidden": False,
+    }
+    reopened.set_layout("r0001", {"align": None})  # None drops one field
+    assert reopened.layout_of("r0001") == {"size_px": 24, "color": (255, 0, 0), "hidden": False}
+    reopened.revert_layout("r0001")
+    assert reopened.layout_of("r0001") is None and reopened.save() == 1
+    assert store.load_edits(paths).layout == [] and not open_session(paths).rows()[0].lettered
+    fresh = open_session(paths)
+    fresh.revert_layout("r0002")  # nothing hand-set: nothing to save
+    assert not fresh.dirty
+
+
+def test_add_region_saves_pending_changes_first_and_returns_the_new_id(paths: ChapterPaths) -> None:
+    session = open_session(paths)
+    session.set_translation("r0001", "Hey")
+    region_id = session.add_region(BBox(x0=10, y0=400, x1=60, y1=450), kind="free_text", text="새 글")
+    assert region_id == "m0001" and not session.dirty
+    assert [r.id for r in session.regions()] == ["r0001", "r0002", "r0003", "m0001"]
+    assert session.translations()["r0001"] == "Hey"
+    assert store.history_steps(paths) == (2, 0)  # the save, then the added region
+    assert session.undo() and [r.id for r in session.regions()] == ["r0001", "r0002", "r0003"]

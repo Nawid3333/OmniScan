@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -9,13 +11,15 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication
+import numpy as np
+from PySide6.QtWidgets import QApplication, QTableWidgetSelectionRange
 
 from omniscan.core.config import Config
 from omniscan.core.paths import SeriesPaths
 from omniscan.core.schemas import BBox, FinalArtifact, FinalLine, Region, RegionsArtifact
 from omniscan.edits.store import load_edits
 from omniscan.gui.services.runs import RunOutcome, RunSpec
+from omniscan.gui.services.studio import PagePreview, Suggested
 from omniscan.gui.studio_view import RELETTER_STAGES, StudioView
 from tests.fixtures.gui_library import CHAPTERS, SERIES, build_library
 
@@ -68,7 +72,7 @@ def test_opens_a_chapter_with_rows_overlays_and_issues(qapp: QApplication, cfg: 
     assert view.table.rowCount() == 2
     assert [view.table.item(0, c).text() for c in range(4)] == ["0", "bubble_text", "안녕", "Hello"]  # type: ignore[union-attr]
     assert [box[0] for box in view.strip.overlays()] == ["r0001", "r0002"]
-    assert view.table.item(1, 4).text() == "no English line"  # type: ignore[union-attr]
+    assert view.table.item(1, 5).text() == "no English line"  # type: ignore[union-attr]
     view.issues_only.setChecked(True)
     assert view.table.isRowHidden(0) and not view.table.isRowHidden(1)
 
@@ -123,7 +127,7 @@ def test_not_a_typo_accepts_the_selected_lines_words_for_the_series(qapp: QAppli
     view = _view(qapp, cfg)
     view.table.item(1, 3).setText("Grab teh sword")  # type: ignore[union-attr]
     assert view.run_check() == 1
-    assert "'teh' is not in the dictionary" in view.table.item(1, 4).text()  # type: ignore[union-attr]
+    assert "'teh' is not in the dictionary" in view.table.item(1, 5).text()  # type: ignore[union-attr]
     view.select_region("r0001")
     assert not view.not_typo_button.isEnabled()  # "Hello" has no unknown word
     view.select_region("r0002")
@@ -132,3 +136,183 @@ def test_not_a_typo_accepts_the_selected_lines_words_for_the_series(qapp: QAppli
     assert view.run_check() == 0
     words = SeriesPaths.from_config(cfg, SERIES).library_dir / "typo_words.txt"
     assert words.read_text(encoding="utf-8") == "teh\n"
+
+
+def _wait(qapp: QApplication, done: Callable[[], bool], *, seconds: float = 5.0) -> None:
+    """Pump the event loop until `done()` (a worker task's result landed) or the time is up."""
+    deadline = time.monotonic() + seconds
+    while not done() and time.monotonic() < deadline:
+        qapp.processEvents()
+        time.sleep(0.01)
+    assert done()
+
+
+def _select(view: StudioView, *ids: str) -> None:
+    """Select the rows of `ids` together."""
+    view.table.clearSelection()
+    for row, item in enumerate(view._rows):
+        if item.region_id in ids:
+            view.table.setRangeSelected(QTableWidgetSelectionRange(row, 0, row, 5), True)
+
+
+def test_multi_selection_applies_to_every_selected_row(qapp: QApplication, cfg: Config) -> None:
+    view = _view(qapp, cfg)
+    _select(view, "r0001", "r0002")
+    assert view.selected_ids() == ["r0001", "r0002"]
+    assert view.mark_selected(True) == 2
+    assert [view.table.item(r, 4).text() for r in range(2)] == ["checked", "checked"]  # type: ignore[union-attr]
+    assert view.set_kind("sfx") == 2
+    assert [view.table.item(r, 1).text() for r in range(2)] == ["sfx", "sfx"]  # type: ignore[union-attr]
+    assert view.progress_label.text() == "0 todo · 0 edited · 2 checked"
+    assert view.save() == 4
+    session = view.session()
+    assert session is not None
+    edits = load_edits(session.paths)
+    assert sorted(edit.region_id for edit in edits.checked) == ["r0001", "r0002"]
+    assert sorted((edit.region_id, edit.kind) for edit in edits.regions) == [
+        ("r0001", "sfx"),
+        ("r0002", "sfx"),
+    ]
+    _select(view, "r0001", "r0002")
+    assert view.remove_selected() == 2 and view.table.rowCount() == 0
+
+
+def test_lettering_styles_apply_to_the_selection_and_show_in_the_status(
+    qapp: QApplication, cfg: Config
+) -> None:
+    view = _view(qapp, cfg)
+    _select(view, "r0001", "r0002")
+    assert view.apply_lettering({"size_px": 30, "color": [255, 0, 0]}) == 2
+    assert view.table.item(0, 4).text() == "todo · lettered"  # type: ignore[union-attr]
+    assert view.apply_lettering({"size_px": 24}) == 2  # a second dialog keeps the colour
+    assert view.save() == 2
+    session = view.session()
+    assert session is not None
+    assert session.layout_of("r0002") == {"size_px": 24, "color": (255, 0, 0), "hidden": False}
+    assert {edit.region_id: edit.size_px for edit in load_edits(session.paths).layout} == {
+        "r0001": 24,
+        "r0002": 24,
+    }
+    _select(view, "r0001")
+    assert view.apply_lettering(None) == 1 and view.save() == 1
+    assert [edit.region_id for edit in load_edits(session.paths).layout] == ["r0002"]
+
+
+def test_undo_and_redo_walk_the_saved_steps(qapp: QApplication, cfg: Config) -> None:
+    view = _view(qapp, cfg)
+    assert not view.undo_button.isEnabled()
+    view.table.item(1, 3).setText("What?")  # type: ignore[union-attr]
+    view.save()
+    assert view.undo_button.isEnabled() and not view.redo_button.isEnabled()
+    assert view.undo() and view.table.item(1, 3).text() == ""  # type: ignore[union-attr]
+    assert view.redo_button.isEnabled()
+    assert view.redo() and view.table.item(1, 3).text() == "What?"  # type: ignore[union-attr]
+    assert not view.redo() and view.status_label.text() == "nothing to redo"
+
+
+def test_page_navigation_steps_over_pages_with_regions(qapp: QApplication, cfg: Config) -> None:
+    view = _view(qapp, cfg)
+    assert (view.page_spin.minimum(), view.page_spin.maximum(), view.page_spin.value()) == (0, 2, 0)
+    assert view.step_page(1) and view.page_spin.value() == 2  # page 1 has no region
+    assert not view.step_page(1)
+    view.page_only.setChecked(True)
+    assert view.table.isRowHidden(0) and not view.table.isRowHidden(1)
+    assert view.step_page(-1) and view.page_spin.value() == 0
+    assert not view.table.isRowHidden(0) and view.table.isRowHidden(1)
+    assert not view.prev_chapter_button.isEnabled() and view.next_chapter_button.isEnabled()
+
+
+def test_a_box_moved_on_the_strip_is_saved_as_a_region_edit(qapp: QApplication, cfg: Config) -> None:
+    view = _view(qapp, cfg)
+    assert view.strip.is_editable()
+    view.strip.overlay_changed.emit("r0001", 6, 12, 36, 42)
+    session = view.session()
+    assert session is not None
+    assert session.regions()[0].bbox == BBox(x0=6, y0=12, x1=36, y1=42)
+    assert view.table.item(0, 4).text() == "edited"  # type: ignore[union-attr]
+    assert view.save() == 1
+    assert load_edits(session.paths).regions[0].bbox == BBox(x0=6, y0=12, x1=36, y1=42)
+
+
+def test_a_drawn_box_becomes_a_region_of_the_picked_kind(qapp: QApplication, cfg: Config) -> None:
+    view = _view(qapp, cfg)
+    view.kind_combo.setCurrentText("free_text")
+    view.draw_button.setChecked(True)
+    assert view.strip.is_drawing()
+    assert view.add_box(2, 110, 30, 140) == "m0001"
+    assert not view.draw_button.isChecked()
+    assert view.selected_ids() == ["m0001"]
+    assert [box[0] for box in view.strip.overlays()] == ["r0001", "r0002", "m0001"]
+    session = view.session()
+    assert session is not None
+    edit = load_edits(session.paths).regions[0]
+    assert (edit.region_id, edit.added, edit.kind) == ("m0001", True, "free_text")
+
+
+def test_translate_puts_the_models_lines_in_the_table_to_keep_on_save(
+    qapp: QApplication, cfg: Config
+) -> None:
+    asked: list[tuple[list[str], str | None]] = []
+
+    def fake_translate(cfg: Config, paths: object, ids: list[str], profile: str | None) -> list[Suggested]:
+        asked.append((ids, profile))
+        return [Suggested(region_id, "What?", "fake-profile") for region_id in ids]
+
+    view = _view(qapp, cfg, translate_fn=fake_translate)
+    assert not view.translate_selected()  # nothing selected
+    _select(view, "r0002")
+    assert view.translate_selected() and view.is_busy() and not view.translate_button.isEnabled()
+    _wait(qapp, lambda: not view.is_busy())
+    assert asked == [(["r0002"], None)]
+    assert view.table.item(1, 3).text() == "What?"  # type: ignore[union-attr]
+    assert "fake-profile" in view.status_label.text() and view.save_button.isEnabled()
+    assert view.save() == 1
+
+
+def test_read_again_puts_the_reading_in_the_source_column(qapp: QApplication, cfg: Config) -> None:
+    view = _view(qapp, cfg, read_fn=lambda cfg, paths, region_id: "안녕하세요")
+    _select(view, "r0001")
+    assert view.read_selected()
+    _wait(qapp, lambda: not view.is_busy())
+    assert view.table.item(0, 2).text() == "안녕하세요"  # type: ignore[union-attr]
+    assert view.save() == 1
+
+
+def test_a_failed_model_call_is_reported(qapp: QApplication, cfg: Config) -> None:
+    def boom(cfg: Config, paths: object, region_id: str) -> str:
+        raise RuntimeError("no daemon")
+
+    view = _view(qapp, cfg, read_fn=boom)
+    _select(view, "r0001")
+    assert view.read_selected()
+    _wait(qapp, lambda: not view.is_busy())
+    assert view.status_label.text() == "failed: RuntimeError: no daemon"
+    assert view.read_button.isEnabled()
+
+
+def test_preview_renders_the_current_pages_on_demand(qapp: QApplication, cfg: Config) -> None:
+    rendered: list[int] = []
+
+    def fake_render(cfg: Config, paths: object, page: int) -> PagePreview:
+        rendered.append(page)
+        return PagePreview(
+            page=page, y0=page * 100, y1=(page + 1) * 100, pixels=np.full((100, 40, 3), 200, np.uint8)
+        )
+
+    view = _view(qapp, cfg, preview_fn=fake_render)
+    assert not view.preview.isVisible()
+    view.set_preview_visible(True)
+    _wait(qapp, lambda: not view.is_busy())
+    assert rendered == [0] and view.preview.isVisible()  # the regions of page 0 lie on raw page 0 only
+    assert [tile.label for tile in view.preview.tiles()][:2] == [
+        "page 1: not rendered yet",
+        "page 2: not rendered yet",
+    ]
+    assert view.preview._provided and view.preview.strip_y() == view.strip.strip_y()
+    view.page_spin.setValue(2)
+    _wait(qapp, lambda: not view.is_busy())
+    assert rendered == [0, 2]
+    view.table.item(1, 3).setText("What?")  # type: ignore[union-attr]
+    view.save()  # a save makes the rendered pages stale: the current one renders again
+    _wait(qapp, lambda: not view.is_busy())
+    assert rendered == [0, 2, 2]

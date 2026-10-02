@@ -125,6 +125,7 @@ Every key in `config/default.toml`:
 | `ocr.lang` | language code recorded on every OCR'd region | yes |
 | `export.jpeg_quality` | JPEG quality of the exported slices | yes (`omniscan export`) |
 | `export.subsampling` | chroma subsampling of the exported slices: `444`, `422` or `420` | yes (`omniscan export`) |
+| `inpaint.lama` | run the LaMa inpaint stage by default (`omniscan run` without `--no-lama`; `omniscan tune` sets it false on a CPU-only machine) | yes (`omniscan run`) |
 | `inpaint.lama_url` | where the LaMa TorchScript weights are downloaded from | yes (`omniscan inpaint --lama`) |
 | `inpaint.lama_sha256` | expected sha256 of the LaMa weights, checked after every download | yes (`omniscan inpaint --lama`) |
 | `inpaint.lama_file` | file name of the weights inside `<models_dir>/lama/` | yes (`omniscan inpaint --lama`) |
@@ -183,13 +184,48 @@ future settings screen reads, and `omniscan models list` assesses each catalog m
 | Option | Meaning |
 |---|---|
 | `--json` | emit the hardware snapshot as one JSON object |
+| `--simulate <name>` | report a named machine profile instead of this PC (`rtx4090`, `rtx3060`, `gtx1650-laptop`, `rx9070xt`, `rx7800xt-linux`, `arc-b580`, `m2-air`, `m4-max`, `cpu-laptop`, `igpu-only`, `cpu-server-linux`); the `OMNISCAN_SIMULATE_HARDWARE` environment variable does the same for every command and the desktop app |
+| `--profiles` | list the machine profiles and exit |
 
 Never fails when torch is missing or broken: it then reports no GPUs and `best device: cpu`. Writes
-nothing.
+nothing. A simulated profile replaces only the *snapshot* (what the tuning plan, the model fit check and the
+settings screen read); the models still run on whatever device is really there.
 
 ```bash
 uv run omniscan hardware
 uv run omniscan hardware --json
+uv run omniscan hardware --simulate arc-b580
+```
+
+### `omniscan tune`
+
+Scan the hardware and say which settings fit it — the torch backend extra to install, `gpu.device`, the GPU
+memory budget, the OCR engine (PaddleOCR-VL from 8 GB of GPU memory, PP-OCR below), the recognition, crop and
+detector batch sizes, whether the LaMa inpaint stage is worth running (off on a CPU-only machine, where it takes
+about a minute per page) and whether translation should stay with the cloud profile (a local model needs 9 GB).
+The same plan is behind *Optimise for this PC* on the Settings page's Hardware tab.
+
+| Option | Meaning |
+|---|---|
+| `--apply` | write the plan's settings to the user `config.toml` (`gpu.device`, `gpu.vram_budget_gib`, `ocr.engine`, `ocr.rec_batch_size`, `ocr.crop_batch_size`, `detect.batch_size`, `inpaint.lama`) |
+| `--json` | emit the plan as JSON (`overrides` keyed `section.key`) |
+| `--simulate <name>` | plan for a machine profile instead of this PC (see `omniscan hardware --profiles`) |
+
+```bash
+uv run omniscan tune
+uv run omniscan tune --apply
+uv run omniscan tune --simulate cpu-laptop --json
+```
+
+```text
+tier: light
+torch backend to install: uv sync --extra cuda --extra gui
+device: cuda:0 (NVIDIA GeForce GTX 1650, 4 GB)
+GPU memory budget: 2.5 GiB
+OCR: ppocr (recognition batch 32, crop batch 8, detector batch 4)
+LaMa inpainting: on
+translation: cloud
+note: translation stays with the cloud profile: a local model needs 9 GB of GPU memory for its fallback (Ollama on this machine would run it on the CPU)
 ```
 
 ### `omniscan import`
@@ -476,7 +512,7 @@ is resumable through the chapter manifests, so a re-run only executes what chang
 | `series` | series name (required) |
 | `--chapter`, `-c <str>` | chapter folder name; repeatable. Default: all |
 | `--stage`, `-s <name>` | stage name; repeatable. Default: all ten (`ingest`, `slice`, `detect`, `ocr`, `translate`, `judge`, `inpaint`, `inpaint_lama`, `typeset`, `export`) |
-| `--no-lama` | skip the LaMa inpaint stage (`inpaint_lama`) |
+| `--no-lama` | skip the LaMa inpaint stage (`inpaint_lama`); without it the stage runs when `inpaint.lama` is true (the default; `omniscan tune` turns it off on a CPU-only machine) |
 | `--force` | re-run stages even if up to date |
 | `--step` | step-by-step mode: preview one chapter after every stage and decide before continuing |
 | `--preview-chapter <name>` | which chapter step mode previews. Default: the first chapter. Needs `--step` |
@@ -1646,6 +1682,31 @@ jikan: HTTP 504
 cover saved: ~/omniscan/library/Solo Leveling/_meta/cover.jpg (anilist)
 ```
 
+## Installing the packaged app
+
+Every release and every build of `main` produces one zip per platform — `omniscan-windows-x64.zip`,
+`omniscan-macos-arm64.zip`, `omniscan-linux-x64.zip` (the `build` workflow; `scripts/build_app.py` makes the
+same zip on your own PC with `uv run --with pyinstaller python scripts/build_app.py --smoke`). Unzip it anywhere:
+the folder holds **`OmniScan`** (the desktop app; `OmniScan.exe` on Windows, double-click it), **`omniscan`**
+(the command line, the same commands this guide describes), and the `config/` and `fonts/` folders. No Python,
+no `uv`, no Node is needed.
+
+What the packaged app contains and what it does not:
+
+- It runs on any PC: the build carries the CPU build of PyTorch, so every stage works everywhere, slowly on a
+  machine without a GPU. On first start open **Settings → Hardware** and press **Optimise for this PC** (or run
+  `omniscan tune --apply`): it sets the device, memory budget, OCR engine, batch sizes and the LaMa default to
+  what the machine can do.
+- GPU acceleration needs the matching PyTorch build (`omniscan tune` names it: `cuda`, `rocm-gfx1201`, `xpu`
+  or `mps`). Today that still means the developer install (`uv sync --extra <name> --extra gui`, see
+  "Requirements" in the README); downloading the GPU runtime into the packaged app on first start is the next
+  packaging step (`docs/ROADMAP.md`, X2).
+- Ollama (local or cloud) is still installed separately for translation; `omniscan doctor` says whether it is
+  reachable. The OCR, detection and inpainting models download on first use or with `omniscan models
+  download --required` (Models page).
+- The builds are not code-signed yet: Windows SmartScreen and macOS Gatekeeper warn on first start
+  ("More info → Run anyway"; on macOS right-click → Open, or `xattr -dr com.apple.quarantine OmniScan`).
+
 ## Desktop app
 
 `omniscan gui` opens a native desktop window over the same library and config the CLI uses. The GUI
@@ -1657,7 +1718,11 @@ uv run omniscan gui          # or: uv run python -m omniscan.gui
 
 Without the extra installed the command prints one line naming the extra and exits 2.
 
-The window has seven pages in the left sidebar (also `Ctrl+1`…`Ctrl+7`; Quick mode hides Models and Studio). The status bar shows the
+The first start opens a **setup checklist** (also Settings → Hardware → `Setup checklist…`): what the PC offers
+and the tuning plan for it with `Optimise for this PC` (the same as `omniscan tune --apply`), a button to the
+Models page for the required downloads, and whether Ollama answers. Nothing is changed without a click.
+
+The window has eight pages in the left sidebar (also `Ctrl+1`…`Ctrl+8`; Quick mode hides Models, Studio and Queue). The status bar shows the
 configured GPU device and the job state; window size and the last open page are remembered across
 restarts.
 
@@ -1721,9 +1786,10 @@ plain name and one help line; hover the name for its config key (e.g. `gpu.devic
   `translation_profiles.toml`; ticking a profile enables it (written to the user file), and a
   translate run runs exactly the enabled profiles.
 - **Appearance** — OLED black (default) or light theme, the accent colour, and Quick / Standard / Pro mode.
-- **Hardware** — the machine snapshot from `hw detect` plus one row per catalog model that does not
-  fit (level, device, why). Detection runs when you open the tab (it imports torch) or on
-  `Re-detect`.
+- **Hardware** — the machine snapshot from `hw detect`, the tuning plan for it (`omniscan tune`) with
+  `Optimise for this PC`, which writes the plan's device, memory budget, OCR engine, batch sizes and LaMa
+  default to the config, `Setup checklist…` (the first-start dialog), plus one row per catalog model that does
+  not fit (level, device, why). Detection runs when you open the tab (it imports torch) or on `Re-detect`.
 
 A successful settings write reloads the config into every page (the Library re-scans, the Run page
 re-lists series). The window never touches `secrets.env`; translation runs read it exactly as the
@@ -1738,18 +1804,49 @@ archives, since there both extraction and the archive itself would need separate
 
 **Studio** is the translator's workbench for one chapter (after detection and OCR have run). The raw strip is on
 the left with every text region outlined; the table on the right has one row per region: page, kind, source
-text, English and issues. Click a box to jump to its row, or a row to jump to its box.
+text, English, status (`todo` / `edited` / `checked`, plus `lettered` when its lettering is hand-set) and
+issues. Click a box to jump to its row, or a row to jump to its box. Several rows can be selected at once
+(Ctrl/Shift-click) and every action below applies to all of them.
 
-- Double-click a **Source** cell to fix the OCR text, or an **English** cell to write your own line (the
-  machine's line stays in the tooltip). `Remove box` deletes a false detection.
+- **Pages and chapters.** `Page` steps through the pages that hold text (`Page Up` / `Page Down`; `Only this page`
+  shows just its rows), the `◀` `▶` next to the chapter switch chapters (`Ctrl+Shift+Left` / `Right`), and the
+  counter on the right says how many lines are still `todo`, `edited` and `checked`.
+- **Boxes.** Drag the selected box to move it, drag one of its eight handles to resize it, or nudge it with the
+  arrow keys (Shift: 10 px). `Draw box` (`Ctrl+B`, or hold Shift while dragging) draws a region the detector
+  missed, of the kind picked in the `Kind…` menu; it is saved at once as its own undo step. The `Kind…` menu
+  turns the selected regions into bubble text, free text, a sound effect or a watermark; `Remove box`
+  (`Delete`) drops false detections.
+- **Text.** Double-click a **Source** cell to fix the OCR text, or an **English** cell to write your own line (the
+  machine's line stays in the tooltip). `Read again` reads the selected box with the series' OCR engine (the
+  models load for the read); `Translate` asks the translation model — every enabled profile, or the one picked
+  next to it — for the selected lines, with the chapter's neighbouring lines, glossary, story and learned memory
+  as context; both put their result into the table, to keep with `Save` or overwrite. `Revert English` goes back
+  to the machine's line. `Mark checked` / `Unmark` approve lines for proofreading (the status column).
+- **Lettering…** sets the font, size, colour, outline, alignment, angle or hides the lettering of the selected
+  regions. Only the styles you tick change, so one dialog can give twenty balloons the same size and leave their
+  colours alone; *Give the lettering back to the typesetter* drops every hand-set style.
 - `Check` runs the automatic quality check: lines with no English, Korean/Chinese/Japanese left in the English,
   lettering that does not fit its balloon, lines the judge was unsure about or that miss a locked glossary term,
-  and English far longer than the source. `Only lines with issues` hides the rest.
-- `Save` records your changes in the chapter's `edits.json`, the same edits the web Studio and `omniscan edit`
-  make (see "Studio: editing by hand" below): they are applied to `ocr.json` / `final.json` at once, kept by
-  every re-run, learned from, and one `Save` is one undo step. Nothing leaves your computer.
+  English far longer than the source, and typos (`Not a typo` accepts the selected lines' unknown words for the
+  series). `Only lines with issues` hides the rest.
+- `Preview` shows, between the strip and the table, the current page as the release will look — cleaned,
+  hand cleanup and the lettering with every saved edit — rendered on the spot (CPU) and scrolling with the raw
+  strip. It re-renders after a save, undo, redo or re-letter.
+- `Save` (`Ctrl+S`) records your changes in the chapter's `edits.json`, the same edits the web Studio and
+  `omniscan edit` make (see "Studio: editing by hand" below): they are applied to `ocr.json` / `final.json` at
+  once, kept by every re-run, learned from, and one `Save` is one undo step. `Undo` (`Ctrl+Z`) and `Redo`
+  (`Ctrl+Y`) walk the chapter's shared edit history. Nothing leaves your computer.
 - `Re-letter` saves, then re-runs `typeset` and `export` for the chapter, so the Reader shows the new output. A
-  changed source line needs a translate/judge run (Run page) before the machine's English follows it.
+  changed source line needs a translate/judge run (Run page) — or `Translate` — before the English follows it.
+
+**Queue** is the batch page: the same job queue as `omniscan queue` (one SQLite file, `work_root/queue.db`).
+Pick a series, all or some of its chapters, the stages, a priority and `Force re-run`, then `Add job`; the
+table lists every job with its status, attempts, stages, chapters and last error. `Run queue` drains the queue
+on a background thread — every queued job, highest priority first, one at a time, until the queue is empty —
+and the status bar shows `job: running` meanwhile; `Pause` / `Resume` / `Cancel` / `Retry` act on the selected
+job and `Clear finished` deletes the done and cancelled ones (failed jobs stay so you can retry them). Jobs
+survive restarts. Exactly one worker per queue: do not run `omniscan queue run` or `omniscan serve` on the
+same library while the page is draining.
 
 ## Studio: editing by hand
 

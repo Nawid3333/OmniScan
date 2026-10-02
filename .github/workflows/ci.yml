@@ -117,6 +117,44 @@ jobs:
       - name: Test (non-GPU suite)
         run: uv run --with "$XDIST" pytest -m "not gpu" -n auto --durations=15
 
+  # Every GPU vendor without owning one: the planning side (device choice, memory budget, model fit, the
+  # tuning plan, the settings screen) runs against each named machine profile on every OS. The tensor side
+  # still runs on the CPU here; the gpu-marked tests need the real hardware.
+  hardware-profiles:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ${{ inputs.linux-runner || 'ubuntu-latest' }}
+          - os: ${{ inputs.windows-runner || 'windows-latest' }}
+          - os: macos-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0 (no floating major tags since v8: pinned)
+
+      - name: Sync (cpu)
+        run: uv sync --extra cpu
+
+      - name: Profile tests
+        run: uv run pytest tests/unit/test_hw_profiles.py tests/unit/test_hw_detect.py tests/unit/test_hw_assess.py tests/unit/test_gpu_device.py -q
+
+      - name: Every profile plans and lists its models
+        run: |
+          for name in $(uv run omniscan hardware --profiles | awk '{print $1}'); do
+            echo "== $name"
+            uv run omniscan hardware --simulate "$name"
+            uv run omniscan tune --simulate "$name"
+            OMNISCAN_SIMULATE_HARDWARE="$name" uv run omniscan models list > /dev/null
+          done
+
   lock:
     # uv.lock must cover every backend extra; a pyproject.toml change without `uv lock` fails here
     runs-on: ubuntu-latest
