@@ -1,5 +1,5 @@
 """LibraryView tests (offscreen): series list, per-chapter stage states, double-click, refresh, and the chapter
-file buttons (open / send a chapter project, export a contribution)."""
+file buttons (open / send a chapter project, export a contribution, export for and import from other tools)."""
 
 from __future__ import annotations
 
@@ -9,16 +9,22 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QApplication, QListWidgetItem, QTableWidget, QTableWidgetItem
 
 from omniscan.core.config import Config, PathsConfig, ShareConfig
+from omniscan.core.paths import ChapterPaths, SeriesPaths
+from omniscan.core.schemas import BBox, FinalArtifact, FinalLine, Region, RegionsArtifact
 from omniscan.edits import store
 from omniscan.gui.library_view import LibraryView
+from omniscan.interchange import ballons
+from omniscan.interchange.labelplus import LabelFile, write
 from omniscan.share.contribution import read_archive
-from tests.fixtures.gui_library import CHAPTERS, SERIES, build_library
+from omniscan.translate.on_demand import english_lines
+from tests.fixtures.gui_library import CHAPTERS, SERIES, _artifacts, build_library
 from tests.unit.test_share_contribution import make_chapter
 
 
@@ -256,3 +262,127 @@ def test_export_contribution_writes_the_series_archive(qapp: QApplication, tmp_p
     view.contribute_button.click()
     _settle(qapp, view)
     assert "opted out of sharing" in view.status_label.text()
+
+
+# ---------------------------------------------------------------------- other tools
+
+
+def _translatable(cfg: Config) -> ChapterPaths:
+    """Episode 03 with page geometry, two regions and one English line (not cleaned, not lettered)."""
+    paths = SeriesPaths.from_config(cfg, SERIES).chapter(CHAPTERS[2])
+    _artifacts(paths, {"ingest", "slice"})
+    for index in range(3):  # the pages where a real library keeps them (the fixture's own sit in raw/)
+        Image.new("RGB", (40, 100), (200, 200, 200)).save(paths.raw_dir / f"{index + 1:04d}.jpg", "JPEG")
+    RegionsArtifact(
+        regions=[
+            Region(
+                id="r0001",
+                slice_index=0,
+                kind="bubble_text",
+                bbox=BBox(x0=5, y0=10, x1=35, y1=40),
+                text="안녕",
+            ),
+            Region(
+                id="r0002",
+                slice_index=2,
+                kind="bubble_text",
+                bbox=BBox(x0=5, y0=220, x1=35, y1=260),
+                text="뭐",
+            ),
+        ]
+    ).save(paths.artifact("ocr.json"))
+    FinalArtifact(
+        judge_model="fake", lines=[FinalLine(region_id="r0001", text="Hello", decision="pick")]
+    ).save(paths.artifact("final.json"))
+    return paths
+
+
+def test_a_chapter_goes_out_to_other_tools_and_their_lines_come_back(
+    qapp: QApplication, cfg: Config, tmp_path: Path
+) -> None:
+    """LabelPlus, PSD and BallonsTranslator exports write the CLI's files; the imports take the lines back."""
+    paths = _translatable(cfg)
+    label_file = tmp_path / "ep3.txt"
+    answers: dict[str, Path | None] = {
+        "Export for LabelPlus": label_file,
+        "Import a LabelPlus file": label_file,
+    }
+    folders = {
+        "Export layered PSD pages": tmp_path / "psd",
+        "Export a BallonsTranslator project": tmp_path / "bt",
+    }
+    suggested: list[Path] = []
+    view = LibraryView(
+        cfg,
+        ask_save=_asking(answers),
+        ask_open=_asking(answers),
+        ask_folder=lambda title, start: suggested.append(start) or folders[title],
+    )
+    qapp.processEvents()
+    assert not view.export_button.isEnabled() and not view.import_button.isEnabled()
+    _select(view, CHAPTERS[2])
+    assert view.export_button.isEnabled() and view.import_button.isEnabled()
+
+    view.export_labelplus()
+    _settle(qapp, view)
+    output = cfg.paths.output_root / SERIES
+    assert answers["Export for LabelPlus name"] == output / "_labelplus" / f"{CHAPTERS[2]}.txt"
+    assert view.status_label.text() == "Wrote 1 label(s) on 3 page(s) to ep3.txt"  # r0002 has no English yet
+    label_file.write_text(label_file.read_text("utf-8-sig").replace("Hello", "Hi there"), "utf-8-sig")
+    view.import_labelplus()
+    _settle(qapp, view)
+    assert view.status_label.text().startswith(f"Imported 1 English line(s) into {CHAPTERS[2]} (")
+    assert english_lines(paths)["r0001"] == "Hi there"
+
+    view.export_psd()
+    _settle(qapp, view)
+    assert suggested[-1] == output / "_psd" / CHAPTERS[2]
+    assert sorted(p.name for p in (tmp_path / "psd").iterdir()) == ["0001.psd", "0002.psd", "0003.psd"]
+    assert view.status_label.text().endswith("(no lettering yet: run typeset for the text layers)")
+
+    view.export_ballons()
+    _settle(qapp, view)
+    assert suggested[-1] == output / "_ballons" / CHAPTERS[2]
+    assert view.status_label.text().startswith("Wrote 2 text block(s) on 3 page(s)")
+    answers["Import a BallonsTranslator project"] = ballons.project_file(tmp_path / "bt")
+    view.import_ballons()
+    _settle(qapp, view)
+    assert view.status_label.text().startswith(
+        f"Imported 0 English line(s) into {CHAPTERS[2]} (1 already the same"
+    )
+
+
+def test_an_import_before_ingest_and_cancelled_tool_dialogs_are_harmless(
+    qapp: QApplication, cfg: Config, tmp_path: Path
+) -> None:
+    """A chapter with no page geometry refuses with the CLI's reason; cancelled dialogs start nothing."""
+    label_file = tmp_path / "x.txt"
+    label_file.write_text(write(LabelFile(pages={"0001.jpg": []})), "utf-8-sig")  # valid, with no labels
+    answers: dict[str, Path | None] = {
+        "Import a LabelPlus file": label_file,
+        "Export for LabelPlus": None,
+        "Import a BallonsTranslator project": None,
+    }
+    view = LibraryView(
+        cfg,
+        ask_open=_asking(answers),
+        ask_save=_asking(answers),
+        ask_open_many=lambda *_: [],
+        ask_folder=lambda *_: None,
+    )
+    qapp.processEvents()
+    _select(view, CHAPTERS[2])
+    before = view.status_label.text()
+    for action in (
+        view.export_labelplus,
+        view.export_psd,
+        view.export_ballons,
+        view.import_ballons,
+        view.import_mit,
+    ):
+        action()
+        assert not view._busy
+    assert view.status_label.text() == before
+    view.import_labelplus()
+    _settle(qapp, view)
+    assert view.status_label.text() == "ingest.json not found — run the ingest stage first"
