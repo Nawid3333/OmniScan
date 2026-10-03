@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -204,3 +207,19 @@ def test_hardware_and_tune_simulate_a_profile(tmp_path: Path, monkeypatch: pytes
     assert applied.exit_code == 0 and "wrote" in applied.stdout
     written = user_toml.read_text(encoding="utf-8")
     assert 'device = "cuda:0"' in written and "rec_batch_size = 32" in written and "lama = true" in written
+
+
+def test_korean_text_on_a_piped_ansi_code_page_stream_does_not_crash(tmp_path: Path) -> None:
+    # Windows pipes and redirects default to the ANSI code page (cp1252), which has no Hangul: on the reference PC
+    # `omniscan edit ocr ... | more` stopped with UnicodeEncodeError (stdout), and stderr printed 없-style
+    # escapes instead of the name. PYTHONIOENCODING simulates such a pipe on every OS.
+    env = {**os.environ, "PYTHONIOENCODING": "cp1252", "OMNISCAN_PATHS__LIBRARY_ROOT": str(tmp_path)}
+    done = subprocess.run(
+        [sys.executable, "-c", "from omniscan.cli import app; app()", "status", "없는시리즈"],
+        capture_output=True,
+        env=env,
+        timeout=120,
+    )
+    err = done.stderr.decode("utf-8")
+    assert "UnicodeEncodeError" not in err
+    assert done.returncode == 2 and "no chapters found for series '없는시리즈'" in err

@@ -5,6 +5,7 @@ Pure functions over plain floats (no torch): boxes are (x0, y0, x1, y1) in strip
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import Literal
@@ -210,6 +211,18 @@ def _bbox(box: Box, width: int, height: int) -> BBox | None:
     if x1 <= x0 or y1 <= y0:
         return None
     return BBox(x0=x0, y0=y0, x1=x1, y1=y1)
+
+
+_REGION_ID = re.compile(r"r(\d+)")
+
+
+def next_region_id(regions: Sequence[Region]) -> str:
+    """The id for a region appended after `regions`: one past the highest `r<N>` id (r0001 for none).
+
+    Not the count plus one: a stage that dropped regions (the OCR's unreadable detections) leaves gaps, and
+    two regions with one id share one inpaint mask and one translation."""
+    numbers = [int(match.group(1)) for region in regions if (match := _REGION_ID.fullmatch(region.id))]
+    return f"r{max(numbers, default=0) + 1:04d}"
 
 
 def build_regions(
