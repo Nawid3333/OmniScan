@@ -23,8 +23,12 @@ DEFAULT_ACCENT = "#7c5cff"
 # sidebar pages each mode shows; "pro" shows everything (the Studio's advanced panels key off it too)
 MODE_PAGES: dict[UiMode, frozenset[str]] = {
     "quick": frozenset({"Library", "Reader", "Run", "Settings", "Import"}),
-    "standard": frozenset({"Library", "Reader", "Run", "Models", "Settings", "Import", "Studio", "Queue"}),
-    "pro": frozenset({"Library", "Reader", "Run", "Models", "Settings", "Import", "Studio", "Queue"}),
+    "standard": frozenset(
+        {"Library", "Reader", "Run", "Models", "Settings", "Import", "Studio", "Queue", "Glossary"}
+    ),
+    "pro": frozenset(
+        {"Library", "Reader", "Run", "Models", "Settings", "Import", "Studio", "Queue", "Glossary"}
+    ),
 }
 
 
