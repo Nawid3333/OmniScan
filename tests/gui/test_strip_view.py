@@ -417,3 +417,40 @@ def test_the_brush_paints_a_stroke_instead_of_selecting(qapp: QApplication, tmp_
     view.set_brush(4)
     view.set_editable(False)
     assert view.brush() is None
+
+
+def test_cut_mode_adds_moves_and_removes_output_cuts(qapp: QApplication, tmp_path: Path) -> None:
+    view, changes = _editable(qapp, tmp_path)
+    added: list[int] = []
+    moved: list[tuple[int, int]] = []
+    removed: list[int] = []
+    view.cut_added.connect(added.append)
+    view.cut_moved.connect(lambda old, new: moved.append((old, new)))
+    view.cut_removed.connect(removed.append)
+    view.set_brush(5)
+    view.set_cut_mode(True)  # one tool at a time
+    assert view.is_cutting() and view.brush() is None
+    view.set_cut_lines([50, 20], crossing=[20])
+    assert view.cut_lines() == (20, 50)
+
+    _drag(view, (20, 35), (20, 35))  # a click away from every cut, inside box "a": a cut, not a selection
+    assert added == [35] and changes == []
+    assert view.cut_at(QPointF(10, 52)) == 50 and view.cut_at(QPointF(10, 35)) is None
+    _drag(view, (10, 51), (10, 70))  # grab the cut at 50, drop it at 70
+    assert moved == [(50, 70)]
+    view.mousePressEvent(
+        QMouseEvent(
+            QEvent.Type.MouseButtonPress,
+            QPointF(10, 21),
+            QPointF(10, 21),
+            Qt.MouseButton.RightButton,
+            Qt.MouseButton.RightButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+    )
+    assert removed == [20]
+    view.set_draw_mode(True)
+    assert not view.is_cutting()
+    view.set_cut_mode(True)
+    view.set_editable(False)
+    assert not view.is_cutting()

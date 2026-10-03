@@ -6,13 +6,14 @@ linked exactly: same strip y, same zoom — this is what `omniscan.gui.compare_v
 
 Overlay boxes (text regions) can be outlined over the strip; an *editable* view (the Studio) also lets
 the selected box be dragged, resized by its eight handles or nudged with the arrow keys
-(`overlay_changed`), and a new box be drawn in draw mode or with Shift held (`box_drawn`).
+(`overlay_changed`), a new box be drawn in draw mode or with Shift held (`box_drawn`), and the chapter's
+output cuts be added, dragged and removed in cut mode (`cut_added`, `cut_moved`, `cut_removed`).
 """
 
 from __future__ import annotations
 
 from collections import OrderedDict
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from math import ceil
 from pathlib import Path
@@ -46,6 +47,7 @@ HANDLE_PX = 5  # half the side of a resize handle, in widget pixels
 MIN_BOX_PX = 4  # a box can never be dragged or drawn smaller than this (strip pixels)
 NUDGE_PX = 1
 NUDGE_SHIFT_PX = 10
+CUT_GRAB_PX = 6  # a press this close to an output cut (widget pixels) grabs it
 _HANDLE_CURSORS: dict[Handle, Qt.CursorShape] = {
     "move": Qt.CursorShape.SizeAllCursor,
     "n": Qt.CursorShape.SizeVerCursor,
@@ -85,6 +87,9 @@ class StripView(QAbstractScrollArea):
     overlay_changed = Signal(str, int, int, int, int)  # a box moved, resized or nudged by hand (strip space)
     box_drawn = Signal(int, int, int, int)  # a new box drawn by hand (strip space)
     stroke_painted = Signal(list, int)  # a brush stroke: its strip points [(x, y), ...] and the brush radius
+    cut_added = Signal(int)  # cut mode: a click asks for an output cut at this strip row
+    cut_moved = Signal(int, int)  # cut mode: an output cut dragged from one strip row to another
+    cut_removed = Signal(int)  # cut mode: a right-click on an output cut
 
     def __init__(self, parent: QWidget | None = None, *, max_cached_images: int = 32) -> None:
         """Create an empty view; `set_tiles` fills it."""
@@ -108,6 +113,10 @@ class StripView(QAbstractScrollArea):
         self._drag: _Drag | None = None
         self._brush: int | None = None  # brush radius in strip px while painting is on
         self._stroke: list[tuple[float, float]] | None = None  # the stroke being painted
+        self._cut_mode = False
+        self._cuts: tuple[int, ...] = ()  # the output cuts drawn in cut mode (strip rows)
+        self._crossing: frozenset[int] = frozenset()  # the ones that run through a region (drawn red)
+        self._cut_drag: tuple[int, int] | None = None  # the cut being dragged and the row it is at now
         self.verticalScrollBar().valueChanged.connect(self._on_value_changed)
         self.viewport().installEventFilter(self)
         self.viewport().setMouseTracking(True)  # the cursor shows what a press would do
@@ -179,6 +188,7 @@ class StripView(QAbstractScrollArea):
             self._drag = None
             self._draw_mode = False
             self._brush, self._stroke = None, None
+            self._cut_mode, self._cut_drag = False, None
             self.viewport().unsetCursor()
         self.viewport().update()
 
@@ -191,6 +201,7 @@ class StripView(QAbstractScrollArea):
         self._draw_mode = drawing and self._editable
         if self._draw_mode:
             self._brush, self._stroke = None, None
+            self._cut_mode, self._cut_drag = False, None
         self.viewport().setCursor(
             Qt.CursorShape.CrossCursor if self._draw_mode else Qt.CursorShape.ArrowCursor
         )
@@ -206,6 +217,7 @@ class StripView(QAbstractScrollArea):
         self._stroke = None
         if self._brush is not None:
             self._draw_mode = False
+            self._cut_mode, self._cut_drag = False, None
         self.viewport().setCursor(
             Qt.CursorShape.CrossCursor
             if self._brush is not None or self._draw_mode
@@ -216,6 +228,46 @@ class StripView(QAbstractScrollArea):
     def brush(self) -> int | None:
         """The brush radius while painting is on, else None."""
         return self._brush
+
+    def set_cut_mode(self, cutting: bool) -> None:
+        """In cut mode the output cuts are drawn across the strip: a left click asks for a new one (`cut_added`), a
+        drag moves the one under the press (`cut_moved`) and a right-click removes it (`cut_removed`), instead of
+        selecting, drawing or painting (only in an editable view)."""
+        self._cut_mode = cutting and self._editable
+        self._cut_drag = None
+        if self._cut_mode:
+            self._draw_mode = False
+            self._brush, self._stroke = None, None
+        self.viewport().setCursor(
+            Qt.CursorShape.CrossCursor if self._cut_mode or self._draw_mode else Qt.CursorShape.ArrowCursor
+        )
+        self.viewport().update()
+
+    def is_cutting(self) -> bool:
+        """Whether cut mode is on."""
+        return self._cut_mode
+
+    def set_cut_lines(self, cuts: Sequence[int], crossing: Collection[int] = ()) -> None:
+        """The output cuts cut mode draws (strip rows); the ones in `crossing` run through a region and show red."""
+        self._cuts = tuple(sorted(cuts))
+        self._crossing = frozenset(crossing)
+        self._cut_drag = None
+        self.viewport().update()
+
+    def cut_lines(self) -> tuple[int, ...]:
+        """The output cuts cut mode draws."""
+        return self._cuts
+
+    def cut_at(self, pos: QPointF) -> int | None:
+        """The output cut within CUT_GRAB_PX widget pixels of `pos` (the closest one), or None."""
+        value = self.verticalScrollBar().value()
+        near = [(abs(cut * self._zoom - value - pos.y()), cut) for cut in self._cuts]
+        hits = [(distance, cut) for distance, cut in near if distance <= CUT_GRAB_PX]
+        return min(hits)[1] if hits else None
+
+    def _cut_row(self, y: float) -> int:
+        """Strip row `y` kept strictly inside the strip (a cut at its top or bottom edge splits nothing)."""
+        return min(max(round(y), 1), max(self._strip_height - 1, 1))
 
     def nudge(self, dx: int, dy: int) -> None:
         """Move the selected box by (dx, dy) strip pixels (`overlay_changed`)."""
@@ -318,7 +370,11 @@ class StripView(QAbstractScrollArea):
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         """A left press selects the box under it (`overlay_clicked`); in an editable view it also starts a
-        move or resize of the selected box, or draws a new box (draw mode, or Shift held)."""
+        move or resize of the selected box, or draws a new box (draw mode, or Shift held). In cut mode it adds or
+        grabs an output cut, and a right press removes one."""
+        if self._cut_mode and self._strip_width > 0:
+            self._press_cut(event)
+            return
         if event.button() != Qt.MouseButton.LeftButton:
             super().mousePressEvent(event)
             return
@@ -351,8 +407,30 @@ class StripView(QAbstractScrollArea):
             return
         super().mousePressEvent(event)
 
+    def _press_cut(self, event: QMouseEvent) -> None:
+        """Cut mode: a left press on a cut grabs it, elsewhere asks for a new one; a right press on one removes it."""
+        hit = self.cut_at(event.position())
+        if event.button() == Qt.MouseButton.RightButton:
+            if hit is not None:
+                self.cut_removed.emit(hit)
+        elif event.button() == Qt.MouseButton.LeftButton:
+            if hit is not None:
+                self._cut_drag = (hit, hit)
+            else:
+                self.cut_added.emit(self._cut_row(self.strip_point(event.position())[1]))
+        event.accept()
+
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        """Drag the box being moved, resized or drawn, or paint on; otherwise show what a press would do."""
+        """Drag the box being moved, resized or drawn, a cut, or paint on; otherwise show what a press would do."""
+        if self._cut_mode:
+            if self._cut_drag is not None:
+                self._cut_drag = (self._cut_drag[0], self._cut_row(self.strip_point(event.position())[1]))
+                self.viewport().update()
+            else:
+                near = self.cut_at(event.position()) is not None
+                self.viewport().setCursor(Qt.CursorShape.SplitVCursor if near else Qt.CursorShape.CrossCursor)
+            event.accept()
+            return
         if self._stroke is not None:
             self._stroke.append(self.strip_point(event.position()))
             self.viewport().update()
@@ -393,7 +471,16 @@ class StripView(QAbstractScrollArea):
         event.accept()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
-        """End a drag: emit the moved/resized box, the drawn one (when it is big enough) or the painted stroke."""
+        """End a drag: emit the moved/resized box, the drawn one (when it is big enough), the painted stroke or
+        the moved cut."""
+        cut_drag = self._cut_drag
+        if cut_drag is not None and event.button() == Qt.MouseButton.LeftButton:
+            self._cut_drag = None
+            self.viewport().update()
+            if cut_drag[1] != cut_drag[0]:
+                self.cut_moved.emit(*cut_drag)
+            event.accept()
+            return
         stroke = self._stroke
         if stroke is not None and event.button() == Qt.MouseButton.LeftButton:
             self._stroke = None
@@ -611,7 +698,26 @@ class StripView(QAbstractScrollArea):
                 self._paint_gap(painter, rect, tile.label)
         self._paint_overlays(painter, x_off, value)
         self._paint_stroke(painter, x_off, value)
+        self._paint_cuts(painter, x_off, value)
         painter.end()
+
+    def _paint_cuts(self, painter: QPainter, x_off: float, value: int) -> None:
+        """Cut mode: every output cut as a dashed line across the strip (red when it runs through a region), the
+        one being dragged solid at its new row."""
+        if not self._cut_mode or not self._cuts:
+            return
+        width = self._strip_width * self._zoom
+        normal = self.palette().color(QPalette.ColorRole.Highlight)
+        dragged, row_now = self._cut_drag if self._cut_drag is not None else (None, None)
+        for cut in self._cuts:
+            row = row_now if cut == dragged and row_now is not None else cut
+            y = row * self._zoom - value
+            if y < -2 or y > self.viewport().height() + 2:
+                continue
+            color = QColor(220, 40, 40) if cut in self._crossing and cut != dragged else normal
+            style = Qt.PenStyle.SolidLine if cut == dragged else Qt.PenStyle.DashLine
+            painter.setPen(QPen(color, 2.0, style))
+            painter.drawLine(QPointF(x_off, y), QPointF(x_off + width, y))
 
     def _paint_stroke(self, painter: QPainter, x_off: float, value: int) -> None:
         """The stroke being painted, as a translucent band as wide as the brush."""

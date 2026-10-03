@@ -330,6 +330,16 @@ class StudioSession:
         self._reload()
         return region.id
 
+    def set_cuts(self, cuts: list[int] | None, *, max_height: int | None = None) -> list[int] | None:
+        """Set where the exported images split (strip rows; None or none at all: one image per slice); unsaved
+        changes are saved first and the cuts are written at once, as their own undo step. Returns what was stored;
+        ValueError for a cut outside the strip or an image taller than `max_height` rows."""
+        self.save()
+        try:
+            return store.set_cuts(self.paths, cuts, max_height=max_height)
+        finally:
+            self._reload()
+
     def set_translation(self, region_id: str, text: str) -> None:
         """Set a region's English line; setting it back to the machine's line clears the hand-written one."""
         self._require(region_id)
