@@ -1,8 +1,9 @@
-"""Qt-free services behind the desktop Studio: translate, re-read or find regions now, render a page preview.
+"""Qt-free services behind the desktop Studio: translate, re-read or find regions now, render a page preview,
+re-read the finished pages.
 
 Each call is blocking (it waits on a model) and runs on a worker thread in the GUI; the view injects fakes
-in tests. Nothing here writes to the chapter: suggestions and readings go into the Studio's session, where
-Save records them like any hand edit.
+in tests. Nothing here writes to the chapter's edits: suggestions and readings go into the Studio's session, where
+Save records them like any hand edit (the finished-page re-read writes only its own qa.json).
 """
 
 from __future__ import annotations
@@ -16,7 +17,8 @@ import numpy as np
 from omniscan.cleanup import store as cleanup_store
 from omniscan.core.config import Config, SeriesConfigError, get_secrets, series_config
 from omniscan.core.paths import ChapterPaths, SeriesPaths, natural_key
-from omniscan.core.schemas import IngestArtifact
+from omniscan.core.schemas import IngestArtifact, QaIssue
+from omniscan.qa.leftover import load_issues
 from omniscan.translate.on_demand import translate_now
 from omniscan.translate.profiles import default_profile_paths, load_profiles
 from omniscan.translate.voices import load_voices
@@ -107,6 +109,42 @@ def read_region(cfg: Config, paths: ChapterPaths, region_id: str) -> str:
     from omniscan.ocr.on_demand import read_region_now  # torch loads only when a region is read
 
     return read_region_now(paths, region_id, _series_cfg(cfg, paths)).text
+
+
+def read_finished_pages(cfg: Config, paths: ChapterPaths) -> list[QaIssue]:
+    """Re-read the chapter's finished pages with the OCR — the qa stage, as `omniscan qa` runs it (the models load
+    for it, with exclusive GPU access; pages unchanged since the last read are not read again) — and return what
+    still shows source text or a watermark (qa.json). RuntimeError with the stage's error when it fails."""
+    from omniscan.core.stage import run_series  # torch loads only when the pages are read
+    from omniscan.gpu.groups import build_vram_manager
+    from omniscan.gpu.lock import acquire_gpu_lock, release_gpu_lock
+    from omniscan.qa.stage import QaStage
+
+    scfg = _series_cfg(cfg, paths)
+    lock = acquire_gpu_lock() if scfg.gpu.device != "cpu" else None
+    try:
+        manager = build_vram_manager(scfg)
+        try:
+            outcomes = run_series([QaStage()], scfg, paths.series, [paths.chapter], gpu=manager)
+        finally:
+            manager.release()
+    finally:
+        if lock is not None:
+            release_gpu_lock(lock)
+    failed = next(
+        (outcome for outcome in outcomes.get(paths.chapter, []) if outcome.status == "failed"), None
+    )
+    if failed is not None:
+        raise RuntimeError(failed.error or "the qa stage failed")
+    return load_issues(paths)
+
+
+def finished_page_issues(paths: ChapterPaths) -> list[QaIssue]:
+    """What the last re-read of the finished pages found (qa.json); none before one ran or for a damaged file."""
+    try:
+        return load_issues(paths)
+    except OSError, ValueError:
+        return []
 
 
 def find_missed(cfg: Config, paths: ChapterPaths, page: int, threshold: float | None = None) -> list[Found]:

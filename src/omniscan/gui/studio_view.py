@@ -6,7 +6,8 @@ or nudged with the arrow keys, and `Draw box` (or Shift + drag) draws a region t
 with the raw strip. Right: one row per region (page, kind, speaker, source, English, status, issues), editable
 in place; several rows can be selected at once and the actions apply to all of them (remove, mark checked,
 revert English, kind, lettering styles, translate). `Find missed text` runs the detector again on the page in
-view and offers what no region covers, to add as hand-drawn regions.
+view and offers what no region covers, to add as hand-drawn regions. `Find & replace…` and `Consistency…`
+(gui/series_dialogs.py) work across the chapter or the whole series; a line in the report opens here.
 
 Everything goes through `omniscan.edits.session.StudioSession`: changes stay in memory until Save, which
 records them in edits.json (one undo step; Undo/Redo walk the chapter's shared history) and applies them to
@@ -46,16 +47,18 @@ from PySide6.QtWidgets import (
 
 from omniscan.core.config import Config, series_config
 from omniscan.core.paths import ChapterPaths, SeriesPaths
-from omniscan.core.schemas import BBox, RegionKind
+from omniscan.core.schemas import BBox, QaIssue, RegionKind
 from omniscan.edits import store
 from omniscan.edits.session import StudioRow, StudioSession
 from omniscan.gui.found_dialog import FoundDialog
 from omniscan.gui.lettering_dialog import LetteringDialog
 from omniscan.gui.run_worker import RunWorker
-from omniscan.gui.services import library
+from omniscan.gui.series_dialogs import ConsistencyDialog, ReplaceDialog
+from omniscan.gui.services import library, series_check
 from omniscan.gui.services import studio as services
 from omniscan.gui.services.library import Tile
 from omniscan.gui.services.runs import RunController, RunOutcome, RunSpec
+from omniscan.gui.services.series_check import Consistency
 from omniscan.gui.services.studio import PagePreview, Suggested
 from omniscan.gui.strip_view import StripView
 from omniscan.gui.theme import set_role
@@ -81,6 +84,16 @@ FindFn = Callable[[Config, ChapterPaths, int, float | None], list["Found"]]
 PickFn = Callable[
     [list["Found"], int, QWidget], list["Found"]
 ]  # which found areas to add (a dialog; tests fake it)
+ReplaceFn = Callable[[Config, str, str, QWidget], int]  # find and replace in (series, chapter): lines changed
+ConsistencyFn = Callable[[Config, str], Consistency]
+QaFn = Callable[[Config, ChapterPaths], list[QaIssue]]  # re-read the finished pages: what still shows
+
+
+def _find_replace(cfg: Config, series: str, chapter: str, parent: QWidget) -> int:
+    """Run the find-and-replace dialog over `chapter` (or the whole series); how many lines it changed."""
+    dialog = ReplaceDialog(cfg, series, chapter, parent=parent)
+    dialog.exec()
+    return dialog.applied
 
 
 def _pick_found(found: list[Found], page: int, parent: QWidget) -> list[Found]:
@@ -131,10 +144,13 @@ class StudioView(QWidget):
         preview_fn: PreviewFn | None = None,
         find_fn: FindFn | None = None,
         pick_fn: PickFn | None = None,
+        replace_fn: ReplaceFn | None = None,
+        consistency_fn: ConsistencyFn | None = None,
+        qa_fn: QaFn | None = None,
         parent: QWidget | None = None,
     ) -> None:
-        """Build the page; the factories replace the re-letter run, the models, the renderer and the dialog
-        that picks found text (tests)."""
+        """Build the page; the factories replace the re-letter run, the models, the renderer, the dialog that
+        picks found text, the find-and-replace dialog and the consistency report (tests)."""
         super().__init__(parent)
         self._cfg = cfg
         self._controller_factory = controller_factory or (lambda cfg, spec: RunController(cfg, spec))
@@ -143,6 +159,10 @@ class StudioView(QWidget):
         self._preview_fn: PreviewFn = preview_fn or services.render_preview
         self._find_fn: FindFn = find_fn or services.find_missed
         self._pick_fn: PickFn = pick_fn or _pick_found
+        self._replace_fn: ReplaceFn = replace_fn or _find_replace
+        self._consistency_fn: ConsistencyFn = consistency_fn or series_check.consistency
+        self._qa_fn: QaFn = qa_fn or services.read_finished_pages
+        self.consistency_dialog: ConsistencyDialog | None = None  # the open report, if any
         self._session: StudioSession | None = None
         self._rows: list[StudioRow] = []
         self._issues: dict[str, list[str]] = {}
@@ -170,6 +190,19 @@ class StudioView(QWidget):
         self.issues_only = QCheckBox("Only lines with issues", self)
         self.progress_label = QLabel(self)
         set_role(self.progress_label, "muted")
+        self.replace_button = QPushButton("Find && replace…", self)
+        self.replace_button.setToolTip(
+            "Find and replace in this chapter's or the whole series' English lines or source texts (Ctrl+H)"
+        )
+        self.qa_button = QPushButton("Read finished pages", self)
+        self.qa_button.setToolTip(
+            "Re-read the exported pages with the OCR and flag lines whose source text or watermark still shows "
+            "(omniscan qa; the models load for it)"
+        )
+        self.consistency_button = QPushButton("Consistency…", self)
+        self.consistency_button.setToolTip(
+            "The series' source lines translated in more than one way, and lines that miss a locked term"
+        )
 
         # ---- actions
         self.undo_button = QPushButton("Undo", self)
@@ -269,6 +302,9 @@ class StudioView(QWidget):
             nav.addWidget(widget)
         nav.addStretch(1)
         nav.addWidget(self.progress_label)
+        nav.addWidget(self.qa_button)
+        nav.addWidget(self.replace_button)
+        nav.addWidget(self.consistency_button)
 
         actions = QHBoxLayout()
         for widget in (
@@ -329,6 +365,9 @@ class StudioView(QWidget):
         self.draw_button.toggled.connect(self.strip.set_draw_mode)
         self.remove_button.clicked.connect(self.remove_selected)
         self.find_button.clicked.connect(self.find_missed)
+        self.replace_button.clicked.connect(self.find_replace)
+        self.consistency_button.clicked.connect(self.check_consistency)
+        self.qa_button.clicked.connect(self.read_finished)
         self.preview_button.toggled.connect(self.set_preview_visible)
         self.save_button.clicked.connect(self.save)
         self.reletter_button.clicked.connect(self.reletter)
@@ -359,6 +398,7 @@ class StudioView(QWidget):
             (QKeySequence("Ctrl+Shift+Left"), lambda: self.step_chapter(-1)),
             (QKeySequence("Ctrl+B"), self.draw_button.toggle),
             (QKeySequence("Delete"), self.remove_selected),
+            (QKeySequence("Ctrl+H"), self.find_replace),
         ):
             shortcut = QShortcut(QKeySequence(keys), self)
             shortcut.setContext(context)
@@ -442,18 +482,23 @@ class StudioView(QWidget):
         self._on_selection()
 
     def run_check(self) -> int:
-        """Run the QA pass, show each row's issues; returns how many issues were found."""
+        """Run the QA pass, show each row's issues (with what the last re-read of the finished pages found);
+        returns how many issues were found."""
         if self._session is None:
             return 0
         issues = self._session.issues()
+        finished = services.finished_page_issues(self._session.paths)
         self._issues, self._typos = {}, {}
         for issue in issues:
             self._issues.setdefault(issue.region_id, []).append(issue.message)
             if issue.kind == "typo":
                 self._typos.setdefault(issue.region_id, []).append(issue.word)
+        for leftover in finished:
+            self._issues.setdefault(leftover.region_id, []).append(f"finished page: {leftover.message}")
+        count = len(issues) + len(finished)
         self._fill_table()
-        self.status_label.setText(f"{len(issues)} issue(s) in {len(self._issues)} line(s)")
-        return len(issues)
+        self.status_label.setText(f"{count} issue(s) in {len(self._issues)} line(s)")
+        return count
 
     def allow_selected_words(self) -> list[str]:
         """Mark the selected lines' unknown words "not a typo" for the series, then check again; returns them."""
@@ -617,6 +662,50 @@ class StudioView(QWidget):
         )
         return True
 
+    def find_replace(self) -> int:
+        """Save the pending edits, run the find-and-replace dialog and show the chapter again when it changed
+        lines; how many lines it changed."""
+        session = self._session
+        if session is None or self._worker is not None:
+            return 0
+        if session.dirty:  # the replace writes edits.json itself: unsaved edits go first, as their own step
+            self.save()
+        series, chapter = session.paths.series, session.paths.chapter
+        changed = self._replace_fn(self._cfg, series, chapter, self)
+        if changed:
+            selected = self.selected_ids()
+            self._open(series, chapter)
+            self._reselect(selected)
+            self._invalidate_preview()
+            self.status_label.setText(f"find and replace changed {changed} line(s)")
+        return changed
+
+    def read_finished(self) -> bool:
+        """Re-read the chapter's finished pages on a worker thread, then show what still shows in the Issues
+        column; False when no chapter is open, a model call or a re-letter is running."""
+        session = self._session
+        if session is None or self._tasks or self._worker is not None:
+            return False
+        cfg, paths = self._cfg, session.paths
+        self._start_task(
+            lambda _progress: self._qa_fn(cfg, paths), self._on_finished_read, "reading the finished pages..."
+        )
+        return True
+
+    def check_consistency(self) -> bool:
+        """Build the series' consistency report on a worker thread, then show it; False when no chapter is open
+        or a model call is running."""
+        session = self._session
+        if session is None or self._tasks:
+            return False
+        cfg, series = self._cfg, session.paths.series
+        self._start_task(
+            lambda _progress: self._consistency_fn(cfg, series),
+            self._on_consistency,
+            "checking the series...",
+        )
+        return True
+
     def reletter(self) -> None:
         """Save, then run typeset + export for this chapter on a worker thread."""
         if self._session is None or self._worker is not None:
@@ -754,6 +843,49 @@ class StudioView(QWidget):
             return
         self._refresh()
         self.status_label.setText(f"{region_id} read again: {text!r} — Save to keep it")
+
+    def _on_finished_read(self, issues: object) -> None:
+        """The finished pages were read again: show every row's issues, these included."""
+        if self._session is None or not isinstance(issues, list):
+            return
+        self.run_check()
+        lines = len({issue.region_id for issue in cast(list[QaIssue], issues)})
+        self.status_label.setText(
+            f"finished pages: {lines} line(s) still show source text or a watermark"
+            if issues
+            else "finished pages: no source text or watermark left"
+        )
+
+    def _on_consistency(self, report: object) -> None:
+        """The report is ready: show it (a double-clicked row opens its line here)."""
+        if self._session is None or not isinstance(report, Consistency):
+            return
+        series = self._session.paths.series
+        self.status_label.setText(
+            f"{len(report.divergences)} line(s) translated differently, {len(report.misses)} missed locked term(s)"
+        )
+        if self.consistency_dialog is not None:
+            self.consistency_dialog.close()
+        dialog = ConsistencyDialog(series, report, parent=self)
+        dialog.open_line.connect(lambda chapter, region_id: self.open_line(series, chapter, region_id))
+        self.consistency_dialog = dialog
+        dialog.show()
+
+    def open_line(self, series: str, chapter: str, region_id: str) -> bool:
+        """Open `chapter` (another chapter's unsaved edits are saved first) and select `region_id`, with the row
+        filters off; False when the chapter or the region cannot be shown."""
+        session = self._session
+        if session is None or (session.paths.series, session.paths.chapter) != (series, chapter):
+            if session is not None and session.dirty:
+                self.save()
+            if not self.open_chapter(series, chapter):
+                return False
+        if not any(row.region_id == region_id for row in self._rows):
+            return False
+        self.page_only.setChecked(False)
+        self.issues_only.setChecked(False)
+        self.select_region(region_id)
+        return True
 
     def _on_found(self, result: object) -> None:
         """The detector searched a page: ask which areas to add, then add them as regions (each saved at once,
@@ -1108,6 +1240,9 @@ class StudioView(QWidget):
         self.save_button.setEnabled(is_open and idle and session is not None and session.dirty)
         self.reletter_button.setEnabled(is_open and idle)
         self.preview_button.setEnabled(is_open)
+        self.replace_button.setEnabled(is_open and idle)
+        self.consistency_button.setEnabled(is_open and free)
+        self.qa_button.setEnabled(is_open and free)
         self.prev_chapter_button.setEnabled(self.chapter_combo.currentIndex() > 0)
         self.next_chapter_button.setEnabled(
             self.chapter_combo.currentIndex() < self.chapter_combo.count() - 1
