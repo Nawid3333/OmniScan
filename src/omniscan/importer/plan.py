@@ -27,6 +27,20 @@ _EXPLICIT_CHAPTER_RE = re.compile(r"(?:chapter|chap|ch|episode|ep)[\s._-]*(\d+(?
 
 ARCHIVE_SUFFIXES = frozenset({".zip", ".cbz"})
 JPEG_SUFFIXES = frozenset({".jpg", ".jpeg"})
+# Files and folders an OS leaves behind, never part of a chapter: macOS's `__MACOSX/` tree in a zip made with
+# Finder's Compress, its `._<name>` resource-fork twins (which keep an image suffix: `._1.jpg`) on non-Apple
+# drives, `.DS_Store`, and Windows' `Thumbs.db` / `desktop.ini`.
+_OS_METADATA_NAMES = frozenset({"__macosx", ".ds_store", "thumbs.db", "desktop.ini"})
+
+
+def is_os_metadata(name: str) -> bool:
+    """True for a file or folder name an operating system created on its own (see `_OS_METADATA_NAMES`)."""
+    return name.startswith("._") or name.casefold() in _OS_METADATA_NAMES
+
+
+def chapter_images(folder: Path) -> list[Path]:
+    """`list_images(folder)` without OS metadata files (a `._1.jpg` is not a page)."""
+    return [image for image in list_images(folder) if not is_os_metadata(image.name)]
 
 
 def _explicit_chapter_number(name: str) -> float | None:
@@ -83,7 +97,7 @@ def _plan_folder(source: Path, *, series: str | None, chapter: str | None) -> Im
     source = source.resolve()
     if not source.is_dir():
         raise ImportPlanError(f"source folder not found: {source}")
-    entries = list(source.iterdir())
+    entries = [entry for entry in source.iterdir() if not is_os_metadata(entry.name)]
     if not entries:
         raise ImportPlanError(f"source folder is empty: {source}")
 
@@ -113,7 +127,7 @@ def _plan_folder(source: Path, *, series: str | None, chapter: str | None) -> Im
         return plan_downloader_series(source, dirs, files, series=series, chapter=chapter)
     if dirs:
         return _plan_folder_of_folders(source, dirs, series=series, chapter=chapter, warnings=warnings)
-    return _plan_flat(source, list_images(source), series=series, chapter=chapter, warnings=warnings)
+    return _plan_flat(source, chapter_images(source), series=series, chapter=chapter, warnings=warnings)
 
 
 def _plan_archive(source: Path, *, series: str | None, chapter: str | None) -> ImportPlan:
@@ -141,13 +155,43 @@ def _extract_archive(source: Path, dest: Path) -> Path:
     dest = dest.resolve()
     try:
         with zipfile.ZipFile(source) as archive:
-            for member in archive.infolist():
+            members = archive.infolist()
+            _check_extraction_size(source, members, dest)
+            for member in members:
                 _extract_member(archive, member, dest)
     except ImportPlanError:
         raise
     except (zipfile.BadZipFile, RuntimeError, OSError) as exc:  # truncated/corrupt, or encrypted members
         raise ImportPlanError(f"can't read archive {source.resolve()}: {exc}") from exc
     return dest
+
+
+MAX_ARCHIVE_FILES = 100_000  # a whole series is a few thousand pages
+_FREE_SPACE_MARGIN = 512 * 1024**2  # what the extraction must leave free on the temp drive
+
+
+def _check_extraction_size(source: Path, members: list[zipfile.ZipInfo], dest: Path) -> None:
+    """Refuse an archive that would fill the temp drive (a zip bomb, or simply too big) before writing anything.
+
+    The sizes are the archive's own records; `zipfile` never reads a member past its recorded size, so they bound
+    what extraction can write.
+    """
+    files = [member for member in members if not member.is_dir()]
+    if len(files) > MAX_ARCHIVE_FILES:
+        raise ImportPlanError(
+            f"archive {source.resolve()} holds {len(files)} files (at most {MAX_ARCHIVE_FILES})"
+        )
+    needed = sum(member.file_size for member in files)
+    free = shutil.disk_usage(dest).free
+    if needed > free - _FREE_SPACE_MARGIN:
+        raise ImportPlanError(
+            f"archive {source.resolve()} unpacks to {_size(needed)}, but only {_size(free)} is free in {dest.parent}"
+        )
+
+
+def _size(count: int) -> str:
+    """A byte count for a message: `1.5 GB`, or `20 MB` below a gigabyte."""
+    return f"{count / 1024**3:.1f} GB" if count >= 1024**3 else f"{count / 1024**2:.0f} MB"
 
 
 _UNSAFE_MEMBER_RE = re.compile(r"^[A-Za-z]:|\\")  # a Windows drive prefix, or any backslash
@@ -170,7 +214,7 @@ def _extract_member(archive: zipfile.ZipFile, member: zipfile.ZipInfo, dest: Pat
     if _UNSAFE_MEMBER_RE.search(member.filename):
         raise ImportPlanError(f"unsafe member name in {archive.filename}: {member.filename!r}")
     name = PurePosixPath(member.filename)
-    if member.is_dir() or not name.parts:
+    if member.is_dir() or not name.parts or any(is_os_metadata(part) for part in name.parts):
         return
     target = dest.joinpath(*name.parts).resolve()
     if target != dest and dest not in target.parents:
@@ -183,7 +227,7 @@ def _extract_member(archive: zipfile.ZipFile, member: zipfile.ZipInfo, dest: Pat
 def _unwrap(root: Path) -> Path:
     """Descend through a lone top-level wrapper folder (only when the root holds exactly that one child)."""
     while True:
-        entries = list(root.iterdir())
+        entries = [entry for entry in root.iterdir() if not is_os_metadata(entry.name)]
         if len(entries) == 1 and entries[0].is_dir():
             root = entries[0]
         else:
@@ -214,7 +258,8 @@ def _plan_folder_of_folders(
     return ImportPlan(
         series=series,
         items=[
-            ImportPlanItem(chapter=subdir.name, files=list_images(subdir)) for subdir in list_chapters(source)
+            ImportPlanItem(chapter=subdir.name, files=chapter_images(subdir))
+            for subdir in list_chapters(source)
         ],
         warnings=warnings,
     )

@@ -1,9 +1,11 @@
-"""ImportView: pick a folder or .zip/.cbz archive, preview the plan, fix the grouping, commit.
+"""ImportView: pick a folder or .zip/.cbz archive (or download a reader URL), preview the plan, fix the grouping, commit.
 
 The plan preview is editable before anything is written: pages can move between chapters, pages
 can be reordered, chapters renamed, merged or split. Non-JPEG sources are flagged for conversion
 (quality 95, on the CPU) before the commit. Every service call runs on a worker (`gui.workers`),
-so the GUI thread never blocks on archives or disk.
+so the GUI thread never blocks on archives, downloads or disk. A URL is downloaded with
+manhwa-manga-downloader (`ImporterService.download`, the same as `omniscan import --from-url`);
+its folder is removed once a download that finished every chapter has been imported.
 """
 
 from __future__ import annotations
@@ -11,7 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QBrush, QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -42,6 +44,7 @@ from omniscan.gui.services.importer import (
 )
 from omniscan.gui.theme import TINTS, set_role
 from omniscan.gui.workers import WorkerSignals, run_task
+from omniscan.importer.from_url import DownloadResult
 from omniscan.importer.plan import ARCHIVE_SUFFIXES, JPEG_SUFFIXES, ImportPlan
 from omniscan.legal import NOTICE
 
@@ -54,11 +57,16 @@ Kept = tuple[str, Path | None]  # what an edit re-selects: (chapter name, page o
 class ImportView(QWidget):
     """The import page: source picker, editable plan preview, and the commit with progress."""
 
+    download_line = Signal(
+        str
+    )  # one downloader message, emitted on the worker thread (queued to the GUI thread)
+
     def __init__(self, service: ImporterService | Any, parent: QWidget | None = None) -> None:
         """Build the view; `service` is an ImporterService (or a test double with the same methods)."""
         super().__init__(parent)
         self._service = service
         self._plan: ImportPlan | None = None
+        self._download: DownloadResult | None = None  # what the current plan was downloaded as (URL source)
         self._busy = False
         self._task_signals: WorkerSignals | None = None  # keeps the running task's signals alive
         self._chapter_items: list[QTreeWidgetItem] = []
@@ -94,6 +102,12 @@ class ImportView(QWidget):
         self.plan_button.setEnabled(False)
         self.series_edit = QLineEdit(self)
         self.series_edit.setPlaceholderText("Series name")
+        self.url_edit = QLineEdit(self)
+        self.url_edit.setPlaceholderText("…or a series/chapter URL to download with manhwa-manga-downloader")
+        self.chapters_edit = QLineEdit(self)
+        self.chapters_edit.setPlaceholderText("Chapters: all, 5, 1-10, 1,3,5-7")
+        self.download_button = QPushButton("Download and plan", self)
+        self.download_button.setEnabled(False)
 
         source_row = QHBoxLayout()
         source_row.addWidget(QLabel("Source", self))
@@ -101,6 +115,11 @@ class ImportView(QWidget):
         source_row.addWidget(self.folder_button)
         source_row.addWidget(self.archive_button)
         source_row.addWidget(self.plan_button)
+        url_row = QHBoxLayout()
+        url_row.addWidget(QLabel("URL", self))
+        url_row.addWidget(self.url_edit, stretch=1)
+        url_row.addWidget(self.chapters_edit)
+        url_row.addWidget(self.download_button)
 
         self.conversion_label = QLabel(self)
         self.conversion_label.setWordWrap(True)
@@ -155,6 +174,7 @@ class ImportView(QWidget):
         layout.addWidget(self.notice_label)
         layout.addWidget(self.context_label)
         layout.addLayout(source_row)
+        layout.addLayout(url_row)
         layout.addWidget(self.series_edit)
         layout.addLayout(conversion_row)
         layout.addWidget(self.tree, stretch=1)
@@ -167,6 +187,9 @@ class ImportView(QWidget):
         self.folder_button.clicked.connect(self._browse_folder)
         self.archive_button.clicked.connect(self._browse_archive)
         self.plan_button.clicked.connect(self._start_plan)
+        self.download_button.clicked.connect(self._start_download)
+        self.url_edit.textChanged.connect(lambda _text: self._sync_buttons())
+        self.download_line.connect(lambda line: self._set_status(f"Downloading … {line}"))
         self.conversions_button.toggled.connect(lambda _on: self._refresh_details())
         self.tree.currentItemChanged.connect(lambda *_: self._sync_selection())
         self.target_combo.currentIndexChanged.connect(lambda _index: self._sync_buttons())
@@ -246,6 +269,34 @@ class ImportView(QWidget):
         signals.finished.connect(self._on_plan_done)
         signals.failed.connect(self._on_plan_failed)
 
+    def _start_download(self) -> None:
+        """Download the URL on a worker (it can take minutes), then show the plan of what it finished."""
+        if self._busy:
+            return
+        url = self.url_edit.text().strip()
+        if not url:
+            self._set_status("Enter a series or chapter URL first.", error=True)
+            return
+        series = self.series_edit.text().strip() or None
+        chapters = self.chapters_edit.text().strip() or None
+        self._drop_plan()
+        self._busy = True
+        self._sync_buttons()
+        self.progress.setVisible(True)
+        self.progress.setRange(0, 0)
+        self._set_status(f"Downloading {url} …")
+        service, emit = self._service, self.download_line.emit
+        signals = run_task(
+            lambda progress: service.download(url, series=series, chapters=chapters, on_line=emit)
+        )
+        self._task_signals = signals
+        signals.finished.connect(self._on_download_done)
+        signals.failed.connect(self._on_plan_failed)
+
+    def _on_download_done(self, outcome: Any) -> None:
+        plan, self._download = outcome
+        self._on_plan_done(plan)
+
     def _on_plan_done(self, plan: Any) -> None:
         self._finish_task()
         self._show_plan(plan)
@@ -256,14 +307,19 @@ class ImportView(QWidget):
 
     def _on_plan_failed(self, error: str) -> None:
         self._finish_task()
+        self._clear_preview()
+        self._set_status(error, error=True)
+
+    def _clear_preview(self) -> None:
+        """No plan: an empty tree and preview, nothing to import."""
         self._plan = None
+        self._download = None
         self.tree.clear()
         self._chapter_items = []
         self._target_combo_rebuild()
         self._refresh_preview()
         self.move_toggle.setEnabled(True)
         self._sync_buttons()
-        self._set_status(error, error=True)
 
     def _show_plan(self, plan: ImportPlan) -> None:
         """Replace the working plan and rebuild every view of it."""
@@ -280,15 +336,20 @@ class ImportView(QWidget):
         self._rebuild_tree()
         self._target_combo_rebuild()
         self._refresh_preview()
-        if plan.archive is not None:  # "move" would only consume throwaway extracted copies
+        # "move" would only consume throwaway extracted copies, or a download that is removed after the import anyway
+        throwaway = plan.archive is not None or self._download is not None
+        if throwaway:
             self.move_toggle.setChecked(False)
-        self.move_toggle.setEnabled(plan.archive is None)
+        self.move_toggle.setEnabled(not throwaway)
 
     def _drop_plan(self) -> None:
         """Forget the current plan (releasing an archive's temporary extraction)."""
         if self._plan is not None and self._plan.temp_dir is not None:
             self._plan.cleanup()
         self._plan = None
+        self._download = (
+            None  # the download folder itself stays: the next download of that URL resumes from it
+        )
 
     # ------------------------------------------------------------------ preview
 
@@ -415,6 +476,7 @@ class ImportView(QWidget):
         page_selected = current is not None and current[1] is not None
         self.import_button.setEnabled(has_items and not busy)
         self.plan_button.setEnabled(not busy and self.source_edit.text().strip() != "")
+        self.download_button.setEnabled(not busy and self.url_edit.text().strip() != "")
         self.folder_button.setEnabled(not busy)
         self.archive_button.setEnabled(not busy)
         self.target_combo.setEnabled(current is not None and not busy)
@@ -521,7 +583,14 @@ class ImportView(QWidget):
         self.progress.setVisible(True)
         self.progress.setRange(0, 0)
         self._set_status(f"Importing {plan.series} …")
-        signals = run_task(lambda progress: self._service.execute(plan, move=move, on_progress=progress))
+        service, download = self._service, self._download
+
+        def commit(progress: Any) -> tuple[Any, bool]:
+            result = service.execute(plan, move=move, on_progress=progress)
+            discarded = download is not None and download.finished and service.discard_download(download)
+            return result, discarded
+
+        signals = run_task(commit)
         self._task_signals = signals
         signals.progress.connect(self._on_import_progress)
         signals.finished.connect(self._on_import_done)
@@ -533,8 +602,11 @@ class ImportView(QWidget):
         self.progress.setValue(done)
         self._set_status(f"Importing … {done}/{total}")
 
-    def _on_import_done(self, result: Any) -> None:
+    def _on_import_done(self, outcome: Any) -> None:
+        result, discarded = outcome
         self._finish_task()
+        if discarded:  # the plan's files went with the download folder: nothing left to import twice
+            self._clear_preview()
         self._set_status(
             f"Imported: {len(result.chapters_written)} chapter(s), {result.files_copied} copied, "
             f"{result.files_converted} converted, {result.files_skipped_duplicate} duplicate(s) skipped"

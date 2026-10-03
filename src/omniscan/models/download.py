@@ -29,6 +29,9 @@ _HfDownload = Callable[..., str]  # huggingface_hub.snapshot_download or a test 
 _Progress = Callable[[str, int, int | None], None]  # (model id, done bytes, total bytes or None)
 
 _CHUNK = 1 << 20  # 1 MiB: streamed download and hashing
+# A stalled server must fail (and fall back to the next source), not hang the download forever: no total limit,
+# since a model file can take an hour, but at most this long to connect and between two chunks.
+DOWNLOAD_TIMEOUT = httpx.Timeout(300.0, connect=30.0)
 
 
 class ModelDownloadError(RuntimeError):
@@ -120,7 +123,7 @@ def _download_zip(
     on_progress: _Progress | None,
 ) -> str:
     """Mirror zip first (hash-verified), then the upstream Hugging Face repo."""
-    http = client if client is not None else httpx.Client(follow_redirects=True, timeout=None)
+    http = client if client is not None else httpx.Client(follow_redirects=True, timeout=DOWNLOAD_TIMEOUT)
     part = models_dir / f"{entry.id}.zip.part"
     try:
         errors: list[str] = []
@@ -147,7 +150,7 @@ def _download_file(
     entry: ModelEntry, path: Path, client: httpx.Client | None, on_progress: _Progress | None
 ) -> str:
     """Mirror file (hash-verified), then the upstream URL (same check, moved into place atomically)."""
-    http = client if client is not None else httpx.Client(follow_redirects=True, timeout=None)
+    http = client if client is not None else httpx.Client(follow_redirects=True, timeout=DOWNLOAD_TIMEOUT)
     part = path.parent / (path.name + ".part")
     try:
         errors: list[str] = []

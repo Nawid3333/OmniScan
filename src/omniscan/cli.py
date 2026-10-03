@@ -27,6 +27,13 @@ from omniscan.glossary.store import GlossaryStore
 from omniscan.glossary.yaml_io import export_yaml, import_yaml
 from omniscan.gpu.timeline import mark
 from omniscan.importer.execute import execute_import
+from omniscan.importer.from_url import (
+    discard_download,
+    download,
+    download_dir,
+    downloader_command,
+    plan_download,
+)
 from omniscan.importer.plan import (
     ARCHIVE_SUFFIXES,
     ImportPlan,
@@ -190,7 +197,9 @@ def tune(
 
 
 def cmd_import(
-    source: Annotated[Path, typer.Argument(exists=True, help="Folder, or a .zip/.cbz archive.")],
+    source: Annotated[
+        Path | None, typer.Argument(exists=True, show_default=False, help="Folder, or a .zip/.cbz archive.")
+    ] = None,
     series: Annotated[str | None, typer.Option("--series")] = None,
     chapter: Annotated[str | None, typer.Option("--chapter")] = None,
     move: Annotated[
@@ -199,8 +208,42 @@ def cmd_import(
     dry_run: Annotated[
         bool, typer.Option("--dry-run", help="Print the plan without writing anything.")
     ] = False,
+    from_url: Annotated[
+        str | None,
+        typer.Option(
+            "--from-url",
+            metavar="URL",
+            help="Download a series or chapter URL with manhwa-manga-downloader (mangadl) first, then import it.",
+        ),
+    ] = None,
+    chapters: Annotated[
+        str | None,
+        typer.Option(
+            "--chapters",
+            metavar="RANGE",
+            help="With --from-url: chapters to download ('1-10', '1,3,5-7', 'all').",
+        ),
+    ] = None,
 ) -> None:
-    """Import raw chapter images from a local folder or .zip/.cbz archive into the library."""
+    """Import raw chapter images from a local folder, a .zip/.cbz archive, or a reader URL into the library."""
+    if from_url is not None:
+        if source is not None:
+            typer.echo("import: give either a folder/archive or --from-url URL, not both", err=True)
+            raise typer.Exit(2)
+        if move:
+            typer.echo(
+                "import: --move does not apply to --from-url (the download is removed once imported)",
+                err=True,
+            )
+            raise typer.Exit(2)
+        _import_from_url(from_url, series=series, chapter=chapter, chapters=chapters, dry_run=dry_run)
+        return
+    if source is None:
+        typer.echo("import: give a folder/archive, or --from-url URL", err=True)
+        raise typer.Exit(2)
+    if chapters is not None:
+        typer.echo("import: --chapters only applies to --from-url", err=True)
+        raise typer.Exit(2)
     if source.is_file() and source.suffix.lower() not in ARCHIVE_SUFFIXES:
         typer.echo(f"import: {source} is not a folder or a .zip/.cbz archive", err=True)
         raise typer.Exit(2)
@@ -208,28 +251,64 @@ def cmd_import(
     try:
         plan = plan_import(source, series=series, chapter=chapter)
         if dry_run:
-            typer.echo(f"import: plan for series '{plan.series}' — {len(plan.items)} chapter(s)")
-            for item in plan.items:
-                typer.echo(f"import:   {item.chapter}: {len(item.files)} file(s)")
-            _note_conversions(plan, "import:   {} file(s) will be converted to JPEG")
-            for warning in plan.warnings:
-                typer.echo(f"import:   {warning}", err=True)
+            _echo_import_plan(plan)
             return
-        result = execute_import(plan, get_config().paths.library_root, move=move)
-        for chapter_written in result.chapters_written:
-            typer.echo(f"import: {plan.series}/{chapter_written}")
-        for warning in plan.warnings:
-            typer.echo(f"import: {warning}", err=True)
-        summary = f"import: {result.files_copied} file(s) copied"
-        if result.files_converted:
-            summary += f", {result.files_converted} file(s) converted to JPEG"
-        typer.echo(summary + f", {result.files_skipped_duplicate} duplicate file(s) skipped")
+        _commit_import(plan, move=move)
     except ImportPlanError as exc:
         typer.echo(f"import: {exc}", err=True)
         raise typer.Exit(2) from exc
     finally:
         if plan is not None:
             plan.cleanup()  # archive extractions are one-shot for the CLI
+
+
+def _import_from_url(
+    url: str, *, series: str | None, chapter: str | None, chapters: str | None, dry_run: bool
+) -> None:
+    """`omniscan import --from-url`: download into work_root/_downloads/<hash>, then plan and commit that folder."""
+    cfg = get_config()
+    try:
+        command = downloader_command(cfg.importer.downloader)
+        dest = download_dir(cfg.paths.work_root, url)
+        typer.echo(f"import: downloading {url} into {dest}", err=True)
+        result = download(url, dest, command=command, chapters=chapters)
+        plan = plan_download(result, series=series, chapter=chapter)
+        if dry_run:
+            _echo_import_plan(plan)
+            typer.echo(f"import:   the download stays in {dest} for the real import", err=True)
+            return
+        _commit_import(plan, move=False)
+    except ImportPlanError as exc:
+        typer.echo(f"import: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    if result.finished:
+        try:
+            discard_download(result)
+        except OSError as exc:
+            typer.echo(f"import: could not remove the download folder {dest}: {exc}", err=True)
+
+
+def _echo_import_plan(plan: ImportPlan) -> None:
+    """Print a dry run's plan: series, chapters with their file counts, conversions and warnings."""
+    typer.echo(f"import: plan for series '{plan.series}' — {len(plan.items)} chapter(s)")
+    for item in plan.items:
+        typer.echo(f"import:   {item.chapter}: {len(item.files)} file(s)")
+    _note_conversions(plan, "import:   {} file(s) will be converted to JPEG")
+    for warning in plan.warnings:
+        typer.echo(f"import:   {warning}", err=True)
+
+
+def _commit_import(plan: ImportPlan, *, move: bool) -> None:
+    """Execute `plan` into the configured library and print what was written."""
+    result = execute_import(plan, get_config().paths.library_root, move=move)
+    for chapter_written in result.chapters_written:
+        typer.echo(f"import: {plan.series}/{chapter_written}")
+    for warning in plan.warnings:
+        typer.echo(f"import: {warning}", err=True)
+    summary = f"import: {result.files_copied} file(s) copied"
+    if result.files_converted:
+        summary += f", {result.files_converted} file(s) converted to JPEG"
+    typer.echo(summary + f", {result.files_skipped_duplicate} duplicate file(s) skipped")
 
 
 def _note_conversions(plan: ImportPlan, line: str) -> None:
@@ -1171,7 +1250,7 @@ def cmd_serve(
 
     import uvicorn
 
-    from omniscan.web.app import UI_DIST, built_ui, create_app
+    from omniscan.web.app import UI_DIST, built_ui, create_app, serve_hosts
 
     ui_dir = built_ui() if ui else None
     url = f"http://{host}:{port}/"
@@ -1184,7 +1263,7 @@ def cmd_serve(
             f"serve: API only at {url}api — the web UI is not built ({UI_DIST} has no index.html): "
             "run `npm install && npm run build` in webui/ once, or `npm run dev` there while developing"
         )
-    web_app = create_app(get_config(), run_worker=True, ui_dir=ui_dir)
+    web_app = create_app(get_config(), run_worker=True, ui_dir=ui_dir, allowed_hosts=serve_hosts(host))
     uvicorn.run(web_app, host=host, port=port, reload=reload)
 
 
