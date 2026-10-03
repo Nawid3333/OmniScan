@@ -1773,7 +1773,13 @@ chapters between users and share corrections: **Open chapter project…** adds a
 you (asking before it replaces a chapter you already have), **Send chapter…** packs the selected chapter with
 all its work and edits into one (like `omniscan project pack`), and **Export contribution…** writes the
 series' corrections and checked lines to an archive (like `omniscan contribute export`; see "Contributing
-corrections").
+corrections"). **Export for…** writes the selected chapter for another tool: a LabelPlus file with its English
+lines, layered PSD pages for Photoshop (raw, clean and text layers), or a BallonsTranslator project — the same
+files as `omniscan labelplus export`, `psd export` and `ballons export`, suggested in the same places. **Import
+from…** takes another tool's translation of the selected chapter back in as its English lines: a LabelPlus file,
+a BallonsTranslator project (`imgtrans_*.json`) or manga-image-translator's `--save-text` files (one per page).
+An import is one undo step (the Studio's Undo takes it back); the status line says how many lines changed and
+what matched no box.
 
 **Reader** is the side-by-side raw | output compare view: prev/next chapter buttons, a chapter
 switcher, zoom −/+ (`Fit width` resets), a `Sides` selector (`Both` / `Raw only` / `Output only`),

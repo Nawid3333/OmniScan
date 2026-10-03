@@ -3,7 +3,10 @@
 The data comes from `gui.services.library` (filesystem + manifests, no torch); this widget only
 renders it and reports a double-clicked chapter back to the shell. Its file buttons pass chapters
 between users and share corrections (`gui.services.chapter_files`): *Open chapter project…*,
-*Send chapter…* and *Export contribution…*, each on a worker thread.
+*Send chapter…* and *Export contribution…*; *Export for…* writes the selected chapter for LabelPlus,
+Photoshop (layered PSD pages) or BallonsTranslator, and *Import from…* takes a LabelPlus file, a
+BallonsTranslator project or manga-image-translator text back in as English lines. Each runs on a
+worker thread.
 """
 
 from __future__ import annotations
@@ -21,6 +24,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSplitter,
@@ -46,6 +50,12 @@ STATE_COLORS: dict[str, QColor] = {
 
 type AskOpen = Callable[[str, str], Path | None]  # (title, file filter) -> the chosen file, None = cancelled
 type AskSave = Callable[[str, str, str], Path | None]  # (title, suggested name, file filter) -> the file
+type AskOpenMany = Callable[
+    [str, str], list[Path]
+]  # (title, file filter) -> the chosen files, [] = cancelled
+type AskFolder = Callable[
+    [str, Path], Path | None
+]  # (title, suggested folder) -> the folder, None = cancelled
 type Confirm = Callable[[str, str], bool]  # (title, question) -> yes
 
 
@@ -62,15 +72,19 @@ class LibraryView(QWidget):
         ask_open: AskOpen | None = None,
         ask_save: AskSave | None = None,
         confirm: Confirm | None = None,
+        ask_open_many: AskOpenMany | None = None,
+        ask_folder: AskFolder | None = None,
     ) -> None:
-        """Build the page and load the series list once (`refresh` re-reads it); the file and question dialogs
-        are injectable for tests."""
+        """Build the page and load the series list once (`refresh` re-reads it); the file, folder and question
+        dialogs are injectable for tests."""
         super().__init__(parent)
         self._cfg = cfg
         self._series: str | None = None
         self._ask_open = ask_open or self._default_ask_open
         self._ask_save = ask_save or self._default_ask_save
         self._confirm = confirm or self._default_confirm
+        self._ask_open_many = ask_open_many or self._default_ask_open_many
+        self._ask_folder = ask_folder or self._default_ask_folder
         self._task_signals: WorkerSignals | None = None  # keeps the running task's signals alive
         self._busy = False  # a chapter-file task is running
 
@@ -96,6 +110,22 @@ class LibraryView(QWidget):
         self.contribute_button.setToolTip(
             "Write this series' corrections and checked lines to an archive you can share to improve OmniScan"
         )
+        self.export_button = QPushButton("Export for…", self)
+        self.export_button.setToolTip("Write the selected chapter for another tool")
+        export_menu = QMenu(self.export_button)
+        export_menu.addAction("LabelPlus file…", self.export_labelplus)
+        export_menu.addAction("Layered PSD pages (Photoshop)…", self.export_psd)
+        export_menu.addAction("BallonsTranslator project…", self.export_ballons)
+        self.export_button.setMenu(export_menu)
+        self.import_button = QPushButton("Import from…", self)
+        self.import_button.setToolTip(
+            "Take another tool's translation of the selected chapter in as its English lines (one undo step)"
+        )
+        import_menu = QMenu(self.import_button)
+        import_menu.addAction("LabelPlus file…", self.import_labelplus)
+        import_menu.addAction("BallonsTranslator project…", self.import_ballons)
+        import_menu.addAction("manga-image-translator text…", self.import_mit)
+        self.import_button.setMenu(import_menu)
 
         list_pane = QWidget()
         list_layout = QVBoxLayout(list_pane)
@@ -106,7 +136,13 @@ class LibraryView(QWidget):
         table_layout = QVBoxLayout()
         table_layout.addWidget(self.table, 1)
         buttons = QHBoxLayout()
-        for button in (self.open_project_button, self.send_button, self.contribute_button):
+        for button in (
+            self.open_project_button,
+            self.send_button,
+            self.contribute_button,
+            self.export_button,
+            self.import_button,
+        ):
             buttons.addWidget(button)
         buttons.addStretch(1)
         buttons.addWidget(self.refresh_button)
@@ -212,6 +248,84 @@ class LibraryView(QWidget):
                 f"Exporting {series} …", lambda: chapter_files.export_contribution(self._cfg, series, dest)
             )
 
+    def export_labelplus(self) -> None:
+        """Ask where to write the selected chapter's LabelPlus file (its English lines) and write it."""
+        series, chapter = self._series, self.chapter()
+        if series is None or chapter is None:
+            return
+        default = chapter_files.labelplus_path(self._cfg, series, chapter)
+        dest = self._ask_save("Export for LabelPlus", str(default), chapter_files.LABELPLUS_FILTER)
+        if dest is not None:
+            self._run(
+                f"Writing {dest.name} …",
+                lambda: chapter_files.export_labelplus(self._cfg, series, chapter, dest),
+            )
+
+    def export_psd(self) -> None:
+        """Ask for a folder and write the selected chapter's pages there as layered PSD files."""
+        series, chapter = self._series, self.chapter()
+        if series is None or chapter is None:
+            return
+        folder = self._ask_folder(
+            "Export layered PSD pages", chapter_files.psd_folder(self._cfg, series, chapter)
+        )
+        if folder is not None:
+            self._run(
+                f"Writing the PSD pages of {chapter} …",
+                lambda: chapter_files.export_psd(self._cfg, series, chapter, folder),
+            )
+
+    def export_ballons(self) -> None:
+        """Ask for a folder and write the selected chapter there as a BallonsTranslator project."""
+        series, chapter = self._series, self.chapter()
+        if series is None or chapter is None:
+            return
+        folder = self._ask_folder(
+            "Export a BallonsTranslator project", chapter_files.ballons_folder(self._cfg, series, chapter)
+        )
+        if folder is not None:
+            self._run(
+                f"Writing the BallonsTranslator project of {chapter} …",
+                lambda: chapter_files.export_ballons(self._cfg, series, chapter, folder),
+            )
+
+    def import_labelplus(self) -> None:
+        """Ask for a LabelPlus file and take its texts as the selected chapter's English lines."""
+        series, chapter = self._series, self.chapter()
+        if series is None or chapter is None:
+            return
+        file = self._ask_open("Import a LabelPlus file", chapter_files.LABELPLUS_FILTER)
+        if file is not None:
+            self._run(
+                f"Importing {file.name} …",
+                lambda: chapter_files.import_labelplus(self._cfg, series, chapter, file),
+            )
+
+    def import_ballons(self) -> None:
+        """Ask for a BallonsTranslator project file and take its translations as the selected chapter's lines."""
+        series, chapter = self._series, self.chapter()
+        if series is None or chapter is None:
+            return
+        file = self._ask_open("Import a BallonsTranslator project", chapter_files.BALLONS_FILTER)
+        if file is not None:
+            self._run(
+                f"Importing {file.name} …",
+                lambda: chapter_files.import_ballons(self._cfg, series, chapter, file),
+            )
+
+    def import_mit(self) -> None:
+        """Ask for manga-image-translator text files (one per page) and take their translations as the selected
+        chapter's English lines."""
+        series, chapter = self._series, self.chapter()
+        if series is None or chapter is None:
+            return
+        files = self._ask_open_many("Import manga-image-translator text", chapter_files.MIT_FILTER)
+        if files:
+            self._run(
+                f"Importing {len(files)} file(s) …",
+                lambda: chapter_files.import_mit(self._cfg, series, chapter, files),
+            )
+
     def reconfigure(self, cfg: Config) -> None:
         """Reload from a new config (a settings change): swap the source and refresh."""
         self._cfg = cfg
@@ -263,8 +377,11 @@ class LibraryView(QWidget):
         """Enable each file button when it has what it needs: a series, a selected chapter, no running task."""
         idle = not self._busy
         self.open_project_button.setEnabled(idle)
-        self.send_button.setEnabled(idle and self._series is not None and self.chapter() is not None)
+        has_chapter = self._series is not None and self.chapter() is not None
+        self.send_button.setEnabled(idle and has_chapter)
         self.contribute_button.setEnabled(idle and self._series is not None)
+        self.export_button.setEnabled(idle and has_chapter)
+        self.import_button.setEnabled(idle and has_chapter)
 
     @staticmethod
     def _default_ask_open(title: str, file_filter: str) -> Path | None:
@@ -276,6 +393,20 @@ class LibraryView(QWidget):
     def _default_ask_save(title: str, name: str, file_filter: str) -> Path | None:
         """The stock save-file dialog, starting at `name` in the user's home; tests replace this hook."""
         chosen, _filter = QFileDialog.getSaveFileName(None, title, str(Path.home() / name), file_filter)
+        return Path(chosen) if chosen else None
+
+    @staticmethod
+    def _default_ask_open_many(title: str, file_filter: str) -> list[Path]:
+        """The stock open-files dialog (several files at once); tests replace this hook."""
+        chosen, _filter = QFileDialog.getOpenFileNames(None, title, str(Path.home()), file_filter)
+        return [Path(name) for name in chosen]
+
+    @staticmethod
+    def _default_ask_folder(title: str, suggested: Path) -> Path | None:
+        """The stock folder dialog, starting at `suggested` (or its nearest existing parent); tests replace this
+        hook."""
+        start = next((folder for folder in (suggested, *suggested.parents) if folder.is_dir()), Path.home())
+        chosen = QFileDialog.getExistingDirectory(None, title, str(start))
         return Path(chosen) if chosen else None
 
     @staticmethod
