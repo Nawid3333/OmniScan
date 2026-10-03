@@ -1,1 +1,14 @@
-{}
+{
+  "cuda:AMD Radeon RX 9070 XT": {
+    "detect": 0.191,
+    "export": 0.06,
+    "ingest": 0.004,
+    "inpaint": 0.085,
+    "inpaint_lama": 0.072,
+    "judge": 0.004,
+    "ocr": 1.45,
+    "slice": 0.015,
+    "translate": 0.008,
+    "typeset": 0.033
+  }
+}
