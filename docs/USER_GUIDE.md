@@ -1835,6 +1835,9 @@ issues. Click a box to jump to its row, or a row to jump to its box. Several row
   lettering that does not fit its balloon, lines the judge was unsure about or that miss a locked glossary term,
   English far longer than the source, and typos (`Not a typo` accepts the selected lines' unknown words for the
   series). `Only lines with issues` hides the rest.
+- `Read finished pages` re-reads the exported pages with the OCR (as `omniscan qa` does; the models load for it)
+  and marks the lines whose source text or watermark still shows on the finished page (`finished page: …` in the
+  Issues column). `Check` keeps showing what the last re-read found until the next one.
 - `Find & replace…` (`Ctrl+H`) finds text in this chapter's or the whole series' English lines (or source
   texts) — literal, whole words, a regular expression, with or without matching case (without, the replacement
   takes each match's case: `JINWOO` → `JIN-WOO`) — and lists every line it would change; `Replace ticked` records

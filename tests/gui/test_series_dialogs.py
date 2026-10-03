@@ -14,13 +14,14 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from omniscan.core.config import Config
-from omniscan.core.paths import SeriesPaths
-from omniscan.core.schemas import BBox, FinalArtifact, FinalLine, Region, RegionsArtifact
+from omniscan.core.paths import ChapterPaths, SeriesPaths
+from omniscan.core.schemas import BBox, FinalArtifact, FinalLine, QaArtifact, QaIssue, Region, RegionsArtifact
 from omniscan.edits.store import history_steps
 from omniscan.gui.series_dialogs import ConsistencyDialog, ReplaceDialog
 from omniscan.gui.services.series_check import Consistency, consistency
 from omniscan.gui.studio_view import StudioView
 from omniscan.qa.consistency import Divergence, Rendering, TermMiss
+from omniscan.qa.leftover import QA_FILE
 from omniscan.translate.on_demand import english_lines
 from tests.fixtures.gui_library import CHAPTERS, SERIES, build_library
 
@@ -179,3 +180,27 @@ def test_studio_saves_first_reloads_after_a_replace_and_opens_report_lines(
     session = view.session()
     assert session is not None and session.paths.chapter == CHAPTERS[1]
     assert view.selected_ids() == ["r0001"]
+
+
+def test_read_finished_pages_flags_the_lines_whose_source_text_still_shows(
+    qapp: QApplication, cfg: Config
+) -> None:
+    def fake_qa(cfg: Config, paths: ChapterPaths) -> list[QaIssue]:
+        issues = [
+            QaIssue(region_id="r0001", kind="source_left", message="source text still readable", read="헌터")
+        ]
+        QaArtifact(checked=2, issues=issues).save(paths.artifact(QA_FILE))
+        return issues
+
+    view = StudioView(cfg, qa_fn=fake_qa)
+    view.resize(1200, 600)
+    view.show()
+    assert view.open_chapter(SERIES, CHAPTERS[0])
+    assert view.qa_button.isEnabled() and "finished page" not in view.table.item(0, 6).text()  # type: ignore[union-attr]
+    assert view.read_finished()
+    _wait(qapp, lambda: not view.is_busy())
+    assert view.table.item(0, 6).text() == "finished page: source text still readable"  # type: ignore[union-attr]
+    assert view.status_label.text() == "finished pages: 1 line(s) still show source text or a watermark"
+    reopened = StudioView(cfg)  # a later session shows what the last re-read found, from qa.json
+    assert reopened.open_chapter(SERIES, CHAPTERS[0])
+    assert "finished page: source text still readable" in reopened.table.item(0, 6).text()  # type: ignore[union-attr]
