@@ -13,7 +13,7 @@ packaged into CBZ/PDF.
 
 | Stage | Status |
 |---|---|
-| import | working — `omniscan import` |
+| import | working — `omniscan import` (a folder, a .zip/.cbz, or a reader URL through manhwa-manga-downloader: `--from-url`) |
 | ingest | working — `omniscan ingest` |
 | slice | working — `omniscan slice` |
 | promo filter | module only — `omniscan filter run` / `filter restore` |

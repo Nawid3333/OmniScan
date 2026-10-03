@@ -491,3 +491,20 @@ def test_verify_models_returns_statuses(tmp_path: Path) -> None:
     assert statuses == {"det": "missing", "llm-x": "cloud"}
     download_model(entry, tmp_path, client=mock_client(serving(body)))
     assert verify_models([entry], tmp_path) == {"det": "installed"}
+
+
+def test_its_own_client_gives_up_on_a_stalled_server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without `client=`, a stalled mirror must fail (and fall back to upstream), not hang the download forever."""
+    made: list[dict[str, object]] = []
+    real_client = httpx.Client
+    body = b"abcd"
+
+    def recording_client(**kwargs: object) -> httpx.Client:
+        made.append(kwargs)
+        return real_client(transport=httpx.MockTransport(lambda r: httpx.Response(200, content=body)))
+
+    monkeypatch.setattr(httpx, "Client", recording_client)
+    download_model(file_entry(body), tmp_path)
+
+    timeout = made[0]["timeout"]
+    assert isinstance(timeout, httpx.Timeout) and timeout.read is not None and timeout.connect is not None

@@ -231,6 +231,14 @@ class ShareConfig(BaseModel):
     enabled: bool = True
 
 
+class ImporterConfig(BaseModel):
+    """`omniscan import --from-url` (importer/from_url.py): how to run manhwa-manga-downloader's `mangadl --json`."""
+
+    # the executable (a name found on PATH, or a path), or the whole command as a list, e.g.
+    # ["C:/manhwa-manga-downloader/.venv/Scripts/python.exe", "C:/manhwa-manga-downloader/main.py"]
+    downloader: str | list[str] = "mangadl"
+
+
 class Secrets(BaseSettings):
     """Secrets only come from the environment or ~/.config/omniscan/secrets.env — never from TOML."""
 
@@ -256,6 +264,7 @@ class Config(BaseSettings):
     filter: FilterConfig = FilterConfig()
     learn: LearnConfig = LearnConfig()
     share: ShareConfig = ShareConfig()
+    importer: ImporterConfig = ImporterConfig()
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:

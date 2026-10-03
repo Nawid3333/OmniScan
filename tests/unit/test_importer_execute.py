@@ -291,3 +291,36 @@ def test_progress_reports_every_file(tmp_path: Path) -> None:
     execute_import(plan, tmp_path / "library", on_progress=lambda done, total: seen.append((done, total)))
 
     assert seen == [(1, 2), (2, 2)]
+
+
+@pytest.mark.parametrize(
+    ("series", "chapter"),
+    [
+        ("../escaped", "Chapter 12"),  # out of the library
+        ("S", "../../escaped"),  # out of the library through the chapter
+        ("S", "../Other Series"),  # into another series
+        ("S", "."),  # into the series folder itself
+        ("..", "Chapter 12"),
+    ],
+)
+def test_names_that_reach_outside_the_library_are_refused_before_any_write(
+    tmp_path: Path, series: str, chapter: str
+) -> None:
+    src, _contents = _case_a_plan(tmp_path)
+    plan = plan_import(src, series=series, chapter=chapter)
+    library = tmp_path / "library"
+
+    with pytest.raises(ImportPlanError, match="would be written outside"):
+        execute_import(plan, library)
+
+    assert not (tmp_path / "escaped").exists() and not library.exists()
+
+
+def test_a_series_inside_another_series_is_still_allowed(tmp_path: Path) -> None:
+    """`--series "Series/_reference_en"` is how official English chapters are imported."""
+    src, _contents = _case_a_plan(tmp_path)
+    plan = plan_import(src, series="DemoSeries/_reference_en", chapter="Chapter 12")
+
+    execute_import(plan, tmp_path / "library")
+
+    assert (tmp_path / "library" / "DemoSeries" / "_reference_en" / "Chapter 12" / "1.jpg").is_file()

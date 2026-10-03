@@ -163,3 +163,26 @@ def test_log_notifier_emits_info(caplog: pytest.LogCaptureFixture) -> None:
     assert "3" in messages[0] and "시리즈" in messages[0] and "failed" in messages[0]
     assert "RuntimeError: boom" in messages[0]
     assert "queue_empty" in messages[1]
+
+
+def _answers_500(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(500)
+
+
+def _cannot_connect(request: httpx.Request) -> httpx.Response:
+    raise httpx.ConnectError("no route to host", request=request)
+
+
+@pytest.mark.parametrize("handler", [_answers_500, _cannot_connect])
+def test_a_failed_webhook_never_logs_its_secret(handler, caplog: pytest.LogCaptureFixture) -> None:
+    """A webhook URL carries its token (Discord, Slack); the warning names the host only."""
+    url = "https://discord.com/api/webhooks/123456/SECRET-TOKEN"
+    notifier = webhook_notifier(url, client=mock_client(httpx.MockTransport(handler)))
+    with caplog.at_level(logging.WARNING, logger="omniscan.queue"):
+        notifier("job_done", make_job())
+
+    assert "SECRET-TOKEN" not in caplog.text and "123456" not in caplog.text
+    (record,) = caplog.records
+    assert (
+        isinstance(record.args, tuple) and record.args[0] == "https://discord.com/…"
+    )  # the host is still named

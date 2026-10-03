@@ -13,8 +13,8 @@ import json
 import re
 from pathlib import Path
 
-from omniscan.core.paths import IMAGE_SUFFIXES, list_images, natural_key
-from omniscan.importer.plan import ImportPlan, ImportPlanError, ImportPlanItem
+from omniscan.core.paths import IMAGE_SUFFIXES, natural_key
+from omniscan.importer.plan import ImportPlan, ImportPlanError, ImportPlanItem, chapter_images
 
 MANIFEST_FILE = "chapter_manifest.json"
 INCOMPLETE_FILE = "incomplete_chapters.json"
@@ -45,11 +45,7 @@ def plan_downloader_series(
     if chapter is not None:
         raise ImportPlanError("--chapter is ambiguous here: every subfolder already names its own chapter")
     if series is None:
-        if _SITE_ID_RE.fullmatch(source.name):
-            raise ImportPlanError(
-                f"the downloader named this series folder after the site's id ({source.name}) — pass --series"
-            )
-        series = source.name
+        series = downloader_series_name(source.name)
     warnings = [
         f"skipped non-image file: {file.name}"
         for file in sorted(files, key=lambda p: natural_key(p.name))
@@ -67,7 +63,7 @@ def plan_downloader_series(
                 "import it on its own with --series and --chapter"
             )
             continue
-        images = list_images(folder)
+        images = chapter_images(folder)
         problem = _unfinished(folder, images, manifest, incomplete)
         if problem is not None:
             warnings.append(
@@ -93,6 +89,15 @@ def plan_downloader_series(
         ],
         warnings=warnings,
     )
+
+
+def downloader_series_name(name: str) -> str:
+    """`name` (the downloader's series folder name) as the series name; ImportPlanError when it is the site's id."""
+    if _SITE_ID_RE.fullmatch(name):
+        raise ImportPlanError(
+            f"the downloader named this series after the site's id ({name}) — pass --series"
+        )
+    return name
 
 
 def _chapter_number(name: str) -> float | None:

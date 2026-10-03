@@ -120,3 +120,19 @@ def test_stale_wrong_hash_file_is_replaced(tmp_path: Path) -> None:
         client.close()
     assert path.read_bytes() == CONTENT
     assert list((tmp_path / "lama").glob("*.part")) == []
+
+
+def test_its_own_client_gives_up_on_a_stalled_server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without `client=`, the download must not wait forever on a server that stops sending."""
+    made: list[dict[str, object]] = []
+    real_client = httpx.Client
+
+    def recording_client(**kwargs: object) -> httpx.Client:
+        made.append(kwargs)
+        return real_client(transport=serving(CONTENT))
+
+    monkeypatch.setattr(httpx, "Client", recording_client)
+    ensure_lama_weights(tmp_path, cfg())
+
+    timeout = made[0]["timeout"]
+    assert isinstance(timeout, httpx.Timeout) and timeout.read is not None and timeout.connect is not None
