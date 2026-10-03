@@ -1,4 +1,4 @@
-"""Qt-free services behind the desktop Studio: translate or re-read a few regions now, render a page preview.
+"""Qt-free services behind the desktop Studio: translate, re-read or find regions now, render a page preview.
 
 Each call is blocking (it waits on a model) and runs on a worker thread in the GUI; the view injects fakes
 in tests. Nothing here writes to the chapter: suggestions and readings go into the Studio's session, where
@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -18,9 +19,13 @@ from omniscan.core.paths import ChapterPaths, SeriesPaths, natural_key
 from omniscan.core.schemas import IngestArtifact
 from omniscan.translate.on_demand import translate_now
 from omniscan.translate.profiles import default_profile_paths, load_profiles
+from omniscan.translate.voices import load_voices
 from omniscan.typeset.chapter import chapter_layout
 from omniscan.typeset.fonts import fonts_dir
 from omniscan.typeset.page_preview import render_page
+
+if TYPE_CHECKING:
+    from omniscan.detect.on_demand import Found
 
 PREVIEW_SCHEME = "preview"  # the pseudo paths of rendered preview tiles: preview/<page index>
 
@@ -52,6 +57,22 @@ def _series_cfg(cfg: Config, paths: ChapterPaths) -> Config:
         raise ValueError(str(exc)) from exc
 
 
+def _series_paths(paths: ChapterPaths) -> SeriesPaths:
+    """The series folders a chapter belongs to."""
+    return SeriesPaths(
+        series=paths.series,
+        library_dir=paths.raw_dir.parent,
+        work_dir=paths.work_dir.parent,
+        output_dir=paths.output_dir.parent,
+    )
+
+
+def speaker_names(paths: ChapterPaths) -> list[str]:
+    """The series' characters (voices.toml), the names the Speaker column offers; [] without the file.
+    ValueError naming what is wrong in a broken voices.toml."""
+    return [character.name for character in load_voices(_series_paths(paths))]
+
+
 def profile_names() -> list[str]:
     """Every known translation profile, enabled ones first."""
     known = load_profiles(default_profile_paths())
@@ -66,16 +87,10 @@ def translate_regions(
     from omniscan.llm.ollama import OllamaClient  # the LLM stack loads only when a translation is asked
 
     scfg = _series_cfg(cfg, paths)
-    series = SeriesPaths(
-        series=paths.series,
-        library_dir=paths.raw_dir.parent,
-        work_dir=paths.work_dir.parent,
-        output_dir=paths.output_dir.parent,
-    )
     result = translate_now(
         OllamaClient(scfg.ollama, get_secrets()),
         scfg,
-        series,
+        _series_paths(paths),
         paths,
         region_ids,
         load_profiles(default_profile_paths()),
@@ -92,6 +107,15 @@ def read_region(cfg: Config, paths: ChapterPaths, region_id: str) -> str:
     from omniscan.ocr.on_demand import read_region_now  # torch loads only when a region is read
 
     return read_region_now(paths, region_id, _series_cfg(cfg, paths)).text
+
+
+def find_missed(cfg: Config, paths: ChapterPaths, page: int, threshold: float | None = None) -> list[Found]:
+    """Run the detector again on raw page `page` (SourceFile index; the models load for this search): the text
+    areas no region covers, read by the series' OCR engine. Suggestions only, nothing is written; `threshold`
+    replaces the series' detector score threshold for this search."""
+    from omniscan.detect.on_demand import find_on_page_now  # torch loads only when a page is searched
+
+    return find_on_page_now(paths, page, _series_cfg(cfg, paths), threshold)
 
 
 def page_rows(ingest: IngestArtifact) -> list[tuple[int, int, int]]:

@@ -3,9 +3,10 @@
 Left: the raw strip with every text region outlined; the selected box can be dragged, resized by its handles
 or nudged with the arrow keys, and `Draw box` (or Shift + drag) draws a region the detector missed. Middle
 (with `Preview` on): the page as the release will look, rendered on the spot with the saved edits, scrolling
-with the raw strip. Right: one row per region (page, kind, source, English, status, issues), editable in
-place; several rows can be selected at once and the actions apply to all of them (remove, mark checked,
-revert English, kind, lettering styles, translate).
+with the raw strip. Right: one row per region (page, kind, speaker, source, English, status, issues), editable
+in place; several rows can be selected at once and the actions apply to all of them (remove, mark checked,
+revert English, kind, lettering styles, translate). `Find missed text` runs the detector again on the page in
+view and offers what no region covers, to add as hand-drawn regions.
 
 Everything goes through `omniscan.edits.session.StudioSession`: changes stay in memory until Save, which
 records them in edits.json (one undo step; Undo/Redo walk the chapter's shared history) and applies them to
@@ -16,21 +17,26 @@ suggestions into the session, so nothing is written before Save. Re-letter runs 
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
-from PySide6.QtCore import QItemSelectionModel, Qt, Signal
+from PySide6.QtCore import QItemSelectionModel, QModelIndex, QPersistentModelIndex, Qt, Signal
 from PySide6.QtGui import QImage, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QComboBox,
+    QCompleter,
+    QDoubleSpinBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QPushButton,
     QSpinBox,
     QSplitter,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
     QTableWidgetSelectionRange,
@@ -43,6 +49,7 @@ from omniscan.core.paths import ChapterPaths, SeriesPaths
 from omniscan.core.schemas import BBox, RegionKind
 from omniscan.edits import store
 from omniscan.edits.session import StudioRow, StudioSession
+from omniscan.gui.found_dialog import FoundDialog
 from omniscan.gui.lettering_dialog import LetteringDialog
 from omniscan.gui.run_worker import RunWorker
 from omniscan.gui.services import library
@@ -54,17 +61,52 @@ from omniscan.gui.strip_view import StripView
 from omniscan.gui.theme import set_role
 from omniscan.gui.workers import WorkerSignals, run_task
 
-COLUMNS = ("Page", "Kind", "Source", "English", "Status", "Issues")
-_PAGE_COL, _KIND_COL, _SOURCE_COL, _ENGLISH_COL, _STATUS_COL, _ISSUES_COL = range(6)
+if TYPE_CHECKING:
+    from omniscan.detect.on_demand import Found
+
+COLUMNS = ("Page", "Kind", "Speaker", "Source", "English", "Status", "Issues")
+_PAGE_COL, _KIND_COL, _SPEAKER_COL, _SOURCE_COL, _ENGLISH_COL, _STATUS_COL, _ISSUES_COL = range(7)
+_EDITABLE = (_SPEAKER_COL, _SOURCE_COL, _ENGLISH_COL)
 RELETTER_STAGES = ("typeset", "export")
 KINDS: tuple[RegionKind, ...] = ("bubble_text", "free_text", "sfx", "watermark")
 ENABLED_PROFILES = "(enabled profiles)"
 _KIND_PLACEHOLDER = "Kind…"
+SERIES_THRESHOLD = "series setting"  # the find threshold spinner at its minimum: the detector's own threshold
 
 ControllerFactory = Callable[[Config, RunSpec], Any]  # a RunController (tests pass a fake)
 TranslateFn = Callable[[Config, ChapterPaths, list[str], str | None], list[Suggested]]
 ReadFn = Callable[[Config, ChapterPaths, str], str]
 PreviewFn = Callable[[Config, ChapterPaths, int], PagePreview]
+FindFn = Callable[[Config, ChapterPaths, int, float | None], list["Found"]]
+PickFn = Callable[
+    [list["Found"], int, QWidget], list["Found"]
+]  # which found areas to add (a dialog; tests fake it)
+
+
+def _pick_found(found: list[Found], page: int, parent: QWidget) -> list[Found]:
+    """Ask which found areas to add (FoundDialog); none when it is cancelled."""
+    dialog = FoundDialog(found, page=page, parent=parent)
+    return dialog.picked() if dialog.exec() else []
+
+
+class _SpeakerDelegate(QStyledItemDelegate):
+    """The Speaker cell's editor: free text, completing the series' character names (voices.toml)."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        """Start with no names."""
+        super().__init__(parent)
+        self.names: list[str] = []
+
+    def createEditor(
+        self, parent: QWidget, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex
+    ) -> QWidget:
+        """A line edit that completes a character's name (case-insensitive, anywhere in the name)."""
+        editor = QLineEdit(parent)
+        completer = QCompleter(self.names, editor)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        editor.setCompleter(completer)
+        return editor
 
 
 def _qimage(pixels: np.ndarray) -> QImage:
@@ -87,15 +129,20 @@ class StudioView(QWidget):
         translate_fn: TranslateFn | None = None,
         read_fn: ReadFn | None = None,
         preview_fn: PreviewFn | None = None,
+        find_fn: FindFn | None = None,
+        pick_fn: PickFn | None = None,
         parent: QWidget | None = None,
     ) -> None:
-        """Build the page; the factories replace the re-letter run, the models and the renderer (tests)."""
+        """Build the page; the factories replace the re-letter run, the models, the renderer and the dialog
+        that picks found text (tests)."""
         super().__init__(parent)
         self._cfg = cfg
         self._controller_factory = controller_factory or (lambda cfg, spec: RunController(cfg, spec))
         self._translate_fn: TranslateFn = translate_fn or services.translate_regions
         self._read_fn: ReadFn = read_fn or services.read_region
         self._preview_fn: PreviewFn = preview_fn or services.render_preview
+        self._find_fn: FindFn = find_fn or services.find_missed
+        self._pick_fn: PickFn = pick_fn or _pick_found
         self._session: StudioSession | None = None
         self._rows: list[StudioRow] = []
         self._issues: dict[str, list[str]] = {}
@@ -163,6 +210,19 @@ class StudioView(QWidget):
         )
         self.remove_button = QPushButton("Remove box", self)
         self.remove_button.setToolTip("Delete the selected regions (false detections; Delete)")
+        self.find_button = QPushButton("Find missed text", self)
+        self.find_button.setToolTip(
+            "Run the detector again on the page in view and offer the text no box covers (the models load for "
+            "the search)"
+        )
+        self.find_threshold = QDoubleSpinBox(self)
+        self.find_threshold.setRange(0.0, 0.95)
+        self.find_threshold.setSingleStep(0.05)
+        self.find_threshold.setDecimals(2)
+        self.find_threshold.setSpecialValueText(SERIES_THRESHOLD)
+        self.find_threshold.setToolTip(
+            "The detector's score threshold for Find missed text: lower finds fainter text (and more noise)"
+        )
         self.preview_button = QPushButton("Preview", self)
         self.preview_button.setCheckable(True)
         self.preview_button.setToolTip("Show the page as the release will look, with the saved edits")
@@ -188,6 +248,8 @@ class StudioView(QWidget):
         header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         for column in (_SOURCE_COL, _ENGLISH_COL, _ISSUES_COL):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.Stretch)
+        self._speaker_delegate = _SpeakerDelegate(self.table)
+        self.table.setItemDelegateForColumn(_SPEAKER_COL, self._speaker_delegate)
 
         nav = QHBoxLayout()
         for widget in (
@@ -224,6 +286,8 @@ class StudioView(QWidget):
             self.lettering_button,
             self.draw_button,
             self.remove_button,
+            self.find_button,
+            self.find_threshold,
         ):
             actions.addWidget(widget)
         actions.addStretch(1)
@@ -264,6 +328,7 @@ class StudioView(QWidget):
         self.lettering_button.clicked.connect(self.edit_lettering)
         self.draw_button.toggled.connect(self.strip.set_draw_mode)
         self.remove_button.clicked.connect(self.remove_selected)
+        self.find_button.clicked.connect(self.find_missed)
         self.preview_button.toggled.connect(self.set_preview_visible)
         self.save_button.clicked.connect(self.save)
         self.reletter_button.clicked.connect(self.reletter)
@@ -535,6 +600,23 @@ class StudioView(QWidget):
         )
         return True
 
+    def find_missed(self) -> bool:
+        """Run the detector again on the raw page in view (on a worker thread) and offer the text no region
+        covers; the ticked areas become regions. False when no chapter is open or a model call is running."""
+        session = self._session
+        page = self._page_in_view()
+        if session is None or page is None or self._tasks:
+            return False
+        value = self.find_threshold.value()
+        threshold = None if value <= self.find_threshold.minimum() else value
+        cfg, paths = self._cfg, session.paths
+        self._start_task(
+            lambda _progress: (page, self._find_fn(cfg, paths, page, threshold)),
+            self._on_found,
+            f"looking for missed text on page {page + 1}...",
+        )
+        return True
+
     def reletter(self) -> None:
         """Save, then run typeset + export for this chapter on a worker thread."""
         if self._session is None or self._worker is not None:
@@ -611,7 +693,9 @@ class StudioView(QWidget):
         if self._filling or self._session is None or not 0 <= item.row() < len(self._rows):
             return
         region_id = self._rows[item.row()].region_id
-        if item.column() == _SOURCE_COL:
+        if item.column() == _SPEAKER_COL:
+            self._session.set_speaker(region_id, item.text())
+        elif item.column() == _SOURCE_COL:
             self._session.set_source(region_id, item.text())
         elif item.column() == _ENGLISH_COL:
             self._session.set_translation(region_id, item.text())
@@ -670,6 +754,33 @@ class StudioView(QWidget):
             return
         self._refresh()
         self.status_label.setText(f"{region_id} read again: {text!r} — Save to keep it")
+
+    def _on_found(self, result: object) -> None:
+        """The detector searched a page: ask which areas to add, then add them as regions (each saved at once,
+        its own undo step) and select them."""
+        if self._session is None or not isinstance(result, tuple):
+            return
+        page, found = cast(tuple[int, list["Found"]], result)
+        if not found:
+            self.status_label.setText(f"page {page + 1}: no missed text found")
+            return
+        added: list[str] = []
+        for area in self._pick_fn(found, page, self):
+            try:
+                added.append(self._session.add_region(area.bbox, kind=area.kind, text=area.text))
+            except (LookupError, OSError, ValueError) as error:
+                self.status_label.setText(f"cannot add a box: {error}")
+                break
+        else:
+            self.status_label.setText(
+                f"page {page + 1}: added {len(added)} of {len(found)} found region(s) — Translate them next"
+                if added
+                else f"page {page + 1}: {len(found)} found, none added"
+            )
+        if added:
+            self._refresh()
+            self._reselect(added)
+            self._invalidate_preview()
 
     def _on_preview(self, result: object) -> None:
         """A page rendered: show it in the preview strip."""
@@ -738,12 +849,20 @@ class StudioView(QWidget):
         self.strip.set_tiles(view.raw, view.strip_width, view.strip_height)
         self._session = session
         self._issues, self._typos = {}, {}
+        voices_error = None
+        try:
+            self._speaker_delegate.names = services.speaker_names(paths)
+        except ValueError as error:  # a broken voices.toml: the column still takes free text
+            self._speaker_delegate.names = []
+            voices_error = str(error)
         ingest = services.load_ingest(paths)
         self._page_rows = services.page_rows(ingest) if ingest is not None else []
         self._reset_preview(view.strip_width, view.strip_height)
         self._refresh()
         self.run_check()
         self._set_pages()
+        if voices_error is not None:  # after the check's own line, so it is the one shown
+            self.status_label.setText(f"{voices_error} (the Speaker column offers no names)")
         if self.preview.isVisible():
             self._render_preview()
 
@@ -826,6 +945,7 @@ class StudioView(QWidget):
                 cells = (
                     str(item.page),
                     item.kind,
+                    item.speaker,
                     item.source,
                     item.english,
                     self._status_text(item),
@@ -833,7 +953,7 @@ class StudioView(QWidget):
                 )
                 for column, text in enumerate(cells):
                     cell = QTableWidgetItem(text)
-                    if column not in (_SOURCE_COL, _ENGLISH_COL):
+                    if column not in _EDITABLE:
                         cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
                     if column == _ENGLISH_COL and item.machine and item.english != item.machine:
                         cell.setToolTip(f"machine: {item.machine}")
@@ -878,6 +998,16 @@ class StudioView(QWidget):
             for region in self._session.regions()
         ]
         self.strip.set_overlays(boxes, self.strip.selected())
+
+    def _page_in_view(self) -> int | None:
+        """The raw page (SourceFile index) at the middle of the strip's view; None before ingest.json exists."""
+        if not self._page_rows:
+            return None
+        middle = self.strip.strip_y() + self.strip.viewport().height() / self.strip.zoom() / 2
+        for page, y0, y1 in self._page_rows:
+            if y0 <= middle < y1:
+                return page
+        return self._page_rows[0][0] if middle < self._page_rows[0][1] else self._page_rows[-1][0]
 
     def _in_view(self, y0: int, y1: int) -> bool:
         """Whether strip rows y0..y1 are (at least partly) visible in the strip."""
@@ -973,6 +1103,8 @@ class StudioView(QWidget):
         self.lettering_button.setEnabled(is_open and idle and some)
         self.draw_button.setEnabled(is_open and idle)
         self.remove_button.setEnabled(is_open and idle and some)
+        self.find_button.setEnabled(is_open and free and bool(self._page_rows))
+        self.find_threshold.setEnabled(is_open)
         self.save_button.setEnabled(is_open and idle and session is not None and session.dirty)
         self.reletter_button.setEnabled(is_open and idle)
         self.preview_button.setEnabled(is_open)
