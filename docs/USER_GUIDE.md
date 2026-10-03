@@ -1803,8 +1803,8 @@ preview. `Move instead of copy` deletes the source pages as they're imported (di
 archives, since there both extraction and the archive itself would need separate handling).
 
 **Studio** is the translator's workbench for one chapter (after detection and OCR have run). The raw strip is on
-the left with every text region outlined; the table on the right has one row per region: page, kind, source
-text, English, status (`todo` / `edited` / `checked`, plus `lettered` when its lettering is hand-set) and
+the left with every text region outlined; the table on the right has one row per region: page, kind, speaker,
+source text, English, status (`todo` / `edited` / `checked`, plus `lettered` when its lettering is hand-set) and
 issues. Click a box to jump to its row, or a row to jump to its box. Several rows can be selected at once
 (Ctrl/Shift-click) and every action below applies to all of them.
 
@@ -1815,13 +1815,19 @@ issues. Click a box to jump to its row, or a row to jump to its box. Several row
   arrow keys (Shift: 10 px). `Draw box` (`Ctrl+B`, or hold Shift while dragging) draws a region the detector
   missed, of the kind picked in the `Kind…` menu; it is saved at once as its own undo step. The `Kind…` menu
   turns the selected regions into bubble text, free text, a sound effect or a watermark; `Remove box`
-  (`Delete`) drops false detections.
+  (`Delete`) drops false detections. `Find missed text` runs the detector again on the page in the middle of the
+  strip (the models load for the search) and lists the text no box covers, with what the OCR reads there; the
+  ticked ones become boxes with that text, each its own undo step. The number next to it is the detector's
+  score threshold for the search: `series setting` uses the series' own, a lower value finds fainter text (and
+  more noise).
 - **Text.** Double-click a **Source** cell to fix the OCR text, or an **English** cell to write your own line (the
   machine's line stays in the tooltip). `Read again` reads the selected box with the series' OCR engine (the
   models load for the read); `Translate` asks the translation model — every enabled profile, or the one picked
   next to it — for the selected lines, with the chapter's neighbouring lines, glossary, story and learned memory
   as context; both put their result into the table, to keep with `Save` or overwrite. `Revert English` goes back
   to the machine's line. `Mark checked` / `Unmark` approve lines for proofreading (the status column).
+  Double-click a **Speaker** cell to say who says the line; it completes the names of the series' characters
+  (`voices.toml`, see "Speakers and character voices"), and the translation prompt then gives the line that character's voice.
 - **Lettering…** sets the font, size, colour, outline, alignment, angle or hides the lettering of the selected
   regions. Only the styles you tick change, so one dialog can give twenty balloons the same size and leave their
   colours alone; *Give the lettering back to the typesetter* drops every hand-set style.
@@ -2039,7 +2045,8 @@ aliases = ["진아"]
 voice = "cheerful, teases her brother"
 ```
 
-Then say who speaks a line — `omniscan edit speaker SERIES CHAPTER REGION NAME`, or the desktop Studio — and
+Then say who speaks a line — `omniscan edit speaker SERIES CHAPTER REGION NAME`, or the desktop Studio's Speaker
+column — and
 the translation request shows the model each region's speaker and the voices of the characters who speak or
 are named in it. Speakers are hand edits (`edits.json`), kept by every re-run; the pipeline never guesses
 them. A region without a speaker is translated exactly as before; changing a speaker, or a character's voice

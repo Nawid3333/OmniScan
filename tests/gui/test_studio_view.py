@@ -20,7 +20,7 @@ from omniscan.core.schemas import BBox, FinalArtifact, FinalLine, Region, Region
 from omniscan.edits.store import load_edits
 from omniscan.gui.services.runs import RunOutcome, RunSpec
 from omniscan.gui.services.studio import PagePreview, Suggested
-from omniscan.gui.studio_view import RELETTER_STAGES, StudioView
+from omniscan.gui.studio_view import COLUMNS, RELETTER_STAGES, StudioView
 from tests.fixtures.gui_library import CHAPTERS, SERIES, build_library
 
 CHAPTER = CHAPTERS[0]
@@ -70,9 +70,9 @@ def _view(qapp: QApplication, cfg: Config, **kwargs: Any) -> StudioView:
 def test_opens_a_chapter_with_rows_overlays_and_issues(qapp: QApplication, cfg: Config) -> None:
     view = _view(qapp, cfg)
     assert view.table.rowCount() == 2
-    assert [view.table.item(0, c).text() for c in range(4)] == ["0", "bubble_text", "안녕", "Hello"]  # type: ignore[union-attr]
+    assert [view.table.item(0, c).text() for c in range(5)] == ["0", "bubble_text", "", "안녕", "Hello"]  # type: ignore[union-attr]
     assert [box[0] for box in view.strip.overlays()] == ["r0001", "r0002"]
-    assert view.table.item(1, 5).text() == "no English line"  # type: ignore[union-attr]
+    assert view.table.item(1, 6).text() == "no English line"  # type: ignore[union-attr]
     view.issues_only.setChecked(True)
     assert view.table.isRowHidden(0) and not view.table.isRowHidden(1)
 
@@ -80,7 +80,7 @@ def test_opens_a_chapter_with_rows_overlays_and_issues(qapp: QApplication, cfg: 
 def test_editing_a_cell_and_saving_writes_the_edits(qapp: QApplication, cfg: Config) -> None:
     view = _view(qapp, cfg)
     assert not view.save_button.isEnabled()
-    view.table.item(1, 3).setText("What?")  # type: ignore[union-attr]
+    view.table.item(1, 4).setText("What?")  # type: ignore[union-attr]
     assert view.save_button.isEnabled()
     assert view.save() == 1
     session = view.session()
@@ -125,9 +125,9 @@ def test_chapter_without_regions_says_what_to_run(qapp: QApplication, cfg: Confi
 
 def test_not_a_typo_accepts_the_selected_lines_words_for_the_series(qapp: QApplication, cfg: Config) -> None:
     view = _view(qapp, cfg)
-    view.table.item(1, 3).setText("Grab teh sword")  # type: ignore[union-attr]
+    view.table.item(1, 4).setText("Grab teh sword")  # type: ignore[union-attr]
     assert view.run_check() == 1
-    assert "'teh' is not in the dictionary" in view.table.item(1, 5).text()  # type: ignore[union-attr]
+    assert "'teh' is not in the dictionary" in view.table.item(1, 6).text()  # type: ignore[union-attr]
     view.select_region("r0001")
     assert not view.not_typo_button.isEnabled()  # "Hello" has no unknown word
     view.select_region("r0002")
@@ -152,7 +152,7 @@ def _select(view: StudioView, *ids: str) -> None:
     view.table.clearSelection()
     for row, item in enumerate(view._rows):
         if item.region_id in ids:
-            view.table.setRangeSelected(QTableWidgetSelectionRange(row, 0, row, 5), True)
+            view.table.setRangeSelected(QTableWidgetSelectionRange(row, 0, row, len(COLUMNS) - 1), True)
 
 
 def test_multi_selection_applies_to_every_selected_row(qapp: QApplication, cfg: Config) -> None:
@@ -160,7 +160,7 @@ def test_multi_selection_applies_to_every_selected_row(qapp: QApplication, cfg: 
     _select(view, "r0001", "r0002")
     assert view.selected_ids() == ["r0001", "r0002"]
     assert view.mark_selected(True) == 2
-    assert [view.table.item(r, 4).text() for r in range(2)] == ["checked", "checked"]  # type: ignore[union-attr]
+    assert [view.table.item(r, 5).text() for r in range(2)] == ["checked", "checked"]  # type: ignore[union-attr]
     assert view.set_kind("sfx") == 2
     assert [view.table.item(r, 1).text() for r in range(2)] == ["sfx", "sfx"]  # type: ignore[union-attr]
     assert view.progress_label.text() == "0 todo · 0 edited · 2 checked"
@@ -183,7 +183,7 @@ def test_lettering_styles_apply_to_the_selection_and_show_in_the_status(
     view = _view(qapp, cfg)
     _select(view, "r0001", "r0002")
     assert view.apply_lettering({"size_px": 30, "color": [255, 0, 0]}) == 2
-    assert view.table.item(0, 4).text() == "todo · lettered"  # type: ignore[union-attr]
+    assert view.table.item(0, 5).text() == "todo · lettered"  # type: ignore[union-attr]
     assert view.apply_lettering({"size_px": 24}) == 2  # a second dialog keeps the colour
     assert view.save() == 2
     session = view.session()
@@ -201,12 +201,12 @@ def test_lettering_styles_apply_to_the_selection_and_show_in_the_status(
 def test_undo_and_redo_walk_the_saved_steps(qapp: QApplication, cfg: Config) -> None:
     view = _view(qapp, cfg)
     assert not view.undo_button.isEnabled()
-    view.table.item(1, 3).setText("What?")  # type: ignore[union-attr]
+    view.table.item(1, 4).setText("What?")  # type: ignore[union-attr]
     view.save()
     assert view.undo_button.isEnabled() and not view.redo_button.isEnabled()
-    assert view.undo() and view.table.item(1, 3).text() == ""  # type: ignore[union-attr]
+    assert view.undo() and view.table.item(1, 4).text() == ""  # type: ignore[union-attr]
     assert view.redo_button.isEnabled()
-    assert view.redo() and view.table.item(1, 3).text() == "What?"  # type: ignore[union-attr]
+    assert view.redo() and view.table.item(1, 4).text() == "What?"  # type: ignore[union-attr]
     assert not view.redo() and view.status_label.text() == "nothing to redo"
 
 
@@ -229,7 +229,7 @@ def test_a_box_moved_on_the_strip_is_saved_as_a_region_edit(qapp: QApplication, 
     session = view.session()
     assert session is not None
     assert session.regions()[0].bbox == BBox(x0=6, y0=12, x1=36, y1=42)
-    assert view.table.item(0, 4).text() == "edited"  # type: ignore[union-attr]
+    assert view.table.item(0, 5).text() == "edited"  # type: ignore[union-attr]
     assert view.save() == 1
     assert load_edits(session.paths).regions[0].bbox == BBox(x0=6, y0=12, x1=36, y1=42)
 
@@ -264,7 +264,7 @@ def test_translate_puts_the_models_lines_in_the_table_to_keep_on_save(
     assert view.translate_selected() and view.is_busy() and not view.translate_button.isEnabled()
     _wait(qapp, lambda: not view.is_busy())
     assert asked == [(["r0002"], None)]
-    assert view.table.item(1, 3).text() == "What?"  # type: ignore[union-attr]
+    assert view.table.item(1, 4).text() == "What?"  # type: ignore[union-attr]
     assert "fake-profile" in view.status_label.text() and view.save_button.isEnabled()
     assert view.save() == 1
 
@@ -274,7 +274,7 @@ def test_read_again_puts_the_reading_in_the_source_column(qapp: QApplication, cf
     _select(view, "r0001")
     assert view.read_selected()
     _wait(qapp, lambda: not view.is_busy())
-    assert view.table.item(0, 2).text() == "안녕하세요"  # type: ignore[union-attr]
+    assert view.table.item(0, 3).text() == "안녕하세요"  # type: ignore[union-attr]
     assert view.save() == 1
 
 
@@ -288,6 +288,79 @@ def test_a_failed_model_call_is_reported(qapp: QApplication, cfg: Config) -> Non
     _wait(qapp, lambda: not view.is_busy())
     assert view.status_label.text() == "failed: RuntimeError: no daemon"
     assert view.read_button.isEnabled()
+
+
+def test_the_speaker_column_takes_a_name_and_offers_the_series_characters(
+    qapp: QApplication, cfg: Config
+) -> None:
+    series = SeriesPaths.from_config(cfg, SERIES)
+    (series.library_dir / "voices.toml").write_text(
+        '[[character]]\nname = "Jinwoo"\naliases = ["진우"]\n\n[[character]]\nname = "Hae-in"\n',
+        encoding="utf-8",
+    )
+    view = _view(qapp, cfg)
+    assert COLUMNS[2] == "Speaker" and view._speaker_delegate.names == ["Jinwoo", "Hae-in"]
+    view.table.item(0, 2).setText(" Jinwoo ")  # type: ignore[union-attr]
+    assert view.table.item(0, 5).text() == "edited" and view.save_button.isEnabled()  # type: ignore[union-attr]
+    assert view.save() == 1
+    session = view.session()
+    assert session is not None
+    assert [(edit.region_id, edit.speaker) for edit in load_edits(session.paths).regions] == [
+        ("r0001", "Jinwoo")
+    ]
+    assert view.table.item(0, 2).text() == "Jinwoo"  # type: ignore[union-attr]
+    assert session.regions()[0].speaker == "Jinwoo"
+
+
+def test_a_broken_voices_file_is_reported_and_the_speaker_stays_free_text(
+    qapp: QApplication, cfg: Config
+) -> None:
+    (SeriesPaths.from_config(cfg, SERIES).library_dir / "voices.toml").write_text("[[character]]\n", "utf-8")
+    view = _view(qapp, cfg)
+    assert view._speaker_delegate.names == []
+    assert "voices.toml" in view.status_label.text() and "has no name" in view.status_label.text()
+
+
+def test_find_missed_text_adds_the_ticked_areas_as_regions(qapp: QApplication, cfg: Config) -> None:
+    from omniscan.detect.on_demand import Found
+
+    searched: list[tuple[int, float | None]] = []
+    found = [
+        Found("free_text", BBox(x0=2, y0=110, x1=30, y1=140), None, 0.41, "쾅", 0.9),
+        Found("bubble_text", BBox(x0=4, y0=150, x1=36, y1=190), None, 0.38, "어?", 0.8),
+    ]
+
+    def fake_find(cfg: Config, paths: object, page: int, threshold: float | None) -> list[Found]:
+        searched.append((page, threshold))
+        return found
+
+    offered: list[int] = []
+
+    def pick_second(areas: list[Found], page: int, parent: object) -> list[Found]:
+        offered.append(len(areas))
+        return areas[1:]
+
+    view = _view(qapp, cfg, find_fn=fake_find, pick_fn=pick_second)
+    assert view.find_button.isEnabled() and view.find_threshold.text() == "series setting"
+    view.strip.set_zoom(4.0)
+    half = view.strip.viewport().height() / view.strip.zoom() / 2
+    view.strip.set_strip_y(150.0 - half)  # the middle of the view on strip row 150: raw page 1 (rows 100-200)
+    view.find_threshold.setValue(0.3)
+    assert view.find_missed()
+    _wait(qapp, lambda: not view.is_busy())
+    assert searched == [(1, 0.3)] and offered == [2]
+    assert [box[0] for box in view.strip.overlays()] == ["r0001", "r0002", "m0001"]
+    assert view.selected_ids() == ["m0001"]
+    session = view.session()
+    assert session is not None
+    added = load_edits(session.paths).regions[0]
+    assert (added.region_id, added.added, added.kind, added.text) == ("m0001", True, "bubble_text", "어?")
+    assert view.status_label.text() == "page 2: added 1 of 2 found region(s) — Translate them next"
+
+    view = _view(qapp, cfg, find_fn=lambda *_args: [], pick_fn=pick_second)
+    assert view.find_missed()
+    _wait(qapp, lambda: not view.is_busy())
+    assert view.status_label.text().endswith("no missed text found") and offered == [2]
 
 
 def test_preview_renders_the_current_pages_on_demand(qapp: QApplication, cfg: Config) -> None:
@@ -312,7 +385,7 @@ def test_preview_renders_the_current_pages_on_demand(qapp: QApplication, cfg: Co
     view.page_spin.setValue(2)
     _wait(qapp, lambda: not view.is_busy())
     assert rendered == [0, 2]
-    view.table.item(1, 3).setText("What?")  # type: ignore[union-attr]
+    view.table.item(1, 4).setText("What?")  # type: ignore[union-attr]
     view.save()  # a save makes the rendered pages stale: the current one renders again
     _wait(qapp, lambda: not view.is_busy())
     assert rendered == [0, 2, 2]
