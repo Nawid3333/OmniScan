@@ -5,6 +5,10 @@ The downloader saves a series as `downloads/<site>/<series>/` with one `num<N>_<
 `chapter_manifest.json` (page count of every chapter it finished) and `incomplete_chapters.json` (chapters
 still missing pages). A chapter it could not number gets `num0_<slug>` or `numunknown_chapter`. Such a folder
 imports as `Chapter <N>` per chapter; unfinished and unnumbered chapters are left out with a warning.
+
+A chapter counts as finished only when `chapter_manifest.json` lists it: the downloader writes both files once,
+after every chapter of a run, and deletes in-flight `.part` files when a run is stopped, so a run killed at
+page 10 of 30 leaves a clean-looking folder that only the missing manifest entry gives away.
 """
 
 from __future__ import annotations
@@ -122,9 +126,20 @@ def _unfinished(
     if any(entry.name.endswith(PART_SUFFIX) for entry in folder.iterdir()):
         return "the download was interrupted"
     expected = manifest.get(folder.name)
-    if expected is not None and expected != len(images):
+    if expected is None:
+        return f"the downloader has not confirmed it finished (no entry in {MANIFEST_FILE})"
+    if expected != len(images):
         return f"{len(images)} page(s) on disk, the downloader finished it with {expected}"
-    return None
+    return _numbering_gap(images)
+
+
+def _numbering_gap(images: list[Path]) -> str | None:
+    """The first page missing from the downloader's `0001..N` page names, or None when they have no gap."""
+    if not all(image.stem.isdigit() for image in images):
+        return None
+    numbers = {int(image.stem) for image in images}
+    missing = next((n for n in range(1, len(images) + 1) if n not in numbers), None)
+    return None if missing is None else f"page {missing:04d} is missing"
 
 
 def _read_manifest(path: Path) -> dict[str, int]:

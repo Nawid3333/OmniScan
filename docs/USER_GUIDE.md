@@ -270,9 +270,16 @@ uv run omniscan import ~/Downloads/DemoSeries.zip
 **Series from manhwa-manga-downloader.** Point `import` at a series folder the downloader wrote
 (`downloads/<site>/<series>/`). Its chapter folders (`num12_Chapter 12`, `num45_chapter`,
 `num5.5_Chapter 5.5`) become `Chapter 12`, `Chapter 45`, `Chapter 5.5`. The downloader's own records
-decide what is finished: a chapter listed in `incomplete_chapters.json`, one with a leftover `.part`
-file, or one with fewer pages than `chapter_manifest.json` recorded is left out with a warning.
-Re-run the downloader to finish it, then import again (chapters already imported are skipped as
+decide what is finished. A chapter is imported only when `chapter_manifest.json` lists it with the
+number of pages on disk, and those pages are numbered `0001` to the last without a gap. Left out with a
+warning:
+- a chapter listed in `incomplete_chapters.json`, or holding a leftover `.part` file;
+- a chapter the manifest doesn't list. The downloader writes its records only when a run ends, so a run
+  that was stopped (Ctrl+C, a closed window, a crash) leaves a folder that looks finished but isn't;
+- a chapter with fewer pages than the manifest recorded, or a gap in its page numbers.
+
+Re-run the downloader on the series to finish it: it checks the pages it already has without downloading
+them again, then records the chapter. Import again afterwards (chapters already imported are skipped as
 duplicates). Folders the downloader could not number (`num0_<slug>`, `numunknown_chapter`) are left
 out too; import one on its own with `--series` and `--chapter`. wfwf504 names the series folder
 after the site's numeric id and MangaDex after the manga's UUID, so pass `--series` there.
@@ -288,6 +295,13 @@ PATH, or set `[importer] downloader` in `config.toml` to its command (a list suc
 `["<its venv python>", "<its main.py>"]` runs it from a source checkout). OmniScan talks to it only through its
 documented `--json` result, and refuses a result version it does not know (update OmniScan then).
 
+The downloader's own settings (`MANGAGO_COOKIE`, `MANGADEX_LANGS`) reach it only as real environment
+variables or from a source checkout. An installed `mangadl` looks for its `.env` file inside its own install
+folder, not in the folder you run OmniScan from, and OmniScan's `secrets.env` is not passed on. Set them in
+the environment before starting OmniScan, or point `[importer] downloader` at the checkout
+(`["<its venv python>", "<its main.py>"]`), which reads the checkout's `.env`. Otherwise mangago URLs fail with
+"MANGAGO_COOKIE is not set" even though the downloader's `.env` has it.
+
 - The download goes to `work_root/_downloads/<hash of the URL>`, the same folder every time for that URL.
 - Pages are downloaded as the site serves them and converted to JPEG once, by the import.
 - Only the chapters this run finished are imported. A chapter that is still missing pages after the
@@ -300,6 +314,9 @@ documented `--json` result, and refuses a result version it does not know (updat
   `--series`.
 - Exit 2 when the downloader is missing or fails (its error message is shown), or when nothing finished.
   `--move` does not apply.
+- A chapter that stays incomplete however often you repeat the command may hold a page the downloader's
+  integrity check refuses, such as a blank spacer image of about 100 bytes (manhwa-manga-downloader issue
+  #12). That needs a fix in the downloader, not in OmniScan.
 
 ```bash
 uv run omniscan import --from-url https://mangadex.org/title/<uuid> --chapters 1-5 --series "Hyouka" --dry-run
