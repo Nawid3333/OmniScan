@@ -84,6 +84,7 @@ class StripView(QAbstractScrollArea):
     overlay_clicked = Signal(str)  # id of the overlay box under a left click
     overlay_changed = Signal(str, int, int, int, int)  # a box moved, resized or nudged by hand (strip space)
     box_drawn = Signal(int, int, int, int)  # a new box drawn by hand (strip space)
+    stroke_painted = Signal(list, int)  # a brush stroke: its strip points [(x, y), ...] and the brush radius
 
     def __init__(self, parent: QWidget | None = None, *, max_cached_images: int = 32) -> None:
         """Create an empty view; `set_tiles` fills it."""
@@ -105,6 +106,8 @@ class StripView(QAbstractScrollArea):
         self._editable = False
         self._draw_mode = False
         self._drag: _Drag | None = None
+        self._brush: int | None = None  # brush radius in strip px while painting is on
+        self._stroke: list[tuple[float, float]] | None = None  # the stroke being painted
         self.verticalScrollBar().valueChanged.connect(self._on_value_changed)
         self.viewport().installEventFilter(self)
         self.viewport().setMouseTracking(True)  # the cursor shows what a press would do
@@ -175,6 +178,7 @@ class StripView(QAbstractScrollArea):
         if not editable:
             self._drag = None
             self._draw_mode = False
+            self._brush, self._stroke = None, None
             self.viewport().unsetCursor()
         self.viewport().update()
 
@@ -185,6 +189,8 @@ class StripView(QAbstractScrollArea):
     def set_draw_mode(self, drawing: bool) -> None:
         """In draw mode a left drag over the strip draws a new box (`box_drawn`) instead of selecting."""
         self._draw_mode = drawing and self._editable
+        if self._draw_mode:
+            self._brush, self._stroke = None, None
         self.viewport().setCursor(
             Qt.CursorShape.CrossCursor if self._draw_mode else Qt.CursorShape.ArrowCursor
         )
@@ -192,6 +198,24 @@ class StripView(QAbstractScrollArea):
     def is_drawing(self) -> bool:
         """Whether draw mode is on."""
         return self._draw_mode
+
+    def set_brush(self, radius: int | None) -> None:
+        """Paint with a round brush of `radius` strip px: a left drag paints a stroke (`stroke_painted` on release)
+        instead of selecting or drawing; None turns painting off (only in an editable view)."""
+        self._brush = radius if radius is not None and radius > 0 and self._editable else None
+        self._stroke = None
+        if self._brush is not None:
+            self._draw_mode = False
+        self.viewport().setCursor(
+            Qt.CursorShape.CrossCursor
+            if self._brush is not None or self._draw_mode
+            else Qt.CursorShape.ArrowCursor
+        )
+        self.viewport().update()
+
+    def brush(self) -> int | None:
+        """The brush radius while painting is on, else None."""
+        return self._brush
 
     def nudge(self, dx: int, dy: int) -> None:
         """Move the selected box by (dx, dy) strip pixels (`overlay_changed`)."""
@@ -300,6 +324,11 @@ class StripView(QAbstractScrollArea):
             return
         pos = event.position()
         x, y = self.strip_point(pos)
+        if self._brush is not None and self._strip_width > 0:
+            self._stroke = [(x, y)]
+            self.viewport().update()
+            event.accept()
+            return
         drawing = self._editable and (
             self._draw_mode or bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
         )
@@ -323,7 +352,12 @@ class StripView(QAbstractScrollArea):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        """Drag the box being moved, resized or drawn; otherwise show what a press would do."""
+        """Drag the box being moved, resized or drawn, or paint on; otherwise show what a press would do."""
+        if self._stroke is not None:
+            self._stroke.append(self.strip_point(event.position()))
+            self.viewport().update()
+            event.accept()
+            return
         drag = self._drag
         if drag is None:
             if self._editable and not self._draw_mode:
@@ -359,7 +393,15 @@ class StripView(QAbstractScrollArea):
         event.accept()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
-        """End a drag: emit the moved/resized box, or the drawn one (when it is big enough)."""
+        """End a drag: emit the moved/resized box, the drawn one (when it is big enough) or the painted stroke."""
+        stroke = self._stroke
+        if stroke is not None and event.button() == Qt.MouseButton.LeftButton:
+            self._stroke = None
+            self.viewport().update()
+            if self._brush is not None:
+                self.stroke_painted.emit(stroke, self._brush)
+            event.accept()
+            return
         drag = self._drag
         if drag is None or event.button() != Qt.MouseButton.LeftButton:
             super().mouseReleaseEvent(event)
@@ -568,7 +610,24 @@ class StripView(QAbstractScrollArea):
             else:
                 self._paint_gap(painter, rect, tile.label)
         self._paint_overlays(painter, x_off, value)
+        self._paint_stroke(painter, x_off, value)
         painter.end()
+
+    def _paint_stroke(self, painter: QPainter, x_off: float, value: int) -> None:
+        """The stroke being painted, as a translucent band as wide as the brush."""
+        if not self._stroke or self._brush is None:
+            return
+        zoom = self._zoom
+        color = QColor(self.palette().color(QPalette.ColorRole.Highlight))
+        color.setAlpha(110)
+        pen = QPen(color, 2 * self._brush * zoom, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        points = [QPointF(x_off + x * zoom, y * zoom - value) for x, y in self._stroke]
+        if len(points) == 1:
+            painter.drawPoint(points[0])
+        else:
+            painter.drawPolyline(points)
 
     def _paint_overlays(self, painter: QPainter, x_off: float, value: int) -> None:
         """Outline every overlay box in the highlight colour; fill the selected one lightly and, in an
