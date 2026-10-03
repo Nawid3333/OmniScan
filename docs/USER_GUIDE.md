@@ -1828,6 +1828,12 @@ issues. Click a box to jump to its row, or a row to jump to its box. Several row
   to the machine's line. `Mark checked` / `Unmark` approve lines for proofreading (the status column).
   Double-click a **Speaker** cell to say who says the line; it completes the names of the series' characters
   (`voices.toml`, see "Speakers and character voices"), and the translation prompt then gives the line that character's voice.
+- **Clean** (the third row): `Brush` (`Ctrl+E`) paints over leftover text or marks on the raw strip; each stroke is
+  cleaned at once with the picked method — `Fill with the colour around`, `Inpaint`, `LaMa` (its model loads for the
+  stroke) or `Restore the raw page` — and the Preview (opened with the brush) shows the page with it. The size is
+  the brush radius in strip pixels; a stroke across two pages cleans the page under its middle. `Take back stroke`
+  removes the last one cleaned here. Strokes are hand-cleanup patches (`cleanup.json`), the same as the web
+  Studio's brush: export applies them after the automatic cleaning.
 - **Lettering…** sets the font, size, colour, outline, alignment, angle or hides the lettering of the selected
   regions. Only the styles you tick change, so one dialog can give twenty balloons the same size and leave their
   colours alone; *Give the lettering back to the typesetter* drops every hand-set style.

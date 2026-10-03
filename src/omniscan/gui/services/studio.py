@@ -1,23 +1,27 @@
 """Qt-free services behind the desktop Studio: translate, re-read or find regions now, render a page preview,
-re-read the finished pages.
+re-read the finished pages, clean a brush stroke.
 
 Each call is blocking (it waits on a model) and runs on a worker thread in the GUI; the view injects fakes
 in tests. Nothing here writes to the chapter's edits: suggestions and readings go into the Studio's session, where
-Save records them like any hand edit (the finished-page re-read writes only its own qa.json).
+Save records them like any hand edit (the finished-page re-read writes only its own qa.json, and a cleaned
+stroke is a hand-cleanup patch in cleanup.json, as the web Studio's brush makes it).
 """
 
 from __future__ import annotations
 
+import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
+from PIL import Image, ImageDraw
 
 from omniscan.cleanup import store as cleanup_store
 from omniscan.core.config import Config, SeriesConfigError, get_secrets, series_config
 from omniscan.core.paths import ChapterPaths, SeriesPaths, natural_key
-from omniscan.core.schemas import IngestArtifact, QaIssue
+from omniscan.core.schemas import BBox, CleanupPatch, IngestArtifact, QaIssue
 from omniscan.qa.leftover import load_issues
 from omniscan.translate.on_demand import translate_now
 from omniscan.translate.profiles import default_profile_paths, load_profiles
@@ -192,3 +196,91 @@ def font_names() -> list[str]:
     if not folder.is_dir():
         return []
     return sorted((p.name for p in folder.iterdir() if p.suffix.lower() in (".ttf", ".otf")), key=natural_key)
+
+
+CleanMethod = Literal["fill", "inpaint", "lama", "restore"]
+
+
+@dataclass(frozen=True, slots=True)
+class PageStroke:
+    """A brush stroke on one page, in that page's own pixels (what cleanup.store.add_patch takes)."""
+
+    page: int  # the SourceFile index
+    box: BBox
+    mask: np.ndarray  # bool [box.height, box.width]
+
+
+def stroke_mask(
+    points: Sequence[tuple[float, float]], radius: int, strip_width: int, strip_height: int
+) -> tuple[BBox, np.ndarray] | None:
+    """A round brush of `radius` strip px dragged through `points` (strip space) as a strip box and a bool mask of
+    that box, cut to the strip; None when nothing of it lies on the strip."""
+    if not points or radius <= 0:
+        return None
+    xs, ys = [p[0] for p in points], [p[1] for p in points]
+    x0, y0 = max(0, math.floor(min(xs) - radius)), max(0, math.floor(min(ys) - radius))
+    x1 = min(strip_width, math.ceil(max(xs) + radius) + 1)
+    y1 = min(strip_height, math.ceil(max(ys) + radius) + 1)
+    if x1 <= x0 or y1 <= y0:  # beside or beyond the strip
+        return None
+    box = BBox(x0=x0, y0=y0, x1=x1, y1=y1)
+    image = Image.new("L", (box.width, box.height), 0)
+    draw = ImageDraw.Draw(image)
+    local = [(x - box.x0, y - box.y0) for x, y in points]
+    if len(local) > 1:
+        draw.line(local, fill=255, width=2 * radius, joint="curve")
+    for x, y in local:  # round ends (and a single dab)
+        draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=255)
+    mask = np.asarray(image) > 127
+    return (box, mask) if mask.any() else None
+
+
+def stroke_on_page(ingest: IngestArtifact, box: BBox, mask: np.ndarray) -> PageStroke:
+    """A strip stroke on the page under its centre, in that page's pixels (the part on other pages is left out).
+    ValueError when no page lies under it."""
+    centre = (box.y0 + box.y1) / 2
+    source = next((f for f in ingest.files if not f.filtered and f.y0 <= centre < f.y1), None)
+    if source is None:
+        raise ValueError("the stroke is not on a page")
+    y0, y1 = max(box.y0, source.y0), min(box.y1, source.y1)
+    cut = mask[y0 - box.y0 : y1 - box.y0, :]
+    scale = source.scale if source.scale > 0 else 1.0
+    full = BBox(
+        x0=math.floor(box.x0 / scale),
+        y0=math.floor((y0 - source.y0) / scale),
+        x1=max(math.ceil(box.x1 / scale), math.floor(box.x0 / scale) + 1),
+        y1=max(math.ceil((y1 - source.y0) / scale), math.floor((y0 - source.y0) / scale) + 1),
+    )
+    scaled = cut
+    if (full.width, full.height) != (cut.shape[1], cut.shape[0]):
+        resized = Image.fromarray(cut.astype(np.uint8) * 255).resize(
+            (full.width, full.height), Image.Resampling.NEAREST
+        )
+        scaled = np.asarray(resized) > 127
+    px0, py0 = max(full.x0, 0), max(full.y0, 0)
+    px1, py1 = min(full.x1, source.width), min(full.y1, source.height)
+    if px1 <= px0 or py1 <= py0:
+        raise ValueError("the stroke is not on a page")
+    page_box = BBox(x0=px0, y0=py0, x1=px1, y1=py1)
+    page_mask = scaled[
+        page_box.y0 - full.y0 : page_box.y1 - full.y0, page_box.x0 - full.x0 : page_box.x1 - full.x0
+    ]
+    return PageStroke(page=source.index, box=page_box, mask=np.ascontiguousarray(page_mask))
+
+
+def clean_stroke(cfg: Config, paths: ChapterPaths, stroke: PageStroke, method: CleanMethod) -> CleanupPatch:
+    """Clean a brush stroke and add it to the chapter's hand cleanup: "fill" (the colour around it), "inpaint",
+    "lama" (the model loads for it) or "restore" (the raw page again). ValueError for a stroke that covers
+    nothing."""
+    if method == "lama":
+        from omniscan.cleanup.lama_now import clean_with_lama  # torch loads only for a LaMa stroke
+
+        return clean_with_lama(
+            paths, _series_cfg(cfg, paths), page=stroke.page, box=stroke.box, mask=stroke.mask
+        )
+    return cleanup_store.add_patch(paths, page=stroke.page, box=stroke.box, mask=stroke.mask, method=method)
+
+
+def remove_patch(paths: ChapterPaths, patch_id: str) -> None:
+    """Take a hand-cleanup patch back (cleanup.store.delete_patch)."""
+    cleanup_store.delete_patch(paths, patch_id)

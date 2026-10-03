@@ -47,7 +47,7 @@ from PySide6.QtWidgets import (
 
 from omniscan.core.config import Config, series_config
 from omniscan.core.paths import ChapterPaths, SeriesPaths
-from omniscan.core.schemas import BBox, QaIssue, RegionKind
+from omniscan.core.schemas import BBox, CleanupPatch, QaIssue, RegionKind
 from omniscan.edits import store
 from omniscan.edits.session import StudioRow, StudioSession
 from omniscan.gui.found_dialog import FoundDialog
@@ -59,7 +59,7 @@ from omniscan.gui.services import studio as services
 from omniscan.gui.services.library import Tile
 from omniscan.gui.services.runs import RunController, RunOutcome, RunSpec
 from omniscan.gui.services.series_check import Consistency
-from omniscan.gui.services.studio import PagePreview, Suggested
+from omniscan.gui.services.studio import CleanMethod, PagePreview, PageStroke, Suggested
 from omniscan.gui.strip_view import StripView
 from omniscan.gui.theme import set_role
 from omniscan.gui.workers import WorkerSignals, run_task
@@ -87,6 +87,14 @@ PickFn = Callable[
 ReplaceFn = Callable[[Config, str, str, QWidget], int]  # find and replace in (series, chapter): lines changed
 ConsistencyFn = Callable[[Config, str], Consistency]
 QaFn = Callable[[Config, ChapterPaths], list[QaIssue]]  # re-read the finished pages: what still shows
+CleanFn = Callable[[Config, ChapterPaths, PageStroke, CleanMethod], CleanupPatch]  # clean one brush stroke
+CLEAN_METHODS: tuple[tuple[str, CleanMethod], ...] = (
+    ("Fill with the colour around", "fill"),
+    ("Inpaint", "inpaint"),
+    ("LaMa", "lama"),
+    ("Restore the raw page", "restore"),
+)
+BRUSH_RADIUS = 12  # strip px: the brush's starting radius
 
 
 def _find_replace(cfg: Config, series: str, chapter: str, parent: QWidget) -> int:
@@ -147,6 +155,7 @@ class StudioView(QWidget):
         replace_fn: ReplaceFn | None = None,
         consistency_fn: ConsistencyFn | None = None,
         qa_fn: QaFn | None = None,
+        clean_fn: CleanFn | None = None,
         parent: QWidget | None = None,
     ) -> None:
         """Build the page; the factories replace the re-letter run, the models, the renderer, the dialog that
@@ -162,6 +171,8 @@ class StudioView(QWidget):
         self._replace_fn: ReplaceFn = replace_fn or _find_replace
         self._consistency_fn: ConsistencyFn = consistency_fn or series_check.consistency
         self._qa_fn: QaFn = qa_fn or services.read_finished_pages
+        self._clean_fn: CleanFn = clean_fn or services.clean_stroke
+        self._strokes: list[tuple[str, int]] = []  # (patch id, page) of this chapter's strokes, newest last
         self.consistency_dialog: ConsistencyDialog | None = None  # the open report, if any
         self._session: StudioSession | None = None
         self._rows: list[StudioRow] = []
@@ -256,6 +267,25 @@ class StudioView(QWidget):
         self.find_threshold.setToolTip(
             "The detector's score threshold for Find missed text: lower finds fainter text (and more noise)"
         )
+
+        # ---- hand cleanup
+        self.brush_button = QPushButton("Brush", self)
+        self.brush_button.setCheckable(True)
+        self.brush_button.setToolTip(
+            "Paint over leftover text or marks on the strip to clean them by hand; the Preview shows the result "
+            "(Ctrl+E)"
+        )
+        self.clean_combo = QComboBox(self)
+        for label, method in CLEAN_METHODS:
+            self.clean_combo.addItem(label, method)
+        self.clean_combo.setToolTip("How a stroke is cleaned (LaMa loads its model for each stroke)")
+        self.brush_size = QSpinBox(self)
+        self.brush_size.setRange(1, 200)
+        self.brush_size.setValue(BRUSH_RADIUS)
+        self.brush_size.setSuffix(" px")
+        self.brush_size.setToolTip("The brush radius, in strip pixels")
+        self.take_back_button = QPushButton("Take back stroke", self)
+        self.take_back_button.setToolTip("Remove the last stroke cleaned here")
         self.preview_button = QPushButton("Preview", self)
         self.preview_button.setCheckable(True)
         self.preview_button.setToolTip("Show the page as the release will look, with the saved edits")
@@ -336,9 +366,16 @@ class StudioView(QWidget):
         self.splitter.addWidget(self.table)
         self.splitter.setSizes([2, 2, 3])
 
+        clean = QHBoxLayout()
+        clean.addWidget(QLabel("Clean", self))
+        for widget in (self.brush_button, self.clean_combo, self.brush_size, self.take_back_button):
+            clean.addWidget(widget)
+        clean.addStretch(1)
+
         root = QVBoxLayout(self)
         root.addLayout(nav)
         root.addLayout(actions)
+        root.addLayout(clean)
         root.addWidget(self.splitter, 1)
         root.addWidget(self.status_label)
 
@@ -362,7 +399,13 @@ class StudioView(QWidget):
         self.unchecked_button.clicked.connect(lambda: self.mark_selected(False))
         self.kind_combo.activated.connect(self._on_kind_picked)
         self.lettering_button.clicked.connect(self.edit_lettering)
-        self.draw_button.toggled.connect(self.strip.set_draw_mode)
+        self.draw_button.toggled.connect(self._on_draw_toggled)
+        self.brush_button.toggled.connect(self.set_brush)
+        self.brush_size.valueChanged.connect(
+            lambda radius: self.strip.set_brush(radius) if self.brush_button.isChecked() else None
+        )
+        self.strip.stroke_painted.connect(self.clean_stroke)
+        self.take_back_button.clicked.connect(self.take_back_stroke)
         self.remove_button.clicked.connect(self.remove_selected)
         self.find_button.clicked.connect(self.find_missed)
         self.replace_button.clicked.connect(self.find_replace)
@@ -399,6 +442,7 @@ class StudioView(QWidget):
             (QKeySequence("Ctrl+B"), self.draw_button.toggle),
             (QKeySequence("Delete"), self.remove_selected),
             (QKeySequence("Ctrl+H"), self.find_replace),
+            (QKeySequence("Ctrl+E"), self.brush_button.toggle),
         ):
             shortcut = QShortcut(QKeySequence(keys), self)
             shortcut.setContext(context)
@@ -680,6 +724,56 @@ class StudioView(QWidget):
             self.status_label.setText(f"find and replace changed {changed} line(s)")
         return changed
 
+    def set_brush(self, on: bool) -> None:
+        """Turn the cleanup brush on (draw mode off, the Preview shown to see the result) or off."""
+        if on:
+            self.draw_button.setChecked(False)
+        self.brush_button.setChecked(on)
+        self.strip.set_brush(self.brush_size.value() if on else None)
+        if on and not self.preview.isVisible():
+            self.set_preview_visible(True)
+
+    def clean_stroke(self, points: list[tuple[float, float]], radius: int) -> bool:
+        """Clean a stroke painted on the strip (strip points, the brush radius) with the picked method, on a worker
+        thread; the part on another page than the stroke's middle is left out. False when it cannot be cleaned."""
+        session = self._session
+        if session is None or self._worker is not None:
+            return False
+        width, height = self.strip.strip_size()
+        shape = services.stroke_mask(points, radius, width, height)
+        ingest = services.load_ingest(session.paths)
+        if shape is None or ingest is None:
+            self.status_label.setText("the stroke is not on the strip")
+            return False
+        try:
+            stroke = services.stroke_on_page(ingest, *shape)
+        except ValueError as error:
+            self.status_label.setText(str(error))
+            return False
+        method = cast(CleanMethod, self.clean_combo.currentData())
+        cfg, paths = self._cfg, session.paths
+        self._start_task(
+            lambda _progress: (stroke.page, self._clean_fn(cfg, paths, stroke, method)),
+            self._on_cleaned,
+            f"cleaning a stroke on page {stroke.page + 1} ({method})...",
+        )
+        return True
+
+    def take_back_stroke(self) -> bool:
+        """Remove the last stroke cleaned in this chapter; False when there is none."""
+        if self._session is None or not self._strokes:
+            return False
+        patch_id, page = self._strokes.pop()
+        try:
+            services.remove_patch(self._session.paths, patch_id)
+        except (LookupError, OSError, ValueError) as error:
+            self.status_label.setText(f"cannot take back {patch_id}: {error}")
+            return False
+        self.status_label.setText(f"{patch_id}: taken back")
+        self._render_page(page)
+        self._update_buttons()
+        return True
+
     def read_finished(self) -> bool:
         """Re-read the chapter's finished pages on a worker thread, then show what still shows in the Issues
         column; False when no chapter is open, a model call or a re-letter is running."""
@@ -844,6 +938,22 @@ class StudioView(QWidget):
         self._refresh()
         self.status_label.setText(f"{region_id} read again: {text!r} — Save to keep it")
 
+    def _on_draw_toggled(self, drawing: bool) -> None:
+        """Draw box on: the brush goes off (one tool at a time)."""
+        if drawing:
+            self.brush_button.setChecked(False)
+        self.strip.set_draw_mode(drawing)
+
+    def _on_cleaned(self, result: object) -> None:
+        """A stroke was cleaned: remember it for Take back and show its page again."""
+        if self._session is None or not isinstance(result, tuple):
+            return
+        page, patch = cast(tuple[int, CleanupPatch], result)
+        self._strokes.append((patch.id, page))
+        self.status_label.setText(f"{patch.id}: cleaned ({patch.method}, {patch.mask_px} px)")
+        self._render_page(page)
+        self._update_buttons()
+
     def _on_finished_read(self, issues: object) -> None:
         """The finished pages were read again: show every row's issues, these included."""
         if self._session is None or not isinstance(issues, list):
@@ -980,6 +1090,7 @@ class StudioView(QWidget):
             return
         self.strip.set_tiles(view.raw, view.strip_width, view.strip_height)
         self._session = session
+        self._strokes = []
         self._issues, self._typos = {}, {}
         voices_error = None
         try:
@@ -1001,6 +1112,7 @@ class StudioView(QWidget):
     def _close(self) -> None:
         """No chapter open."""
         self._session = None
+        self._strokes = []
         self._rows = []
         self._issues, self._typos = {}, {}
         self._page_rows = []
@@ -1190,6 +1302,15 @@ class StudioView(QWidget):
                 lambda _progress, page=page: self._preview_fn(cfg, paths, page), self._on_preview, None
             )
 
+    def _render_page(self, page: int) -> None:
+        """Render raw page `page` into the preview again (a stroke changed it); nothing while it is hidden."""
+        if self._session is None or not self.preview.isVisible():
+            self._rendered.discard(page)  # rendered again when the preview opens there
+            return
+        cfg, paths = self._cfg, self._session.paths
+        self._rendered.add(page)
+        self._start_task(lambda _progress: self._preview_fn(cfg, paths, page), self._on_preview, None)
+
     # ---- worker tasks
 
     def _start_task(
@@ -1243,6 +1364,8 @@ class StudioView(QWidget):
         self.replace_button.setEnabled(is_open and idle)
         self.consistency_button.setEnabled(is_open and free)
         self.qa_button.setEnabled(is_open and free)
+        self.brush_button.setEnabled(is_open and idle and bool(self._page_rows))
+        self.take_back_button.setEnabled(is_open and idle and bool(self._strokes))
         self.prev_chapter_button.setEnabled(self.chapter_combo.currentIndex() > 0)
         self.next_chapter_button.setEnabled(
             self.chapter_combo.currentIndex() < self.chapter_combo.count() - 1

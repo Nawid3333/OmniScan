@@ -401,3 +401,19 @@ def test_a_provided_image_is_drawn_without_a_file(qapp: QApplication, tmp_path: 
     assert _pixel(view.viewport().grab().toImage(), 30, 50) == GREEN
     view.set_tiles(tiles, STRIP_WIDTH, 100)  # new tiles drop the provided images
     assert _pixel(view.viewport().grab().toImage(), 30, 50) != GREEN
+
+
+def test_the_brush_paints_a_stroke_instead_of_selecting(qapp: QApplication, tmp_path: Path) -> None:
+    view, changes = _editable(qapp, tmp_path)
+    strokes: list[tuple[list[tuple[float, float]], int]] = []
+    view.stroke_painted.connect(lambda points, radius: strokes.append((points, radius)))
+    view.set_brush(6)
+    assert view.brush() == 6 and not view.is_drawing()
+    _drag(view, (20, 20), (25, 28))  # inside the selected box: painted over, not moved
+    assert changes == [] and view.overlays()[0] == ("a", 10, 10, 30, 30)
+    assert strokes == [([view.strip_point(QPointF(20, 20)), view.strip_point(QPointF(25, 28))], 6)]
+    view.set_draw_mode(True)  # one tool at a time
+    assert view.brush() is None and view.is_drawing()
+    view.set_brush(4)
+    view.set_editable(False)
+    assert view.brush() is None
