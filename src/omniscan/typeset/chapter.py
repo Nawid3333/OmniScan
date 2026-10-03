@@ -35,6 +35,7 @@ def chapter_layout(paths: ChapterPaths, cfg: Config) -> ChapterLayout:
     lama_path = paths.artifact("inpaint_lama.json")
     if lama_path.is_file():  # which sound effects LaMa erased
         erased |= {item.region_id for item in InpaintArtifact.load(lama_path).items}
-    auto = plan_layout(regions, texts, fills, cfg.typeset, sfx=cfg.sfx, erased=erased)
-    items, orphans = apply_layout_edits(auto, load_edits(paths), regions, texts, cfg.typeset)
+    lang = cfg.translate.target_lang  # the release language's line breaking (typeset/hyphen.py)
+    auto = plan_layout(regions, texts, fills, cfg.typeset, sfx=cfg.sfx, erased=erased, lang=lang)
+    items, orphans = apply_layout_edits(auto, load_edits(paths), regions, texts, cfg.typeset, lang=lang)
     return ChapterLayout(auto=auto, items=items, orphans=orphans)

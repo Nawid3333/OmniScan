@@ -199,3 +199,38 @@ def test_typeset_stage_empty_chapter_yields_zeroes(cfg: Config) -> None:
     assert outcome.metrics["overflow"] == 0.0
     assert outcome.metrics["skipped"] == 3.0  # every translatable region lacks a final line
     assert LayoutArtifact.load(paths / "layout.json").items == []
+
+
+def test_a_spanish_release_letters_with_spanish_line_breaking(
+    cfg: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """[translate] target_lang reaches the fitter (typeset/hyphen.py), and only a non-English release changes the
+    stage's config hash, so English chapters are not lettered again (#43)."""
+    from omniscan.core.config import TranslateConfig
+    from omniscan.typeset import chapter as chapter_module
+
+    english = TypesetStage().config_subset(cfg)
+    assert "target_lang" not in english
+    spanish_cfg = cfg.model_copy(update={"translate": TranslateConfig(target_lang="es")})
+    assert TypesetStage().config_subset(spanish_cfg) == {**english, "target_lang": "es"}
+
+    seen: list[str] = []
+    real_plan, real_edits = chapter_module.plan_layout, chapter_module.apply_layout_edits
+
+    def plan(*args: object, lang: str = "en", **kwargs: object) -> object:
+        seen.append(lang)
+        return real_plan(*args, lang=lang, **kwargs)  # type: ignore[arg-type]
+
+    def edits(*args: object, lang: str = "en", **kwargs: object) -> object:
+        seen.append(lang)
+        return real_edits(*args, lang=lang, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(chapter_module, "plan_layout", plan)
+    monkeypatch.setattr(chapter_module, "apply_layout_edits", edits)
+    write_inputs(cfg, final_lines={"r0001": "¿Estás bien? ¡La mazmorra se abrió!"})
+    outcome = run_stage(TypesetStage(), make_context(spanish_cfg, SERIES, CHAPTER))
+    assert outcome.status == "done" and seen == ["es", "es"]
+    item = LayoutArtifact.load(
+        make_context(spanish_cfg, SERIES, CHAPTER).paths.artifact("layout.json")
+    ).items[0]
+    assert " ".join(item.lines) == "¿Estás bien? ¡La mazmorra se abrió!"

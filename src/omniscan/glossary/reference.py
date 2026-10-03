@@ -143,14 +143,20 @@ class TermCandidate:
 
 
 def extract_candidates(
-    client: ChatClient, model: str, chapter: str, lines: Sequence[PairedLine], lang: str = "ko"
+    client: ChatClient,
+    model: str,
+    chapter: str,
+    lines: Sequence[PairedLine],
+    lang: str = "ko",
+    target: str = "en",
 ) -> list[TermCandidate]:
-    """Ask the chat model for the terms of one chapter's paired lines (no request without lines)."""
+    """Ask the chat model for the terms of one chapter's paired lines (no request without lines); the reference
+    is an official release in `target`."""
     if not lines:
         return []
     response = client.chat(
         model,
-        terms_messages(lines, lang),
+        terms_messages(lines, lang, target),
         cloud=False,
         format=TERMS_SCHEMA,
         options={"temperature": 0.0},
@@ -444,6 +450,7 @@ def run_reference(
                         match.a,
                         pairing.lines,
                         lang=chapter_language(sp.chapter(match.a)),
+                        target=cfg.translate.target_lang,
                     )
                 )
                 chapters_extracted += 1

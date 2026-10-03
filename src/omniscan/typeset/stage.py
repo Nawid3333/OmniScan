@@ -48,7 +48,12 @@ class TypesetStage:
 
     def config_subset(self, cfg: Config) -> Mapping[str, Any]:
         """Only the config values that affect this stage's output (hashed for invalidation)."""
-        return {**cfg.typeset.model_dump(), "sfx": cfg.sfx.model_dump()}
+        subset: dict[str, Any] = {**cfg.typeset.model_dump(), "sfx": cfg.sfx.model_dump()}
+        if (
+            cfg.translate.target_lang != "en"
+        ):  # line breaking follows the release language; English hashes as before
+            subset["target_lang"] = cfg.translate.target_lang
+        return subset
 
     def run(self, ctx: ChapterContext, models: Mapping[str, Any]) -> Mapping[str, float]:
         """Do the work, write outputs, return metrics (seconds are added by the runner)."""

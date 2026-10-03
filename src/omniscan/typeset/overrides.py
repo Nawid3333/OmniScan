@@ -33,8 +33,9 @@ def overridden(
     cfg: TypesetConfig,
     *,
     font_factory: FontFactory = load_font,
+    lang: str = "en",
 ) -> LayoutItem:
-    """`item` with the hand-set lettering of `edit`; `text` is the region's English line."""
+    """`item` with the hand-set lettering of `edit`; `text` is the region's line in release language `lang`."""
     update: dict[str, object] = {
         key: value
         for key, value in (
@@ -71,6 +72,7 @@ def overridden(
             line_spacing=cfg.line_spacing,
             hyphenate=cfg.hyphenate,
             font_factory=font_factory,
+            lang=lang,
         )
         size, lines, width, height, overflow = fit.size_px, fit.lines, fit.width, fit.height, fit.overflow
     update.update(
@@ -91,6 +93,7 @@ def apply_layout_edits(
     cfg: TypesetConfig,
     *,
     font_factory: FontFactory = load_font,
+    lang: str = "en",
 ) -> tuple[list[LayoutItem], int]:
     """The layout items with every hand-set lettering applied (a hidden one removed), and the number of
     edits whose region no longer exists. A region without a layout item (no English line) stays unlettered."""
@@ -105,6 +108,14 @@ def apply_layout_edits(
         elif not edit.hidden:
             region = by_id[item.region_id]
             result.append(
-                overridden(item, edit, region, texts.get(item.region_id, ""), cfg, font_factory=font_factory)
+                overridden(
+                    item,
+                    edit,
+                    region,
+                    texts.get(item.region_id, ""),
+                    cfg,
+                    font_factory=font_factory,
+                    lang=lang,
+                )
             )
     return result, len(edits.layout) - len(claims)

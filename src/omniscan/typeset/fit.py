@@ -13,7 +13,9 @@ lines similar in length. This module does that with pure metric math over font a
   article (dynamic programming instead of greedy); the best size-plus-phrasing score wins;
 - a word too long for any line at the smallest size is hyphenated instead of overflowing.
 
-Nothing is drawn; the result feeds `LayoutItem`.
+The little words a line should not end on and where a word may be hyphenated depend on the release language
+(`lang`, typeset/hyphen.py: Spanish words break only between syllables). Nothing is drawn; the result feeds
+`LayoutItem`.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ from typing import Literal, Protocol
 
 from omniscan.core.schemas import BBox
 from omniscan.typeset.fonts import load_font
+from omniscan.typeset.hyphen import dangling_words, hyphen_points
 
 
 class Measurable(Protocol):
@@ -112,38 +115,9 @@ _GLYPH_EXTENT = 0.8  # share of the font size the letters really occupy vertical
 _MIN_HYPHEN_HEAD = 3  # a hyphenated word keeps at least this many letters before the hyphen ...
 _MIN_HYPHEN_TAIL = 2  # ... and after it
 # Break quality, in units of (a tenth of the mean line width)^2: letterers break after a sentence or a
-# clause and never leave an article or preposition dangling at the end of a line.
+# clause and never leave an article or preposition dangling at the end of a line (hyphen.dangling_words).
 _SENTENCE_END = frozenset(".!?…")
 _CLAUSE_END = frozenset(",;:—–")
-_DANGLING = frozenset(
-    [
-        "a",
-        "an",
-        "the",
-        "to",
-        "of",
-        "and",
-        "or",
-        "but",
-        "in",
-        "on",
-        "at",
-        "by",
-        "for",
-        "with",
-        "from",
-        "as",
-        "is",
-        "my",
-        "your",
-        "his",
-        "her",
-        "our",
-        "their",
-        "this",
-        "that",
-    ]
-)
 _SENTENCE_BONUS = -6.0
 _CLAUSE_BONUS = -3.0
 _DANGLING_PENALTY = 8.0
@@ -216,9 +190,12 @@ def _line_text(tokens: list[_Token]) -> str:
 class _Setter:
     """Measures lines of one text at one size (cached) and breaks it into lines of given widths."""
 
-    def __init__(self, tokens: list[_Token], font: Measurable) -> None:
+    def __init__(
+        self, tokens: list[_Token], font: Measurable, dangling: frozenset[str] = frozenset()
+    ) -> None:
         self.tokens = tokens
         self.font = font
+        self.dangling = dangling
         self._widths: dict[tuple[int, int], float] = {}
 
     def width(self, start: int, end: int) -> float:
@@ -297,7 +274,7 @@ class _Setter:
             return _SENTENCE_BONUS
         if word[-1:] in _CLAUSE_END or word.endswith("..."):
             return _CLAUSE_BONUS
-        if word.casefold() in _DANGLING:
+        if word.casefold() in self.dangling:
             return _DANGLING_PENALTY
         return 0.0
 
@@ -352,19 +329,35 @@ def _best_size(
     return lo
 
 
-def _hyphenated(tokens: list[_Token], font: Measurable, limit: float) -> list[_Token]:
-    """Tokens with every word wider than `limit` split into hyphen-joined pieces that each fit."""
+def _hyphenated(tokens: list[_Token], font: Measurable, limit: float, lang: str = "en") -> list[_Token]:
+    """Tokens with every word wider than `limit` split into hyphen-joined pieces that each fit: at the language's
+    hyphenation points (the last one that fits) where it has them, else wherever the width allows."""
     out: list[_Token] = []
     for token in tokens:
         text = token.text
+        points = hyphen_points(text, lang)
+        done = 0  # letters of the word already split off
         while font.getlength(text) > limit and len(text) >= _MIN_HYPHEN_HEAD + _MIN_HYPHEN_TAIL:
-            cut = _MIN_HYPHEN_HEAD
-            while cut + 1 <= len(text) - _MIN_HYPHEN_TAIL and font.getlength(text[: cut + 1] + "-") <= limit:
-                cut += 1
+            cut = _letter_cut(text, font, limit)
+            if points is not None:
+                inside = [
+                    p - done for p in points if _MIN_HYPHEN_HEAD <= p - done <= len(text) - _MIN_HYPHEN_TAIL
+                ]
+                fitting = [c for c in inside if font.getlength(text[:c] + "-") <= limit]
+                cut = max(fitting) if fitting else cut
             out.append(_Token(text[:cut], joins=True))
             text = text[cut:]
+            done += cut
         out.append(_Token(text, joins=token.joins))
     return out
+
+
+def _letter_cut(text: str, font: Measurable, limit: float) -> int:
+    """The longest head of `text` that fits `limit` with its hyphen (at least `_MIN_HYPHEN_HEAD` letters)."""
+    cut = _MIN_HYPHEN_HEAD
+    while cut + 1 <= len(text) - _MIN_HYPHEN_TAIL and font.getlength(text[: cut + 1] + "-") <= limit:
+        cut += 1
+    return cut
 
 
 def fit_shape(
@@ -378,8 +371,10 @@ def fit_shape(
     line_spacing: float = 1.15,
     hyphenate: bool = True,
     font_factory: FontFactory = load_font,
+    lang: str = "en",
 ) -> Fit:
-    """Set `text` in `shape` at the largest size its words allow (at most `size_cap`), lines balanced.
+    """Set `text` in `shape` at the largest size its words allow (at most `size_cap`), lines balanced; `lang`
+    is the release language whose line-breaking rules apply.
 
     Every line count is tried; those whose largest size is within `_SIZE_TOLERANCE` of the best are set
     at that size and up to two pixels smaller, and the layout scoring best on size plus phrasing (breaks
@@ -397,7 +392,7 @@ def fit_shape(
     if not sizes and hyphenate:
         widest = max(shape.line_widths(1, min_px, line_height(min_px, line_spacing)))
         if widest > 0:
-            tokens = _hyphenated(tokens, _MeasuredFont(factory(font_path, min_px)), widest)
+            tokens = _hyphenated(tokens, _MeasuredFont(factory(font_path, min_px)), widest, lang)
             sizes = _line_count_sizes(tokens, shape, font_path, min_px, max_px, line_spacing, factory)
     if not sizes:
         return _overflow(tokens, shape, font_path, min_px, line_spacing, factory)
@@ -409,7 +404,7 @@ def fit_shape(
         for size in sorted({max(min_px, top - step) for step in range(_SIZE_STEPS)}, reverse=True):
             if size < floor and size != top:
                 continue
-            setter = _Setter(tokens, _MeasuredFont(factory(font_path, size)))
+            setter = _Setter(tokens, _MeasuredFont(factory(font_path, size)), dangling_words(lang))
             pitch = line_height(size, line_spacing)
             ends = _balanced_ends(setter, shape, n, size, pitch)
             score = size - _PHRASING_PX * setter.phrasing(ends)

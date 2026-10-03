@@ -323,3 +323,33 @@ def test_aggregated_terms_reuse_reference_aggregation() -> None:
     aggregated = aggregate(candidates)
     assert len(aggregated) == 1 and aggregated[0].chapters == 2
     assert DEFAULT_MIN_CHAPTERS == 2
+
+
+def test_run_proposals_asks_for_the_series_release_language(cfg: Config) -> None:
+    """A Spanish release (series.toml [translate] target_lang = "es") gets Spanish renderings proposed (#43)."""
+    make_series(cfg, "Chapter 1")
+    write_ocr(cfg, "Chapter 1")
+    (cfg.paths.library_root / "S" / "series.toml").write_text(
+        '[translate]\ntarget_lang = "es"\n', encoding="utf-8"
+    )
+    client = FakeClient([terms_reply({"source": "민준", "target": "Minjun"})])
+    run_proposals(cfg, "S", client=client, model=MODEL, min_chapters=1)
+    system = client.calls[0]["messages"][0]["content"]
+    assert "glossary of a Spanish release" in system and "your own best Spanish rendering" in system
+    assert "English" not in system
+
+
+def test_the_english_prompts_are_unchanged() -> None:
+    from omniscan.glossary.proposal_prompts import PROPOSAL_SYSTEM, proposal_system
+    from omniscan.glossary.reference_prompts import EXTRACT_SYSTEM, extract_system
+
+    assert proposal_system("ko", "en") == PROPOSAL_SYSTEM
+    assert PROPOSAL_SYSTEM.startswith(
+        "You are building the glossary of an English release of a Korean manhwa"
+    )
+    assert extract_system("ko", "en") == EXTRACT_SYSTEM
+    spanish = extract_system("ko", "es")
+    assert (
+        "official Spanish release" in spanish and "official Spanish translation of that same line" in spanish
+    )
+    assert "English" not in spanish
