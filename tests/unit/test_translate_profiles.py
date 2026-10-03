@@ -23,23 +23,33 @@ def write_profiles(path: Path, body: str) -> Path:
     return path
 
 
-def test_shipped_file_loads_the_five_documented_profiles() -> None:
+def test_shipped_file_loads_the_documented_profiles() -> None:
     profiles = load_profiles([SHIPPED])
     assert set(profiles) == {
-        "translategemma-12b-local",
-        "gemma4-12b-local",
         "gemma4-31b-cloud",
+        "translategemma-27b-local",
+        "translategemma-12b-local",
+        "translategemma-4b-local",
+        "gemma4-12b-local",
         "glm-5-3-flash-cloud",
         "kimi-k3-cloud",
+        "openai-gpt",
+        "claude-sonnet",
     }
-    tg = profiles["translategemma-12b-local"]
+    tg = profiles["translategemma-27b-local"]
     assert (tg.endpoint, tg.model, tg.style, tg.think, tg.enabled) == (
         "local",
-        "translategemma:12b",
+        "translategemma:27b",
         "translategemma",
         None,
-        False,  # only runs as the cloud profile's fallback
+        False,  # only runs as the cloud profile's fallback (owner, 2026-10-03: the biggest local model)
     )
+    for size in ("12b", "4b"):
+        smaller = profiles[f"translategemma-{size}-local"]
+        assert (smaller.model, smaller.enabled) == (f"translategemma:{size}", False)
+    gpt, claude = profiles["openai-gpt"], profiles["claude-sonnet"]
+    assert (gpt.endpoint, gpt.enabled, gpt.base_url, gpt.api_key_env) == ("openai", False, None, None)
+    assert (claude.endpoint, claude.model, claude.enabled) == ("anthropic", "claude-sonnet-5-5", False)
     g12 = profiles["gemma4-12b-local"]
     assert (g12.endpoint, g12.model, g12.style, g12.think, g12.enabled) == (
         "local",
@@ -55,7 +65,7 @@ def test_shipped_file_loads_the_five_documented_profiles() -> None:
         "chat_json",
         False,
         True,
-        "translategemma-12b-local",
+        "translategemma-27b-local",
     )
     assert [p.name for p in profiles.values() if p.enabled] == ["gemma4-31b-cloud"]
     assert resolve_fallbacks([g31], profiles) == {"gemma4-31b-cloud": tg}

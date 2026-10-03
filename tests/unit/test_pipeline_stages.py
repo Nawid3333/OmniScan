@@ -298,7 +298,10 @@ def write_pages(paths: ChapterPaths) -> list[Region]:
 def test_translate_stage_hash_of_a_profile_without_images_is_as_before(cfg: Config) -> None:
     plain = profile()
     subset = TranslateStage(FakeClient([]), [plain], {"test-profile": profile(name="fb")}).config_subset(cfg)
-    before = plain.model_dump(exclude={"images", "image_side", "images_per_request"})
+    # the fields a profile had before page images and API endpoints existed
+    before = plain.model_dump(
+        exclude={"images", "image_side", "images_per_request", "base_url", "api_key_env"}
+    )
     assert subset == {"profiles": [before], "fallbacks": {"test-profile": {**before, "name": "fb"}}}
     wider = TranslateStage(FakeClient([]), [profile(image_side=2048)]).config_subset(cfg)
     assert wider == TranslateStage(FakeClient([]), [plain]).config_subset(cfg)

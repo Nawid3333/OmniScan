@@ -19,7 +19,7 @@ from typing import Any
 from omniscan.core.schemas import GlossaryEntry, Region
 from omniscan.translate.images import IMAGE_FIELDS, image_key
 from omniscan.translate.judge_config import JudgeConfig
-from omniscan.translate.profiles import TranslationProfile
+from omniscan.translate.profiles import TranslationProfile, unkeyed_fields
 from omniscan.translate.prompts import glossary_subset, source_text
 from omniscan.translate.voices import Character, voice_key
 
@@ -60,7 +60,9 @@ def translation_key(
             "kind": region.kind,
             "lang": region.lang,
             "glossary": _terms(region, entries),
-            "profile": profile.model_dump(exclude={"enabled", "fallback", "chunk_regions", *IMAGE_FIELDS}),
+            "profile": profile.model_dump(
+                exclude={"enabled", "fallback", "chunk_regions", *IMAGE_FIELDS, *unkeyed_fields(profile)}
+            ),
             **voice_key(region, characters),
             **image_key(profile, page),
             **_target_key(target),
@@ -86,7 +88,7 @@ def judge_key(
                 [run_id, texts[region.id]] for run_id, texts in runs.items() if region.id in texts
             ),
             "glossary": _terms(region, entries),
-            "judge": cfg.model_dump(),
+            "judge": cfg.model_dump(exclude=unkeyed_fields(cfg)),
             **_target_key(target),
         }
     )

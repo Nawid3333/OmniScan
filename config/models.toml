@@ -124,6 +124,24 @@ upstream_url = "https://github.com/Sanster/models/releases/download/add_big_lama
 install_path = "lama/big-lama.pt"
 
 [[model]]
+id = "llm-translategemma-27b"
+name = "TranslateGemma 27B"
+kind = "llm"
+required = false
+format = "ollama"
+size_mb = 17000
+license = "Gemma terms"
+description = "The biggest local translation model: the default fallback when the cloud model is rate-limited or the run's cloud budget is spent."
+used_by = ["translategemma-27b-local"]
+min_vram_gb = 18.0
+min_ram_gb = 32
+cpu_speed = "unusable"
+role = "llm"
+family = "llm"
+notes = "on a 16 GB card a few layers run on the CPU (slower); translategemma-12b-local fits 9 GB"
+ollama_name = "translategemma:27b"
+
+[[model]]
 id = "llm-translategemma-12b"
 name = "TranslateGemma 12B"
 kind = "llm"
@@ -131,7 +149,7 @@ required = false
 format = "ollama"
 size_mb = 8110
 license = "Gemma terms"
-description = "Local translation model (one candidate of the ensemble)."
+description = "Local translation model for GPUs with less memory (set it as the cloud profile's fallback)."
 used_by = ["translategemma-12b-local"]
 min_vram_gb = 9.0
 min_ram_gb = 16

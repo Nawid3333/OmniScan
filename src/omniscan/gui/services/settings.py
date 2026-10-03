@@ -3,7 +3,9 @@
 Global values go through `core.config.set_user_setting` (validated against the config models);
 `clear_global` complements it for the keys a GUI must be able to unset (the runner-facing writer
 can only set). Per-series overrides use `set_series_setting` (only `SERIES_SECTIONS`); removing one
-rewrites `<series>/series.toml` without the key. All writers raise `SettingError` with a one-line
+rewrites `<series>/series.toml` without the key. Translation profiles are written to the user's
+`translation_profiles.toml` (enable, add your own model, remove one you added), and an API key the user types
+goes into `secrets.env` (never read back or shown). All writers raise `SettingError` with a one-line
 message the Settings page shows inline.
 """
 
@@ -17,19 +19,22 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+import httpx
 from pydantic import ValidationError
 
 from omniscan.core.config import (
+    SECRETS_ENV,
     SERIES_SECTIONS,
     USER_TOML,
     Config,
     SettingError,
+    api_key,
     dumps_toml,
     set_series_setting,
     set_user_setting,
 )
 
-type FieldKind = Literal["path", "bool", "choice", "model", "float"]
+type FieldKind = Literal["path", "bool", "choice", "model", "float", "int"]
 
 _DEVICE_RE = re.compile(r"^(auto|cpu|mps|xpu(?::\d+)?|cuda(?::\d+)?)$")
 
@@ -43,7 +48,7 @@ class SettingField:
     kind: FieldKind
     choices: tuple[str, ...] = ()  # "choice": fixed options; editable combos allow more
     editable: bool = False  # "choice": the user may type a value outside `choices` (gpu device)
-    low: float = 0.0  # "float": spin range
+    low: float = 0.0  # "float" / "int": spin range
     high: float = 1.0
     decimals: int = 2
     label: str = ""  # the plain name the Settings page shows ("" = section.key)
@@ -104,6 +109,15 @@ GLOBAL_FIELDS: tuple[SettingField, ...] = (
         help="Higher skips less",
     ),
     SettingField(
+        "translate",
+        "cloud_request_budget",
+        "int",
+        low=0,
+        high=1_000_000,
+        label="Cloud requests per run",
+        help="Most requests one run sends to cloud models; then the local fallback translates (0 = no limit)",
+    ),
+    SettingField(
         "share",
         "enabled",
         "bool",
@@ -118,8 +132,20 @@ SECTION_TITLES = {
     "ocr": "Text reading",
     "slicer": "Pages",
     "filter": "Promo filter",
+    "translate": "Translation",
     "share": "Sharing",
 }
+
+# Settings → Profiles: where a model you add runs ((label, endpoint, key variable, base URL))
+PROVIDERS: tuple[tuple[str, str, str | None, str | None], ...] = (
+    ("Ollama (a model on this PC, or an Ollama Cloud model)", "local", None, None),
+    ("OpenAI", "openai", "OPENAI_API_KEY", None),
+    ("Anthropic (Claude)", "anthropic", "ANTHROPIC_API_KEY", None),
+    ("OpenAI-compatible server (OpenRouter, Groq, LM Studio, …)", "openai", "", ""),
+)
+_PROFILE_SLUG_RE = re.compile(r"[^A-Za-z0-9._-]+")
+_ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_BARE_KEY_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 def current_value(cfg: Config, section: str, key: str) -> Any:
@@ -196,6 +222,14 @@ def model_ids() -> tuple[str, ...]:
     return tuple(sorted(entry.id for entry in load_catalog()))
 
 
+def profile_paths(user_path: Path | None = None) -> list[Path]:
+    """The shipped profile file, then `user_path` (default: the user's own translation_profiles.toml)."""
+    from omniscan.translate.profiles import default_profile_paths
+
+    shipped, user = default_profile_paths()
+    return [shipped, user_path or user]
+
+
 def translation_profiles(paths: Sequence[Path] | None = None) -> list[Any]:
     """The translation profiles in effect (repo defaults + user overrides), in file order.
 
@@ -233,13 +267,133 @@ def set_profile_enabled(name: str, enabled: bool, *, user_path: Path | None = No
     return user_path
 
 
+def suggest_profile_name(endpoint: str, model: str) -> str:
+    """A profile name for a model you add: `my-<model>` with every character a name may not hold made a dash."""
+    slug = _PROFILE_SLUG_RE.sub("-", model.replace(":", "-").replace("/", "-")).strip("-._")
+    suffix = "" if endpoint == "local" else f"-{endpoint}"
+    return f"my-{slug or 'model'}{suffix}"
+
+
+def add_profile(
+    name: str,
+    *,
+    endpoint: str,
+    model: str,
+    style: str = "chat_json",
+    base_url: str | None = None,
+    api_key_env: str | None = None,
+    only: bool = False,
+    user_path: Path | None = None,
+) -> Path:
+    """Add (or replace) an enabled profile in the user's `translation_profiles.toml`; with `only`, every other
+    profile is switched off there, so this model alone translates. Returns the file; SettingError when the
+    profile is invalid (unknown endpoint, a bad name, base URL or key variable)."""
+    from omniscan.translate.profiles import TranslationProfile, default_profile_paths, load_profiles
+
+    paths = default_profile_paths()
+    if user_path is None:
+        user_path = paths[1]
+    table: dict[str, Any] = {"enabled": True, "endpoint": endpoint, "model": model.strip(), "style": style}
+    if endpoint == "local" and style == "chat_json":
+        table["think"] = False  # a thinking model would spend the request reasoning
+    if base_url:
+        table["base_url"] = base_url.strip()
+    if api_key_env:
+        table["api_key_env"] = api_key_env.strip()
+    if not table["model"]:
+        raise SettingError("type the model's name")
+    try:
+        TranslationProfile(name=name, **table)
+    except ValidationError as error:
+        raise SettingError(f"profile {name!r}: {_first_error(error)}") from error
+    tables = dict(_read_toml(user_path).get("profiles", {}))
+    if only:
+        repo = _read_toml(paths[0]).get("profiles", {})
+        for other, profile in load_profiles([*paths[:1], user_path]).items():
+            if other != name and profile.enabled:
+                tables[other] = {**(tables.get(other) or repo.get(other, {})), "enabled": False}
+    tables[name] = table
+    _write_profiles_toml(user_path, {"profiles": tables})
+    return user_path
+
+
+def remove_profile(name: str, *, user_path: Path | None = None) -> Path:
+    """Remove a profile you added from the user's `translation_profiles.toml`; SettingError for a shipped one
+    (switch it off instead) or an unknown name."""
+    from omniscan.translate.profiles import default_profile_paths
+
+    paths = default_profile_paths()
+    if user_path is None:
+        user_path = paths[1]
+    if name in _read_toml(paths[0]).get("profiles", {}):
+        raise SettingError(f"{name} ships with OmniScan: switch it off instead")
+    tables = dict(_read_toml(user_path).get("profiles", {}))
+    if tables.pop(name, None) is None:
+        raise SettingError(f"unknown translation profile {name!r}")
+    _write_profiles_toml(user_path, {"profiles": tables})
+    return user_path
+
+
+def user_profile_names(user_path: Path | None = None) -> set[str]:
+    """The profiles only the user's file defines (the ones Remove can take away)."""
+    from omniscan.translate.profiles import default_profile_paths
+
+    paths = default_profile_paths()
+    repo = set(_read_toml(paths[0]).get("profiles", {}))
+    return set(_read_toml(user_path or paths[1]).get("profiles", {})) - repo
+
+
+def ollama_models(cfg: Config, *, http: httpx.Client | None = None) -> list[str]:
+    """The models the local Ollama has (its /api/tags), sorted; SettingError when it does not answer within 3 s."""
+    url = f"{cfg.ollama.local_url}/api/tags"
+    try:
+        response = (http or httpx).get(url, timeout=3.0)
+        response.raise_for_status()
+        models = response.json().get("models", [])
+    except (httpx.HTTPError, ValueError) as error:
+        raise SettingError(
+            f"Ollama does not answer at {cfg.ollama.local_url}: start it, then list again"
+        ) from error
+    return sorted(str(m["name"]) for m in models if isinstance(m, dict) and "name" in m)
+
+
+def has_api_key(name: str, *, env_file: Path | None = None) -> bool:
+    """Whether the key variable `name` is set (environment or secrets.env); the value is never returned."""
+    return api_key(name, env_file=env_file) is not None
+
+
+def save_api_key(name: str, value: str, *, env_file: Path | None = None) -> Path:
+    """Store an API key as `name=value` in secrets.env (replacing an earlier one, keeping every other line);
+    returns the file. SettingError for an invalid variable name or a key with spaces or line breaks."""
+    key = value.strip()
+    if not _ENV_NAME_RE.fullmatch(name):
+        raise SettingError(f"{name!r} is not a variable name (letters, digits, _)")
+    if not key or any(ch.isspace() for ch in key) or any(ch in key for ch in "\"'#"):
+        raise SettingError("paste the key itself: no spaces, quotes or line breaks")
+    path = env_file if env_file is not None else SECRETS_ENV
+    lines = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
+    prefixes = (f"{name}=", f"export {name}=")
+    kept = [line for line in lines if not line.strip().startswith(prefixes)]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text("\n".join([*kept, f"{name}={key}"]) + "\n", encoding="utf-8", newline="\n")
+    tmp.replace(path)
+    return path
+
+
+def _first_error(error: ValidationError) -> str:
+    """The first validation message, without pydantic's "Value error, " prefix."""
+    return str(error.errors()[0].get("msg", "invalid value")).removeprefix("Value error, ")
+
+
 def _write_profiles_toml(path: Path, data: dict[str, Any]) -> None:
-    """Write the user profile file (`dumps_toml` has no nested tables; profile tables are flat)."""
+    """Write the user profile file (`dumps_toml` has no nested tables; profile tables are flat). A name with
+    a dot (`gpt-5.4`) is quoted, or TOML would read it as nested tables."""
     lines: list[str] = []
     for name, table in data.get("profiles", {}).items():
         if lines:
             lines.append("")
-        lines.append(f"[profiles.{name}]")
+        lines.append(f"[profiles.{name if _BARE_KEY_RE.fullmatch(name) else json.dumps(name)}]")
         for key, value in table.items():
             lines.append(f"{key} = {json.dumps(value)}")  # str/bool/number json literals are valid TOML
     path.parent.mkdir(parents=True, exist_ok=True)

@@ -23,7 +23,7 @@ this file says *what to do next and in which order*, with as much of the volume 
 ## Where we are
 The whole pipeline runs end to end: `omniscan run SERIES` takes raw chapters through ingest → slice → detect →
 OCR → translate → judge → inpaint → LaMa → typeset → export in three passes, with a cloud-first translation
-default (`gemma4:31b-cloud`, `translategemma:12b` as its automatic rate-limit fallback), an OCR qualification
+default (`gemma4:31b-cloud`, `translategemma:27b` as its automatic rate-limit fallback since #41), an OCR qualification
 suite with real per-language recommendations, story memory, glossary term proposals, cover/metadata fetch, a
 web viewer with six chapter views, and a desktop app with six pages including Import. ~3 900 tests, protected
 by an end-to-end golden GPU test. **The real Solo Leveling chapters have now actually been rendered and looked

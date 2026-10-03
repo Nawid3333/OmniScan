@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from omniscan.core.schemas import FinalLine, GlossaryEntry, Region
+from omniscan.llm.api import provider_client
 from omniscan.llm.ollama import ChatResponse, OllamaRateLimitError
 from omniscan.translate.agree import candidates_agree, normalize_line
 from omniscan.translate.judge_config import JudgeConfig
@@ -114,8 +115,9 @@ def judge_regions(
     target: str = "en",
 ) -> tuple[list[FinalLine], JudgeStats]:
     """Judge the chapter's translatable regions into final lines (a release in `target`), asking the model only
-    where needed."""
+    where needed (at the judge's API endpoint when it has one, llm/api.py)."""
     start = clock()
+    client = provider_client(client, cfg.endpoint, base_url=cfg.base_url, key_env=cfg.api_key_env)
     targets = translatable(regions)
     analyses = [_analysis(region, runs, cfg) for region in targets]
 

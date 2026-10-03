@@ -4,7 +4,8 @@
 executes them with the core stage runner — one `run_series` call per pass, so a model group stays
 resident across every chapter of its pass. Chapters whose stage fails are dropped from the later
 passes; an Ollama rate limit stops the whole run. Step mode (`mode="step"`) runs the preview chapter
-through all passes behind a gate first, then the remaining chapters automatically.
+through all passes behind a gate first, then the remaining chapters automatically. The run's cloud requests
+count against `[translate] cloud_request_budget` (llm/budget.py).
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from omniscan.core.stage import (
 from omniscan.gpu.timeline import mark
 from omniscan.gpu.vram import OLLAMA_GROUP
 from omniscan.hw.usage import apply_process_limits, usage_limits
+from omniscan.llm.budget import cloud_budget
 from omniscan.pipeline.stages import PASS_OF, STAGE_ORDER, build_stage
 
 if TYPE_CHECKING:
@@ -315,54 +317,56 @@ def run_pipeline(
         raise ValueError(f"stage {needs_client!r} needs a chat client")
     _prefetch_groups(gpu, passes, cfg, client)
 
-    result = PipelineResult()
-    if preview is not None and step_gate is not None:
-        completed = _run_preview(
-            result,
-            cfg,
-            series,
-            preview,
-            passes,
-            client=client,
-            gpu=gpu,
-            force=force,
-            report=report,
-            gate=step_gate,
-            after_stage=after_stage,
-            total=len(names),
-            merge_series_config=merge_series_config,
-        )
-        if not completed:
-            return result
-        active = [chapter for chapter in all_chapters if chapter != preview]
-    else:
-        active = all_chapters
-    for _label, pass_stages in passes:
-        stage_objects = _timed(pass_stages, cfg, client)
-        try:
-            pass_results = run_series(
-                stage_objects,
+    # every cloud request of the run counts against [translate] cloud_request_budget (llm/budget.py)
+    with cloud_budget(cfg.translate.cloud_request_budget):
+        result = PipelineResult()
+        if preview is not None and step_gate is not None:
+            completed = _run_preview(
+                result,
                 cfg,
                 series,
-                active,
+                preview,
+                passes,
+                client=client,
                 gpu=gpu,
                 force=force,
+                report=report,
+                gate=step_gate,
                 after_stage=after_stage,
+                total=len(names),
                 merge_series_config=merge_series_config,
             )
-        except RunAbortedError as error:
-            for chapter, outcomes in {**error.results, error.chapter: error.outcomes}.items():
-                result.outcomes.setdefault(chapter, []).extend(outcomes)
-                if report is not None:
-                    for outcome in outcomes:
-                        report(chapter, outcome)
-            result.aborted = "stopped"
-            break
-        _record_pass_results(result, pass_results, report)
-        if result.aborted is not None:
-            break
-        active = [chapter for chapter in active if chapter not in result.failed]
-    return result
+            if not completed:
+                return result
+            active = [chapter for chapter in all_chapters if chapter != preview]
+        else:
+            active = all_chapters
+        for _label, pass_stages in passes:
+            stage_objects = _timed(pass_stages, cfg, client)
+            try:
+                pass_results = run_series(
+                    stage_objects,
+                    cfg,
+                    series,
+                    active,
+                    gpu=gpu,
+                    force=force,
+                    after_stage=after_stage,
+                    merge_series_config=merge_series_config,
+                )
+            except RunAbortedError as error:
+                for chapter, outcomes in {**error.results, error.chapter: error.outcomes}.items():
+                    result.outcomes.setdefault(chapter, []).extend(outcomes)
+                    if report is not None:
+                        for outcome in outcomes:
+                            report(chapter, outcome)
+                result.aborted = "stopped"
+                break
+            _record_pass_results(result, pass_results, report)
+            if result.aborted is not None:
+                break
+            active = [chapter for chapter in active if chapter not in result.failed]
+        return result
 
 
 def needs_gpu(names: Sequence[str], cfg: Config, client: ChatClient | None) -> bool:

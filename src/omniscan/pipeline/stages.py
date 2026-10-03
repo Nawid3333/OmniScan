@@ -23,6 +23,7 @@ from omniscan.story.store import SummaryStore
 from omniscan.translate.chapter import translate_chapter
 from omniscan.translate.images import PageImages, stage_profile
 from omniscan.translate.judge_chapter import judge_chapter
+from omniscan.translate.profiles import unkeyed_fields
 from omniscan.translate.voices import VOICES_FILE, Character, load_voices
 
 if TYPE_CHECKING:
@@ -321,7 +322,7 @@ class JudgeStage:
 
     def config_subset(self, cfg: Config) -> Mapping[str, Any]:
         """Only the config values that affect this stage's output (hashed for invalidation)."""
-        return {**self._judge_cfg.model_dump(), **_target_subset(cfg)}
+        return {**self._judge_cfg.model_dump(exclude=unkeyed_fields(self._judge_cfg)), **_target_subset(cfg)}
 
     def run(self, ctx: ChapterContext, models: Mapping[str, Any]) -> Mapping[str, float]:
         """Do the work, write outputs, return metrics (seconds are added by the runner)."""

@@ -164,7 +164,9 @@ Check this machine is ready for OmniScan.
 Checks Python 3.14, the torch build and the GPU it reaches (NVIDIA, AMD, Intel or Apple; `WARN` when only
 the CPU is left), `rocminfo` (ROCm builds on Linux only), the rocJPEG decoder, the local
 Ollama server, the required Ollama models, the Ollama cloud key (only when one is set), the secrets
-file, the pipeline roots, the required model-catalog downloads and the configured codec. Any `FAIL`
+file, the API keys the enabled profiles and the judge need (`api_keys`: only whether each is set, never its
+value; `FAIL` when one is missing), the pipeline roots, the required model-catalog downloads and the configured
+codec. Any `FAIL`
 row makes the command exit 1; `WARN` rows do not. The `models` row warns with the total size to
 download while required models are missing (until then the pipeline loads them from the Hugging Face
 hub/cache). Writes nothing.
@@ -917,6 +919,67 @@ rate-limited runs keep a dot-prefixed partial file that the next
 invocation resumes; a finished run deletes it. Exit 2 for unknown profiles or chapters with no
 `ocr.json`-less series; a chapter without `ocr.json` fails that chapter but the rest still run (exit
 1). An Ollama rate limit stops everything immediately with exit 3 and keeps the partial results.
+
+**The default models.** `gemma4-31b-cloud` translates on Ollama Cloud (through the local Ollama, no key
+needed). When the cloud is rate-limited, or the run's cloud budget (below) is spent, its fallback
+`translategemma-27b-local` takes over: the biggest TranslateGemma, run by your own Ollama
+(`ollama pull translategemma:27b`, 17 GB). On a 16 GB graphics card a few of its layers run on the CPU, which is
+slower. On a smaller card, make `translategemma-12b-local` (9 GB) or `translategemma-4b-local` the fallback in
+your own `translation_profiles.toml`:
+
+```toml
+[profiles.gemma4-31b-cloud]
+endpoint = "local"
+model = "gemma4:31b-cloud"
+style = "chat_json"
+think = false
+fallback = "translategemma-12b-local"
+```
+
+**Your own model.** Any model your Ollama has works as a profile with `endpoint = "local"` and the name
+`ollama list` shows. A hosted API works with your own key:
+
+| `endpoint` | Where the requests go | Key (environment or `secrets.env`) |
+|---|---|---|
+| `"openai"` | OpenAI's API (`https://api.openai.com/v1`), or with `base_url` any server that speaks it: OpenRouter, Groq, DeepSeek, Mistral, LM Studio, vLLM … | `OPENAI_API_KEY`, or the variable `api_key_env` names |
+| `"anthropic"` | Anthropic's API (Claude) | `ANTHROPIC_API_KEY`, or the variable `api_key_env` names |
+
+```toml
+[profiles.openrouter-deepseek]
+endpoint = "openai"
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+model = "deepseek/deepseek-chat"
+style = "chat_json"
+```
+
+`openai-gpt` (`gpt-5.4-mini`) and `claude-sonnet` (`claude-sonnet-5-5`) ship switched off; enable one, or add your
+own in the desktop app (Settings → Profiles → *Use your own model*: pick where it runs, type or list the
+model, paste the key, *Add model*). Keys go in `~/.config/omniscan/secrets.env` (`OPENAI_API_KEY=sk-…`) or the
+environment, never in a TOML file; `omniscan doctor` says when a key an enabled profile needs is missing (it
+never shows a key). An API profile works like any other: it can be a fallback or have one (its rate limit, or
+a spent quota or credit, switches to the fallback), it can send page images (OpenAI's and Claude's vision
+models accept them), and the judge can use one too (`[judge] endpoint = "anthropic"`, `model = …`). A model
+that refuses a temperature other than its own default (OpenAI's reasoning models) is asked again without one.
+
+**Cloud request budget.** `[translate] cloud_request_budget` (Settings → Translation → *Cloud requests per
+run*; 0, the default, means no limit) caps how many requests one pipeline run of a series sends to cloud
+models: Ollama `*-cloud` / `:cloud` models and the OpenAI and Anthropic APIs. Ollama Cloud's usage limit is
+weekly and account-wide, so this keeps one big `omniscan run` from spending the week. Past the budget the run
+carries on as it does on a rate limit: a profile with a fallback switches to it (the local translategemma by
+default), the judge keeps its deterministic picks for the lines it did not get to, and a profile without a
+fallback stops the run with exit 3. Local models are never counted. `omniscan translate`, the Studio's
+*Translate* and the other one-off requests are not counted either.
+
+**Models that accept images** (for `images = true`). Ollama Cloud, checked on ollama.com on 2026-10-03:
+
+| Accept images | Text only |
+|---|---|
+| `gemma4` (every size, and `gemma4:31b-cloud`), `translategemma` (every size; but the `translategemma` style sends no images), `glm-5.3-flash`, `kimi-k3`, `deepseek-v4.1-flash`, `mistral-large-3`, `minimax-m3` | `glm-5.3`, `gpt-oss`, `nemotron-3-super`, `deepseek-v4-pro` |
+
+OpenAI's GPT models and Anthropic's Claude models accept images. A profile with `images = true` whose model
+refuses them fails with the API's error, it never drops the images silently. Whether pages make a translation
+better has not been measured on a real chapter yet (#33).
 
 **Only what changed is translated again** when the pipeline (`omniscan run`, the web run buttons) re-runs
 the translate and judge stages: every candidate and every judged line carries a key — a hash of the
@@ -1844,7 +1907,12 @@ plain name and one help line; hover the name for its config key (e.g. `gpu.devic
   are listed with `Remove` buttons.
 - **Translation** — the translation profiles from `config/translation_profiles.toml` plus the user's
   `translation_profiles.toml`; ticking a profile enables it (written to the user file), and a
-  translate run runs exactly the enabled profiles.
+  translate run runs exactly the enabled profiles. *Use your own model* adds one: pick where it runs (your
+  Ollama, OpenAI, Anthropic's Claude, or another OpenAI-compatible server with its address and key variable),
+  type the model or `List Ollama models`, paste the API key (saved to `secrets.env`; the form only says
+  whether one is set), then `Add model`. With *Use only this model* ticked the other profiles are switched off,
+  so the new one translates alone. A profile you added has a `Remove` button; the shipped ones are switched
+  off instead. See "`omniscan translate`" for the endpoints and keys.
 - **Appearance** — OLED black (default) or light theme, the accent colour, and Quick / Standard / Pro mode.
 - **Hardware** — the machine snapshot from `hw detect`, the tuning plan for it (`omniscan tune`) with
   `Optimise for this PC`, which writes the plan's device, memory budget, OCR engine, batch sizes and LaMa
@@ -1852,7 +1920,8 @@ plain name and one help line; hover the name for its config key (e.g. `gpu.devic
   not fit (level, device, why). Detection runs when you open the tab (it imports torch) or on `Re-detect`.
 
 A successful settings write reloads the config into every page (the Library re-scans, the Run page
-re-lists series). The window never touches `secrets.env`; translation runs read it exactly as the
+re-lists series). The window touches `secrets.env` only to add an API key you type under *Use your own
+model* (one `NAME=key` line, never shown again); translation runs read it exactly as the
 CLI does.
 
 **Import** is the same import the CLI's `omniscan import` does, with an editable preview first:

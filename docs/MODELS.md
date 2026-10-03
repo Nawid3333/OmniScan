@@ -87,7 +87,8 @@ Notes on the table:
 
 | Model | Purpose | Upstream | Revision | Licence | Size |
 |---|---|---|---|---|---|
-| `llm-translategemma-12b` | translation candidate (local) | [Ollama library — `translategemma`](https://ollama.com/library/translategemma) | tag `12b` | Gemma terms | 8110 MB |
+| `llm-translategemma-27b` | the cloud profile's local fallback (default) | [Ollama library — `translategemma`](https://ollama.com/library/translategemma) | tag `27b` | Gemma terms | 17000 MB |
+| `llm-translategemma-12b` | local fallback for GPUs with less memory | [Ollama library — `translategemma`](https://ollama.com/library/translategemma) | tag `12b` | Gemma terms | 8110 MB |
 | `llm-gemma4-12b` | second translation candidate (local) | [Ollama library — `gemma4`](https://ollama.com/library/gemma4) | tag `12b` | Gemma terms | 7560 MB |
 | `llm-gemma4-31b` | larger local model (24 GB+ VRAM) | [Ollama library — `gemma4`](https://ollama.com/library/gemma4) | tag `31b` | Gemma terms | 19870 MB |
 | `llm-gemma4-31b-cloud` | judge and third candidate (Ollama Cloud) | [Ollama library — `gemma4`](https://ollama.com/library/gemma4) | tag `31b-cloud` | Gemma terms | 0 MB |

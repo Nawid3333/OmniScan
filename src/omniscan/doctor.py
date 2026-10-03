@@ -14,11 +14,18 @@ from typing import Literal
 
 import httpx
 
-from omniscan.core.config import Config, Secrets
+from omniscan.core.config import Config, Secrets, api_key
+from omniscan.llm.api import key_env_for
 from omniscan.models.catalog import load_catalog
 from omniscan.models.store import model_status
 from omniscan.translate.judge_config import default_judge_paths, load_judge_config
-from omniscan.translate.profiles import default_profile_paths, load_profiles, resolve_fallbacks
+from omniscan.translate.profiles import (
+    API_ENDPOINTS,
+    TranslationProfile,
+    default_profile_paths,
+    load_profiles,
+    resolve_fallbacks,
+)
 
 Status = Literal["OK", "WARN", "FAIL"]
 
@@ -31,19 +38,15 @@ def required_ollama_models(
     Each enabled profile contributes its model and, when it names one, its fallback's model (the fallback
     profile may itself be `enabled = false` — it then only ever runs as that fallback); the judge's model
     is appended last. A `*-cloud` name still counts: it is served by Ollama Cloud through the same local
-    daemon, so every model in this list is checked the same way. Duplicates are removed, first kept.
+    daemon, so every model in this list is checked the same way. A model behind an API endpoint (openai,
+    anthropic) is not Ollama's and is left out. Duplicates are removed, first kept.
     """
-    profiles = load_profiles(profile_paths if profile_paths is not None else default_profile_paths())
-    enabled = [profile for profile in profiles.values() if profile.enabled]
-    fallbacks = resolve_fallbacks(enabled, profiles)
-    ordered: list[str] = []
-    for profile in enabled:
-        ordered.append(profile.model)
-        fallback = fallbacks.get(profile.name)
-        if fallback is not None:
-            ordered.append(fallback.model)
     judge = load_judge_config(judge_paths if judge_paths is not None else default_judge_paths())
-    ordered.append(judge.model)
+    ordered = [
+        profile.model for profile in _profiles_in_use(profile_paths) if profile.endpoint not in API_ENDPOINTS
+    ]
+    if judge.endpoint not in API_ENDPOINTS:
+        ordered.append(judge.model)
     deduped: list[str] = []
     seen: set[str] = set()
     for name in ordered:
@@ -51,6 +54,34 @@ def required_ollama_models(
             seen.add(name)
             deduped.append(name)
     return deduped
+
+
+def _profiles_in_use(profile_paths: Sequence[Path] | None) -> list[TranslationProfile]:
+    """The enabled profiles, each followed by its fallback when it names one (the fallback may be disabled)."""
+    profiles = load_profiles(profile_paths if profile_paths is not None else default_profile_paths())
+    enabled = [profile for profile in profiles.values() if profile.enabled]
+    fallbacks = resolve_fallbacks(enabled, profiles)
+    used: list[TranslationProfile] = []
+    for profile in enabled:
+        used.append(profile)
+        fallback = fallbacks.get(profile.name)
+        if fallback is not None:
+            used.append(fallback)
+    return used
+
+
+def required_api_keys(
+    profile_paths: Sequence[Path] | None = None, judge_paths: Sequence[Path] | None = None
+) -> dict[str, list[str]]:
+    """The API key variables a real run needs -> who needs each (profile names, "judge"), in first-use order."""
+    needs: dict[str, list[str]] = {}
+    judge = load_judge_config(judge_paths if judge_paths is not None else default_judge_paths())
+    users = [(p.name, p.endpoint, p.api_key_env) for p in _profiles_in_use(profile_paths)]
+    for user, endpoint, key_env in [*users, ("judge", judge.endpoint, judge.api_key_env)]:
+        env = key_env_for(endpoint, key_env)
+        if env is not None:
+            needs.setdefault(env, []).append(user)
+    return needs
 
 
 # Fixed reference value for tests and other callers that want the shipped defaults: derived at import
@@ -242,6 +273,20 @@ def check_secrets(secrets: Secrets) -> CheckResult:
     return CheckResult("secrets", "OK", "all optional secrets set")
 
 
+def check_api_keys() -> CheckResult:
+    """Check every API key an enabled profile (or the judge) needs is set; never prints values or calls the API."""
+    try:
+        needs = required_api_keys()
+    except ValueError as exc:  # a broken profile or judge file
+        return CheckResult("api_keys", "WARN", f"{type(exc).__name__}: {exc}")
+    if not needs:
+        return CheckResult("api_keys", "OK", "no profile uses an API endpoint")
+    missing = [f"{env} (for {', '.join(users)})" for env, users in needs.items() if api_key(env) is None]
+    if missing:
+        return CheckResult("api_keys", "FAIL", "not set: " + "; ".join(missing))
+    return CheckResult("api_keys", "OK", "set: " + ", ".join(needs))
+
+
 def check_paths(cfg: Config) -> CheckResult:
     """Check pipeline roots exist; WARN on the ones that will be created on first use."""
     roots = {
@@ -306,6 +351,7 @@ _CHECKS = (
     ("ollama_models", lambda cfg, secrets, http: check_ollama_models(cfg, http)),
     ("ollama_cloud", lambda cfg, secrets, http: check_ollama_cloud(cfg, secrets, http)),
     ("secrets", lambda cfg, secrets, http: check_secrets(secrets)),
+    ("api_keys", lambda cfg, secrets, http: check_api_keys()),
     ("paths", lambda cfg, secrets, http: check_paths(cfg)),
     ("models", lambda cfg, secrets, http: check_models(cfg)),
     ("codec", lambda cfg, secrets, http: check_codec(cfg)),
