@@ -10,12 +10,27 @@ import pytest
 from omniscan.importer.plan import ImportPlanError, ImportPlanItem, plan_import
 
 
-def _chapter(series_dir: Path, folder: str, pages: int, suffix: str = ".jpg") -> Path:
-    """One downloader chapter folder holding `pages` images named like the downloader's (`0001.jpg`, ...)."""
+def _chapter(
+    series_dir: Path,
+    folder: str,
+    pages: int,
+    suffix: str = ".jpg",
+    *,
+    finished: bool = True,
+    recorded: int | None = None,
+) -> Path:
+    """One downloader chapter folder holding `pages` images named like the downloader's (`0001.jpg`, ...).
+
+    A finished chapter is listed in `chapter_manifest.json` with `recorded` pages (default: `pages`), as the
+    downloader does at the end of a run that completed it."""
     path = series_dir / folder
     path.mkdir(parents=True)
     for index in range(1, pages + 1):
         (path / f"{index:04d}{suffix}").write_bytes(b"img" + str(index).encode())
+    if finished:
+        manifest = series_dir / "chapter_manifest.json"
+        chapters = json.loads(manifest.read_text(encoding="utf-8"))["chapters"] if manifest.exists() else {}
+        _write_json(manifest, {"chapters": {**chapters, folder: pages if recorded is None else recorded}})
     return path
 
 
@@ -33,7 +48,6 @@ def test_numbered_folders_become_chapter_n_in_number_order(tmp_path: Path) -> No
     _chapter(src, "num10_Chapter 10", 2)
     _chapter(src, "num2_Chapter 2", 3)
     _chapter(src, "num5.5_Chapter 5.5", 1)
-    _write_json(src / "chapter_manifest.json", {"chapters": {"num10_Chapter 10": 2, "num2_Chapter 2": 3}})
 
     plan = plan_import(src)
 
@@ -74,7 +88,7 @@ def test_uuid_series_folder_needs_series(tmp_path: Path) -> None:
 def test_incomplete_chapter_is_skipped_with_warning(tmp_path: Path) -> None:
     src = tmp_path / "series"
     _chapter(src, "num1_Chapter 1", 2)
-    _chapter(src, "num2_Chapter 2", 1)
+    _chapter(src, "num2_Chapter 2", 1, finished=False)
     _write_json(
         src / "incomplete_chapters.json",
         {"chapters": [{"folder": "num2_Chapter 2", "downloaded": 1, "total": 4, "missing": 3}]},
@@ -104,8 +118,7 @@ def test_part_file_marks_an_interrupted_chapter(tmp_path: Path) -> None:
 def test_page_count_below_manifest_is_skipped(tmp_path: Path) -> None:
     src = tmp_path / "series"
     _chapter(src, "num1_Chapter 1", 2)
-    _chapter(src, "num2_Chapter 2", 2)
-    _write_json(src / "chapter_manifest.json", {"chapters": {"num1_Chapter 1": 2, "num2_Chapter 2": 5}})
+    _chapter(src, "num2_Chapter 2", 2, recorded=5)
 
     plan = plan_import(src)
 
@@ -171,16 +184,65 @@ def test_chapter_option_is_ambiguous(tmp_path: Path) -> None:
         plan_import(src, chapter="Chapter 1")
 
 
-def test_unreadable_bookkeeping_is_ignored(tmp_path: Path) -> None:
+def test_unreadable_incomplete_list_is_ignored(tmp_path: Path) -> None:
     src = tmp_path / "series"
     _chapter(src, "num1_Chapter 1", 1)
-    (src / "chapter_manifest.json").write_text("{not json", encoding="utf-8")
     _write_json(src / "incomplete_chapters.json", {"chapters": "oops"})
 
     plan = plan_import(src)
 
     assert _chapters(plan.items) == [("Chapter 1", 1)]
     assert plan.warnings == []
+
+
+def test_unreadable_manifest_confirms_nothing(tmp_path: Path) -> None:
+    src = tmp_path / "series"
+    _chapter(src, "num1_Chapter 1", 1)
+    (src / "chapter_manifest.json").write_text("{not json", encoding="utf-8")
+
+    with pytest.raises(ImportPlanError, match=r"no entry in chapter_manifest\.json"):
+        plan_import(src)
+
+
+def test_chapter_the_manifest_does_not_list_is_skipped(tmp_path: Path) -> None:
+    # A downloader run stopped at page 10 of 30 (Ctrl+C, a crash): its `finally` deleted the in-flight `.part`
+    # files and the bookkeeping is written only after every chapter of a run, so nothing but the missing
+    # manifest entry tells the folder apart from a finished 10-page chapter.
+    src = tmp_path / "series"
+    _chapter(src, "num1_Chapter 1", 3)
+    _chapter(src, "num2_Chapter 2", 10, finished=False)
+
+    plan = plan_import(src)
+
+    assert _chapters(plan.items) == [("Chapter 1", 3)]
+    assert plan.warnings == [
+        "skipped num2_Chapter 2: the downloader has not confirmed it finished (no entry in "
+        "chapter_manifest.json) — finish it with the downloader, then import again"
+    ]
+
+
+def test_series_without_a_manifest_imports_nothing(tmp_path: Path) -> None:
+    src = tmp_path / "series"
+    _chapter(src, "num1_Chapter 1", 2, finished=False)
+
+    with pytest.raises(
+        ImportPlanError, match=r"nothing to import .*num1_Chapter 1: the downloader has not confirmed"
+    ):
+        plan_import(src)
+
+
+def test_gap_in_the_page_numbering_is_skipped(tmp_path: Path) -> None:
+    src = tmp_path / "series"
+    folder = _chapter(src, "num1_Chapter 1", 3)
+    (folder / "0002.jpg").rename(folder / "0004.jpg")  # three pages, as recorded, but 0002 never arrived
+    _chapter(src, "num2_Chapter 2", 1)
+
+    plan = plan_import(src)
+
+    assert _chapters(plan.items) == [("Chapter 2", 1)]
+    assert plan.warnings == [
+        "skipped num1_Chapter 1: page 0002 is missing — finish it with the downloader, then import again"
+    ]
 
 
 def test_other_loose_files_still_warn(tmp_path: Path) -> None:
@@ -196,8 +258,8 @@ def test_other_loose_files_still_warn(tmp_path: Path) -> None:
 def test_ordinary_chapter_folders_keep_their_names(tmp_path: Path) -> None:
     # Only a folder whose every subfolder has the downloader's `num<N>_` name takes this path.
     src = tmp_path / "series"
-    _chapter(src, "Chapter 1", 1)
-    _chapter(src, "num2_Chapter 2", 1)
+    _chapter(src, "Chapter 1", 1, finished=False)
+    _chapter(src, "num2_Chapter 2", 1, finished=False)
 
     plan = plan_import(src)
 

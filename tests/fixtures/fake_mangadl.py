@@ -57,6 +57,7 @@ def main(args: list[str]) -> int:
     elif scenario == "partial":
         result["complete_chapters"] = [_chapter(out, 1, 2)]
         result["incomplete_chapters"] = [_chapter(out, 2, 1)]
+        _write_json(out / "chapter_manifest.json", {"chapters": {"num1_Chapter 1": 2}})
         _write_json(
             out / "incomplete_chapters.json",
             {"chapters": [{"folder": "num2_Chapter 2", "downloaded": 1, "total": 3}]},
