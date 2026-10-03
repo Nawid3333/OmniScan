@@ -50,8 +50,9 @@ class OcrStage:
 
     name: ClassVar[str] = "ocr"
     version: ClassVar[int] = (
-        5  # 3: watermark text reclassification; 4: sound effects found, lettering measured;
-        # 5: stored watermark regions passed through unread, whole-page sweep for missed effects
+        6  # 3: watermark text reclassification; 4: sound effects found, lettering measured;
+        # 5: stored watermark regions passed through unread, whole-page sweep for missed effects;
+        # 6: swept regions never reuse an id after the OCR dropped regions (duplicates crashed LaMa)
     )
     gpu_group: ClassVar[str | None] = VISION_GROUP
 
