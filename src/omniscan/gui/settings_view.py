@@ -272,6 +272,11 @@ class SettingsView(QWidget):
     def _editor(self, field: SettingField, value: Any) -> QWidget:
         """The editor widget for one field (a path row wraps editor + Browse in one row)."""
         key = (field.section, field.key)
+        if field.kind == "text":
+            text = QLineEdit("" if value is None else str(value))
+            text.editingFinished.connect(lambda f=field, e=text: self._commit_global(f, e.text().strip()))
+            self._editors[key] = text
+            return text
         if field.kind == "path":
             line = QLineEdit("" if value is None else str(value))
             line.editingFinished.connect(lambda f=field, e=line: self._commit_global(f, e.text()))

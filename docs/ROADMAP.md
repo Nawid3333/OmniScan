@@ -110,7 +110,9 @@ inpaint patches, layout), so every manual change is just a better version of a s
 - Cleaning tools: brush and lasso to extend or shrink the inpaint mask, re-run LaMa on a selection, clone/heal.
 - Lettering tools: move/resize text boxes, font/size/stroke/tilt per box, style presets, live re-render.
 - Re-run any single stage for one page or one region; history with undo per chapter.
-- Roles for groups later: translator, proofreader, cleaner, typesetter, quality check; a chapter moves between them.
+- Roles for groups: translator, proofreader, cleaner, typesetter, quality check; a chapter moves between them. Built
+  (#38): chapter steps and hand-overs (`chapter_status.json`), notes on regions, each role's to-do list, optional names
+  on edits (`omniscan workflow`, the Library's Workflow menu, the Studio's role filter).
 - Export: CBZ/PDF/images as today, plus a project file a group can pass around.
 - Every manual correction is saved locally as a before/after record (the input X4 later shares, and a per-series
   memory the next chapter's translation reuses).
@@ -138,8 +140,9 @@ inpaint patches, layout), so every manual change is just a better version of a s
 - How it feeds back: OCR fine-tuning and qualification sets (`eval/`), translation-model evaluation and prompt
   tuning, shared series glossaries, better defaults for detection and lettering. Improvements ship as model or
   config updates through the existing `models-v1`-style mirror and `omniscan update`.
-- Still needs the owner's decisions before the upload service is built: hosting, licence of contributed data,
-  whether uploads need an account. Tracked in `docs/OPEN_QUESTIONS.md` (X1-X3).
+- Decided 2026-10-03 (#42): contributions are files the user sends in (`[share] send_to`), under CC BY 4.0, with
+  no account; each archive has a receipt id for deletion requests and the install keeps a local export log. No
+  upload service is built.
 
 ### X6 — A separate reader app (phone, tablet, desktop; later)
 - Owner's decision (2026-09-27, "Both"): OmniScan keeps a basic reading mode (the Reader page's `Read` button:

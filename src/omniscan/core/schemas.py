@@ -420,6 +420,7 @@ class RegionEdit(Model):
     lang: Lang | None = None  # an added region's language
     auto_text: str | None = None  # the pipeline's reading when first edited (None: an added region)
     speaker: str | None = None  # who says the line; "" clears it
+    by: str | None = None  # who made it (`[user] name`), when set; never shared in a contribution
 
 
 class TranslationEdit(Model):
@@ -431,6 +432,7 @@ class TranslationEdit(Model):
     source: str  # the region's source text when the line was written; a changed source flags the line
     suggested_by: str | None = None  # the profile whose suggestion was kept as is; None = typed by hand
     auto_text: str | None = None  # the judge's line when the region's line was first written (learn/)
+    by: str | None = None  # who made it (`[user] name`), when set; never shared in a contribution
 
 
 class LayoutEdit(Model):
@@ -453,6 +455,7 @@ class LayoutEdit(Model):
     box: BBox | None = None  # where the lettering goes (strip space)
     lines: list[str] | None = None  # explicit line breaks
     hidden: bool = False  # no English lettering for this region at all
+    by: str | None = None  # who made it (`[user] name`), when set; never shared in a contribution
 
 
 class LineCheck(Model):
@@ -464,6 +467,7 @@ class LineCheck(Model):
     anchor: BBox  # the region's text box when the line was checked
     source: str  # the region's source text when checked (whitespace collapsed)
     english: str  # its English line when checked, whitespace collapsed ("" for a region without one)
+    by: str | None = None  # who made it (`[user] name`), when set; never shared in a contribution
 
 
 class ChapterEdits(Artifact):
@@ -485,6 +489,52 @@ class EditsHistory(Artifact):
 
     undo: list[ChapterEdits] = Field(default_factory=list)
     redo: list[ChapterEdits] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------- group workflow (#38)
+
+WorkflowStep = Literal["translated", "proofread", "cleaned", "lettered", "qc_passed"]
+WORKFLOW_STEPS: tuple[WorkflowStep, ...] = ("translated", "proofread", "cleaned", "lettered", "qc_passed")
+
+
+class StatusEvent(Model):
+    """One change of a chapter's workflow status: a step marked done or undone, or the chapter handed over."""
+
+    kind: Literal["done", "undone", "handed"]
+    step: WorkflowStep | None = None  # done / undone: which step
+    to: str | None = None  # handed: who has the chapter now (None: nobody in particular)
+    by: str | None = None  # who did it (`[user] name`), when set
+    note: str | None = None
+    at: datetime
+
+
+class ChapterStatus(Artifact):
+    """chapter_status.json in the chapter work dir: where a group's chapter stands (workflow/status.py). It travels
+    in chapter project files with the rest of the work folder; the pipeline never reads or writes it."""
+
+    done: list[WorkflowStep] = Field(default_factory=list)  # the steps marked done, in WORKFLOW_STEPS order
+    holder: str | None = None  # who has the chapter now
+    events: list[StatusEvent] = Field(default_factory=list)  # oldest first
+
+
+class RegionNote(Model):
+    """A note on one region (notes.json): a proofreader's question or a remark for the next person, never a change
+    to the line itself. Matched to its region like an edit (the same id still overlapping `anchor`, else the
+    best-overlapping region)."""
+
+    id: str  # n0001, ...
+    region_id: str
+    anchor: BBox  # the region's text box when the note was written
+    text: str
+    by: str | None = None  # `[user] name`, when set
+    at: datetime
+    resolved: bool = False
+
+
+class NotesArtifact(Artifact):
+    """notes.json in the chapter work dir: the notes on its regions, oldest first (workflow/notes.py)."""
+
+    notes: list[RegionNote] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------- hand cleanup
@@ -646,6 +696,9 @@ class Contribution(Artifact):
     app_version: str
     series_id: str  # salted hash of the series name (the salt never leaves this install)
     target_lang: TargetLang = "en"
+    # the contributor licenses the corrections under CC BY 4.0, attributed to "OmniScan contributors" (X2)
+    licence: Literal["CC-BY-4.0"] = "CC-BY-4.0"
+    receipt: str = ""  # a random id the contributor quotes to have this contribution deleted ("" before #42)
     chapters: list[ContributionChapter]
     glossary: list[ContributionTerm] = Field(default_factory=list)
 

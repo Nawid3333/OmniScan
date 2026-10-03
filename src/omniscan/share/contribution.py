@@ -10,8 +10,13 @@ contribution.json holds no date. Series and chapters are named by ids salted wit
 install's work folder, so hashing known titles cannot reverse them, while a later contribution of the same
 series from the same install carries the same ids. A series is built only when both this machine and the series
 allow sharing (`[share] enabled`, false in config.toml opts out every series whatever its series.toml says).
-Nothing is uploaded: the archive stays a local file until the upload service exists. Pages are read and encoded
-on the CPU (Pillow), like the PSD export: an export of a few edited pages, not a pipeline stage.
+
+How contributions travel (owner, 2026-10-03): nothing is uploaded and there are no accounts. The user sends the
+archive to the address the project publishes (`[share] send_to`). The contributor licenses the corrections under
+CC BY 4.0 (LICENSE.txt in the archive, `Contribution.licence`), and the archive carries a random receipt id
+(`Contribution.receipt`) to quote when asking for it to be deleted. Every export is noted in this install's own
+log (`contributions.jsonl` in the work folder; it never leaves the machine). Pages are read and encoded on the CPU
+(Pillow), like the PSD export: an export of a few edited pages, not a pipeline stage.
 """
 
 from __future__ import annotations
@@ -19,10 +24,12 @@ from __future__ import annotations
 import hashlib
 import hmac
 import io
+import json
 import secrets
 import zipfile
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from datetime import datetime
 from pathlib import Path, PureWindowsPath
 from typing import Literal
 
@@ -47,6 +54,7 @@ from omniscan.core.schemas import (
     RegionEdit,
     SourceFile,
     TranslationEdit,
+    utcnow,
 )
 from omniscan.edits.apply import MATCH_IOU, match_layout_edits, match_region_edits, match_translation_edits
 from omniscan.edits.store import (
@@ -63,6 +71,21 @@ from omniscan.typeset.page_preview import page_box
 from omniscan.update.version import current_version
 
 CONTRIBUTION_FILE = "contribution.json"
+LICENCE_FILE = "LICENSE.txt"
+LOG_FILE = (
+    "contributions.jsonl"  # in the work root: one line per export (receipt, series, file); never shared
+)
+LICENCE_TEXT = """OmniScan contribution - licence
+
+The corrections, checked lines, glossary terms and lettering choices in this archive are contributed under the
+Creative Commons Attribution 4.0 International licence (CC BY 4.0,
+https://creativecommons.org/licenses/by/4.0/), attributed to "OmniScan contributors".
+
+The page images are the pages those corrections were made on. They are shared only so the corrections can be
+used, are kept private, and are never published as a dataset.
+
+To have this contribution deleted, quote its receipt id (the "receipt" field in contribution.json).
+"""
 SALT_FILE = "contribution-salt"  # in the work root: this install's random salt for the ids (never shared)
 JPEG_QUALITY = 92
 _ZIP_TIME = (1980, 1, 1, 0, 0, 0)  # every entry's timestamp: when and where the export ran is not shared
@@ -70,6 +93,72 @@ _ZIP_TIME = (1980, 1, 1, 0, 0, 0)  # every entry's timestamp: when and where the
 
 class ShareOptOutError(RuntimeError):
     """The series, or this machine, opted out of sharing (`[share] enabled = false`)."""
+
+
+@dataclass(frozen=True, slots=True)
+class ExportRecord:
+    """One line of this install's contribution log: what was exported when, and where to."""
+
+    receipt: str
+    series: str
+    file: str
+    at: str  # ISO 8601, UTC
+    pages: int
+    regions: int
+
+
+def consent_text(send_to: str) -> str:
+    """What an export shares, under which terms, and where it goes (the CLI and the desktop app say the same)."""
+    where = (
+        f"Send the archive to {send_to}."
+        if send_to
+        else (
+            "The project has not published where to send contributions yet; keep the archive until it does."
+        )
+    )
+    return (
+        "The archive holds the pages your corrections and checked lines are on, the pipeline's output and your "
+        "corrections next to it, and the series' locked glossary terms. No file names, folder paths, image "
+        'metadata, dates or names. You contribute the corrections under CC BY 4.0 (attributed to "OmniScan '
+        'contributors"); the pages stay private and are never published as a dataset. Nothing is uploaded and no '
+        f"account is needed. {where} Quote the receipt id to have it deleted."
+    )
+
+
+def record_export(work_root: Path, record: ExportRecord) -> None:
+    """Append one export to this install's contribution log (contributions.jsonl in the work root)."""
+    work_root.mkdir(parents=True, exist_ok=True)
+    with (work_root / LOG_FILE).open("a", encoding="utf-8", newline="\n") as log:
+        log.write(json.dumps(asdict(record), ensure_ascii=False) + "\n")
+
+
+def export_log(work_root: Path) -> list[ExportRecord]:
+    """This install's exports, oldest first ([] before the first one; a damaged line is skipped)."""
+    path = work_root / LOG_FILE
+    if not path.is_file():
+        return []
+    records: list[ExportRecord] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            records.append(ExportRecord(**json.loads(line)))
+        except TypeError, ValueError:
+            continue
+    return records
+
+
+def export_record(
+    series: str, contribution: Contribution, path: Path, at: datetime | None = None
+) -> ExportRecord:
+    """The log line of an export of `contribution` (of `series`) written to `path`."""
+    summary = summarize(contribution)
+    return ExportRecord(
+        receipt=contribution.receipt,
+        series=series,
+        file=str(path),
+        at=(at or utcnow()).isoformat(timespec="seconds"),
+        pages=summary.pages,
+        regions=summary.regions,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -395,6 +484,7 @@ def build(
         app_version=str(current_version()),
         series_id=digest(series.series, salt),
         target_lang=series_cfg.translate.target_lang,
+        receipt=secrets.token_hex(8),
         chapters=contributed,
         glossary=locked_terms(series),
     )
@@ -443,8 +533,8 @@ def _entry(archive: zipfile.ZipFile, name: str, data: bytes, compression: int) -
 
 
 def write_archive(path: Path, contribution: Contribution, pages: Sequence[PageSource]) -> int:
-    """Write the contribution archive (contribution.json, then each page image) atomically; returns its size
-    in bytes. FileNotFoundError when a page's raw file is gone."""
+    """Write the contribution archive (contribution.json, LICENSE.txt, then each page image) atomically; returns
+    its size in bytes. FileNotFoundError when a page's raw file is gone."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     try:
@@ -455,6 +545,7 @@ def write_archive(path: Path, contribution: Contribution, pages: Sequence[PageSo
                 contribution.model_dump_json(indent=2).encode(),
                 zipfile.ZIP_DEFLATED,
             )
+            _entry(archive, LICENCE_FILE, LICENCE_TEXT.encode(), zipfile.ZIP_DEFLATED)
             for page in pages:
                 pixels = strip_crop(page.paths, page.ingest, page_box(page.ingest, page.page))
                 _entry(archive, page.member, page_jpeg(pixels), zipfile.ZIP_STORED)

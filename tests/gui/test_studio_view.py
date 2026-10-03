@@ -14,7 +14,7 @@ pytest.importorskip("PySide6")
 import numpy as np
 from PySide6.QtWidgets import QApplication, QTableWidgetSelectionRange
 
-from omniscan.core.config import Config
+from omniscan.core.config import Config, UserConfig
 from omniscan.core.paths import SeriesPaths
 from omniscan.core.schemas import BBox, FinalArtifact, FinalLine, Region, RegionsArtifact
 from omniscan.edits.store import load_edits
@@ -389,3 +389,31 @@ def test_preview_renders_the_current_pages_on_demand(qapp: QApplication, cfg: Co
     view.save()  # a save makes the rendered pages stale: the current one renders again
     _wait(qapp, lambda: not view.is_busy())
     assert rendered == [0, 2, 2]
+
+
+# ---------------------------------------------------------------------- group workflow (#38)
+
+
+def test_role_filter_and_notes(qapp: QApplication, cfg: Config) -> None:
+    """The role filter shows what a role has left; a note shows among the issues until resolved."""
+    me = cfg.model_copy(update={"user": UserConfig(name="Ana")})
+    view = _view(qapp, me, note_fn=lambda region_id, parent: "Too formal?")
+
+    def visible() -> list[str]:
+        return [view._rows[r].region_id for r in range(len(view._rows)) if not view.table.isRowHidden(r)]
+
+    assert visible() == ["r0001", "r0002"]
+    view.role_combo.setCurrentIndex(view.role_combo.findData("translator"))
+    assert visible() == ["r0002"]  # no English yet
+    view.role_combo.setCurrentIndex(view.role_combo.findData("proofreader"))
+    assert visible() == ["r0001"]  # translated, not checked
+
+    _select(view, "r0001")
+    assert view.add_note() and view.status_label.text() == "n0001 left on r0001"
+    assert "note n0001 (Ana): Too formal?" in view._issues["r0001"]
+    view.role_combo.setCurrentIndex(view.role_combo.findData("translator"))
+    assert visible() == ["r0001", "r0002"]  # an open note shows for every role
+    _select(view, "r0001")
+    assert view.resolve_notes() == 1 and not any(i.startswith("note ") for i in view._issues.get("r0001", []))
+    view.role_combo.setCurrentIndex(0)
+    assert visible() == ["r0001", "r0002"]

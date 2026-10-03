@@ -234,6 +234,16 @@ class ShareConfig(BaseModel):
     a local file the user exports (`omniscan contribute export`), and an opted-out series exports none."""
 
     enabled: bool = True
+    # where contributions go (owner, 2026-10-03: files sent in, CC BY 4.0, no account): an e-mail address or a
+    # web page the export names; "" until the project publishes one
+    send_to: str = ""
+
+
+class UserConfig(BaseModel):
+    """Who is working on this machine, for a group passing chapters around (#38): the name a hand edit, a chapter
+    step and a region note record. Empty: nothing is recorded. Names never leave in a contribution."""
+
+    name: str = Field(default="", max_length=80)
 
 
 class ImporterConfig(BaseModel):
@@ -270,6 +280,7 @@ class Config(BaseSettings):
     learn: LearnConfig = LearnConfig()
     share: ShareConfig = ShareConfig()
     importer: ImporterConfig = ImporterConfig()
+    user: UserConfig = UserConfig()
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:

@@ -6,7 +6,8 @@ between users and share corrections (`gui.services.chapter_files`): *Open chapte
 *Send chapter…* and *Export contribution…*; *Export for…* writes the selected chapter for LabelPlus,
 Photoshop (layered PSD pages) or BallonsTranslator, and *Import from…* takes a LabelPlus file, a
 BallonsTranslator project or manga-image-translator text back in as English lines. Each runs on a
-worker thread.
+worker thread. For a group (#38) the *Workflow* column says which steps of each chapter are done and who has it,
+and the *Workflow* menu marks the selected chapter's steps and hands it over (`gui.services.workflow`).
 """
 
 from __future__ import annotations
@@ -15,12 +16,13 @@ from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QBrush, QColor
+from PySide6.QtGui import QAction, QBrush, QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
+    QInputDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
@@ -35,11 +37,13 @@ from PySide6.QtWidgets import (
 )
 
 from omniscan.core.config import Config
-from omniscan.gui.services import chapter_files, library
+from omniscan.core.schemas import WORKFLOW_STEPS, WorkflowStep
+from omniscan.gui.services import chapter_files, library, workflow
 from omniscan.gui.theme import TINTS
 from omniscan.gui.workers import WorkerSignals, run_task
 
 COLUMNS = ("Ingest", "Slice", "Detect", "OCR", "Translate", "Judge", "Inpaint", "LaMa", "Typeset", "Export")
+WORKFLOW_COLUMN = 1 + len(COLUMNS)  # after the stages: where the chapter stands in a group's workflow
 
 # Stage-state cell backgrounds; "not run" keeps the default background.
 STATE_COLORS: dict[str, QColor] = {
@@ -57,6 +61,9 @@ type AskFolder = Callable[
     [str, Path], Path | None
 ]  # (title, suggested folder) -> the folder, None = cancelled
 type Confirm = Callable[[str, str], bool]  # (title, question) -> yes
+type AskText = Callable[
+    [str, str, str], str | None
+]  # (title, label, preset text) -> the text, None = cancelled
 
 
 class LibraryView(QWidget):
@@ -74,6 +81,7 @@ class LibraryView(QWidget):
         confirm: Confirm | None = None,
         ask_open_many: AskOpenMany | None = None,
         ask_folder: AskFolder | None = None,
+        ask_text: AskText | None = None,
     ) -> None:
         """Build the page and load the series list once (`refresh` re-reads it); the file, folder and question
         dialogs are injectable for tests."""
@@ -85,12 +93,13 @@ class LibraryView(QWidget):
         self._confirm = confirm or self._default_confirm
         self._ask_open_many = ask_open_many or self._default_ask_open_many
         self._ask_folder = ask_folder or self._default_ask_folder
+        self._ask_text = ask_text or self._default_ask_text
         self._task_signals: WorkerSignals | None = None  # keeps the running task's signals alive
         self._busy = False  # a chapter-file task is running
 
         self.series_list = QListWidget(self)
-        self.table = QTableWidget(0, 1 + len(COLUMNS), self)
-        self.table.setHorizontalHeaderLabels(("Chapter", *COLUMNS))
+        self.table = QTableWidget(0, 2 + len(COLUMNS), self)
+        self.table.setHorizontalHeaderLabels(("Chapter", *COLUMNS, "Workflow"))
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -126,6 +135,21 @@ class LibraryView(QWidget):
         import_menu.addAction("BallonsTranslator project…", self.import_ballons)
         import_menu.addAction("manga-image-translator text…", self.import_mit)
         self.import_button.setMenu(import_menu)
+        self.workflow_button = QPushButton("Workflow", self)
+        self.workflow_button.setToolTip(
+            "Mark the selected chapter's steps done and hand it to the next person"
+        )
+        self.workflow_menu = QMenu(self.workflow_button)
+        self.step_actions: dict[WorkflowStep, QAction] = {}
+        for step in WORKFLOW_STEPS:
+            action = self.workflow_menu.addAction(f"{workflow.status.STEP_LABELS[step].capitalize()} — done")
+            action.setCheckable(True)
+            action.triggered.connect(self._marker(step))
+            self.step_actions[step] = action
+        self.workflow_menu.addSeparator()
+        self.workflow_menu.addAction("Hand over…", self.hand_over)
+        self.workflow_menu.aboutToShow.connect(self._show_steps)
+        self.workflow_button.setMenu(self.workflow_menu)
 
         list_pane = QWidget()
         list_layout = QVBoxLayout(list_pane)
@@ -142,6 +166,7 @@ class LibraryView(QWidget):
             self.contribute_button,
             self.export_button,
             self.import_button,
+            self.workflow_button,
         ):
             buttons.addWidget(button)
         buttons.addStretch(1)
@@ -233,9 +258,13 @@ class LibraryView(QWidget):
             )
 
     def export_contribution(self) -> None:
-        """Ask where to write the selected series' contribution archive and write it."""
+        """Say what a contribution shares and under which terms, then ask where to write the selected series'
+        archive and write it."""
         series = self._series
         if series is None:
+            return
+        consent = chapter_files.contribution_consent(self._cfg)
+        if not self._confirm("Export contribution", f"{consent}\n\nExport now?"):
             return
         try:
             name = chapter_files.contribution_name(self._cfg, series)
@@ -247,6 +276,57 @@ class LibraryView(QWidget):
             self._run(
                 f"Exporting {series} …", lambda: chapter_files.export_contribution(self._cfg, series, dest)
             )
+
+    def mark_step(self, step: WorkflowStep, done: bool) -> None:
+        """Mark a workflow step of the selected chapter done (or not done any more)."""
+        series, chapter = self._series, self.chapter()
+        if series is None or chapter is None:
+            return
+        try:
+            text = workflow.mark_step(self._cfg, series, chapter, step, done)
+        except (OSError, ValueError) as exc:
+            self.status_label.setText(f"Workflow: {exc}")
+            return
+        self.status_label.setText(f"{chapter}: {text}")
+        self._show_workflow()
+
+    def _marker(self, step: WorkflowStep) -> Callable[[bool], None]:
+        """The slot of a step's menu action: tick marks the step done, untick not done."""
+        return lambda checked: self.mark_step(step, checked)
+
+    def hand_over(self) -> None:
+        """Ask who has the selected chapter now (and a note for them) and record it."""
+        series, chapter = self._series, self.chapter()
+        if series is None or chapter is None:
+            return
+        to = self._ask_text("Hand over", f"Who works on {chapter} next?", "")
+        if to is None:
+            return
+        note = self._ask_text("Hand over", "A note for them (optional):", "") or ""
+        try:
+            text = workflow.hand_over(self._cfg, series, chapter, to.strip(), note.strip())
+        except (OSError, ValueError) as exc:
+            self.status_label.setText(f"Workflow: {exc}")
+            return
+        self.status_label.setText(f"{chapter}: {text} — send it with Send chapter…")
+        self._show_workflow()
+
+    def _show_steps(self) -> None:
+        """Tick the steps the selected chapter has done before the menu opens."""
+        series, chapter = self._series, self.chapter()
+        done = workflow.done_steps(self._cfg, series, chapter) if series and chapter else []
+        for step, action in self.step_actions.items():
+            action.setChecked(step in done)
+
+    def _show_workflow(self) -> None:
+        """Fill the Workflow column for every chapter row."""
+        if self._series is None:
+            return
+        for row in range(self.table.rowCount()):
+            name = self.table.item(row, 0)
+            if name is not None:
+                text = workflow.chapter_workflow(self._cfg, self._series, name.text())
+                self.table.setItem(row, WORKFLOW_COLUMN, QTableWidgetItem(text))
 
     def export_labelplus(self) -> None:
         """Ask where to write the selected chapter's LabelPlus file (its English lines) and write it."""
@@ -382,6 +462,13 @@ class LibraryView(QWidget):
         self.contribute_button.setEnabled(idle and self._series is not None)
         self.export_button.setEnabled(idle and has_chapter)
         self.import_button.setEnabled(idle and has_chapter)
+        self.workflow_button.setEnabled(idle and has_chapter)
+
+    @staticmethod
+    def _default_ask_text(title: str, label: str, preset: str) -> str | None:
+        """The stock one-line text dialog; tests replace this hook."""
+        text, ok = QInputDialog.getText(None, title, label, text=preset)
+        return text if ok else None
 
     @staticmethod
     def _default_ask_open(title: str, file_filter: str) -> Path | None:
@@ -434,6 +521,7 @@ class LibraryView(QWidget):
                 if background is not None:
                     item.setBackground(QBrush(background))
                 self.table.setItem(row, column, item)
+        self._show_workflow()
         self._update_buttons()
         done = sum(1 for entry in states for state in entry.states if state == "done")
         self.status_label.setText(

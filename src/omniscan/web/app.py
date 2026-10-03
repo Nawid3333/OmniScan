@@ -576,9 +576,10 @@ def create_app(
 
     def run_edit[T](operation: Callable[[], T]) -> T:
         """Run one edit operation, mapping its errors to 404 (missing artifact, region or page file) and 422
-        (bad box or stroke)."""
+        (bad box or stroke). The edit is signed with `[user] name` when one is set."""
         try:
-            return operation()
+            with edit_store.edit_author(cfg.user.name):
+                return operation()
         except (edit_store.EditNotFoundError, FileNotFoundError) as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:

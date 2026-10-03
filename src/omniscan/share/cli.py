@@ -1,8 +1,9 @@
 """`omniscan contribute` sub-app: write a series' hand corrections to a contribution archive (share/contribution.py).
 
-Nothing is sent anywhere: the archive is a local file the user can inspect and share. Nothing is exported when
-this machine opted out of sharing (`[share] enabled = false` in config.toml, for every series) or the series did
-(in its series.toml).
+Nothing is sent anywhere: the archive is a local file the user inspects and sends to the address the project
+publishes (`[share] send_to`), under CC BY 4.0, with a receipt id for deletion requests; every export is noted in
+this install's log (`contribute log`). Nothing is exported when this machine opted out of sharing
+(`[share] enabled = false` in config.toml, for every series) or the series did (in its series.toml).
 """
 
 from __future__ import annotations
@@ -16,7 +17,17 @@ import typer
 
 from omniscan.core.config import SeriesConfigError, get_config
 from omniscan.core.paths import SeriesPaths
-from omniscan.share.contribution import ShareOptOutError, Summary, build, summarize, write_archive
+from omniscan.share.contribution import (
+    ShareOptOutError,
+    Summary,
+    build,
+    consent_text,
+    export_log,
+    export_record,
+    record_export,
+    summarize,
+    write_archive,
+)
 
 contribute_app = typer.Typer(
     no_args_is_help=True,
@@ -105,9 +116,20 @@ def contribute_export(
             size = write_archive(path, contribution, pages)
         except OSError as exc:  # a page gone or unreadable, an --output that is a folder or not writable
             raise _fail(f"{exc}; nothing exported") from exc
+    if size is not None:
+        record_export(cfg.paths.work_root, export_record(series, contribution, path))
     if as_json:
         typer.echo(
-            json.dumps({**asdict(summary), "path": str(path) if size is not None else None, "bytes": size})
+            json.dumps(
+                {
+                    **asdict(summary),
+                    "path": str(path) if size is not None else None,
+                    "bytes": size,
+                    "receipt": contribution.receipt if size is not None else None,
+                    "licence": contribution.licence,
+                    "send_to": cfg.share.send_to or None,
+                }
+            )
         )
     elif not pages:
         typer.echo(
@@ -117,3 +139,21 @@ def contribute_export(
         typer.echo(f"contribute: would write {describe(summary)}")
     else:
         typer.echo(f"contribute: wrote {describe(summary)} to {path} ({_size(size)})")
+        typer.echo(f"contribute: receipt {contribution.receipt}")
+        typer.echo(consent_text(cfg.share.send_to))
+
+
+@contribute_app.command("log")
+def contribute_log(
+    as_json: Annotated[bool, typer.Option("--json", help="Print the log as JSON.")] = False,
+) -> None:
+    """List this install's contribution exports (receipt, date, series, pages, file): the receipts to quote when
+    asking for a contribution to be deleted."""
+    records = export_log(get_config().paths.work_root)
+    if as_json:
+        typer.echo(json.dumps([asdict(record) for record in records], indent=2))
+        return
+    for record in records:
+        typer.echo(f"{record.receipt}\t{record.at}\t{record.series}\t{record.pages} page(s)\t{record.file}")
+    if not records:
+        typer.echo("contribute: nothing exported yet", err=True)

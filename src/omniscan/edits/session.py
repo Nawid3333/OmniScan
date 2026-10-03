@@ -75,11 +75,15 @@ class StudioSession:
     """Edits of one chapter, held in memory until `save`.
 
     `direction` (the reading direction, used when an edit re-sorts regions) defaults to the series'
-    `detect.reading_direction` (series.toml applied), read when saving."""
+    `detect.reading_direction` (series.toml applied), read when saving. `author` (the `[user] name`) signs what
+    the session saves."""
 
-    def __init__(self, paths: ChapterPaths, *, direction: store.Direction | None = None) -> None:
+    def __init__(
+        self, paths: ChapterPaths, *, direction: store.Direction | None = None, author: str | None = None
+    ) -> None:
         self.paths = paths
         self._direction: store.Direction | None = direction
+        self.author = author or None
         self._reload()
 
     def _reload(self) -> None:
@@ -326,7 +330,8 @@ class StudioSession:
         self.save()
         direction = self._direction if self._direction is not None else self._series_direction()
         self._start_ocr_json()
-        region = store.add_region(self.paths, bbox, direction=direction, kind=kind, text=text)
+        with store.edit_author(self.author):
+            region = store.add_region(self.paths, bbox, direction=direction, kind=kind, text=text)
         self._reload()
         return region.id
 
@@ -336,7 +341,8 @@ class StudioSession:
         ValueError for a cut outside the strip or an image taller than `max_height` rows."""
         self.save()
         try:
-            return store.set_cuts(self.paths, cuts, max_height=max_height)
+            with store.edit_author(self.author):
+                return store.set_cuts(self.paths, cuts, max_height=max_height)
         finally:
             self._reload()
 
@@ -404,7 +410,7 @@ class StudioSession:
             self._direction if self._direction is not None else self._series_direction()
         )
         self._start_ocr_json()
-        with store.edit_group(self.paths):  # one save is one undo step
+        with store.edit_author(self.author), store.edit_group(self.paths):  # one save is one undo step
             for region_id in {*self._sources, *self._speakers, *self._boxes, *self._kinds}:
                 store.update_region(
                     self.paths,

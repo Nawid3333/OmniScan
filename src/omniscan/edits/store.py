@@ -8,6 +8,10 @@ first edit; a chapter with no OCR yet starts from no regions (everything drawn b
 
 Every change of edits.json is one undo step (`undo`, `redo`; edits_history.json keeps the earlier states); the
 changes made inside `edit_group` — an import, a desktop save — are one step together.
+
+When a group passes a chapter around, an edit can carry who made it (`by`, the `[user] name`): every record a save
+adds or changes is signed by the author set with `edit_author` / `set_edit_author`, and an unchanged record keeps
+its signature. With no author set nothing is signed.
 """
 
 from __future__ import annotations
@@ -16,6 +20,7 @@ import shutil
 import threading
 from collections.abc import Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Literal
 
@@ -63,6 +68,39 @@ LineStatus = Literal["todo", "edited", "checked"]  # a line's review state (`lin
 # operation is a read-modify-write of edits.json, ocr.json and final.json.
 _LOCK = threading.RLock()
 _GROUPS: dict[Path, int] = {}  # chapter work dir -> how many edit groups are open on it (under _LOCK)
+_AUTHOR: ContextVar[str | None] = ContextVar("omniscan_edit_author", default=None)
+_SIGNED = ("regions", "translations", "layout", "checked")  # the ChapterEdits lists whose records carry `by`
+
+
+@contextmanager
+def edit_author(name: str | None) -> Iterator[None]:
+    """Sign the hand edits saved inside this block with `name` ("" or None: unsigned)."""
+    token = _AUTHOR.set(name or None)
+    try:
+        yield
+    finally:
+        _AUTHOR.reset(token)
+
+
+def set_edit_author(name: str | None) -> None:
+    """Sign every later hand edit of this thread with `name` (a command-line run; "" or None: unsigned)."""
+    _AUTHOR.set(name or None)
+
+
+def _signed(before: ChapterEdits, after: ChapterEdits) -> ChapterEdits:
+    """`after` with every record that is new or changed since `before` signed by the current author; a record whose
+    content is unchanged keeps the signature it had."""
+    author = _AUTHOR.get()
+    updates: dict[str, list[RegionEdit] | list[TranslationEdit] | list[LayoutEdit] | list[LineCheck]] = {}
+    for field in _SIGNED:
+        old = {record.model_dump_json(exclude={"by"}): record.by for record in getattr(before, field)}
+        signed = []
+        for record in getattr(after, field):
+            key = record.model_dump_json(exclude={"by"})
+            by = old.get(key, record.by or author)
+            signed.append(record if record.by == by else record.model_copy(update={"by": by}))
+        updates[field] = signed
+    return after.model_copy(update=updates)
 
 
 class EditNotFoundError(LookupError):
@@ -95,7 +133,7 @@ def save_edits(paths: ChapterPaths, edits: ChapterEdits) -> None:
     a whole `edit_group`)."""
     with _LOCK:
         before = load_edits(paths)
-        edits.save(paths.artifact(EDITS_FILE))
+        _signed(before, edits).save(paths.artifact(EDITS_FILE))
         if not _GROUPS.get(paths.work_dir):
             _record(paths, before)
 

@@ -2177,10 +2177,19 @@ that hold the same line, and the remembered English always wins over a line kept
 ## Contributing corrections
 
 Your corrections can help everyone's OmniScan get better: better OCR, translation and lettering defaults and
-shared glossaries come from real pages with real fixes. Sharing is **on by default** with a clear opt-out, and
-for now it is only a file: `omniscan contribute export SERIES` writes a zip archive you can look at and send;
-there is no upload service yet (it waits for decisions on hosting, the licence of contributed data and accounts,
-`docs/OPEN_QUESTIONS.md` X1-X3).
+shared glossaries come from real pages with real fixes. Sharing is **on by default** with a clear opt-out.
+A contribution is a file you send yourself. Nothing is uploaded and no account is needed:
+
+- `omniscan contribute export SERIES` (or the Library page's **Export contribution…**) writes a zip archive you
+  can look at first. The desktop app says what is shared and under which terms before it writes anything.
+- You contribute the corrections under **CC BY 4.0**, attributed to "OmniScan contributors" (`LICENSE.txt` in the
+  archive, `"licence": "CC-BY-4.0"` in `contribution.json`). The pages stay private and are never published as a
+  dataset.
+- Send the archive to the address the export names (`[share] send_to`). Until the project publishes one, the
+  export says so; keep the archive until then.
+- Every archive carries a random **receipt** id (`"receipt"` in `contribution.json`, printed by the export).
+  Quote it to have that contribution deleted. `omniscan contribute log` lists every export from this computer
+  (receipt, date, series, pages, file); the log (`contributions.jsonl` in your work folder) never leaves it.
 
 What the archive holds (`contribution.json` plus JPEG pages):
 - only the pages that carry a hand correction or a line you marked checked, as the pipeline saw them (the raw
@@ -2199,9 +2208,55 @@ this computer (`contribution-salt` in your work folder, never shared), so nobody
 known names, while your later archives of the same series carry the same ids. Deleting that file gives your
 next archives new ids.
 
+Names you record for a group (below) never go into a contribution.
+
 To opt out, untick **Share corrections** on the desktop app's Settings page, or set `[share] enabled = false`
 in your `config.toml` (every series; a series' `series.toml` cannot
 switch it back on) or in a series' `series.toml` (that series); an opted-out series exports nothing.
+
+## Working as a group
+
+A scanlation group passes a chapter along: translator → proofreader → cleaner → typesetter → quality check.
+OmniScan keeps where each chapter stands, who has it, notes for the next person, and who made each edit. All of
+it lives in the chapter's work folder, so a chapter project file (`omniscan project pack`, the Library's
+**Send chapter…**) carries it to the next person.
+
+- **Your name.** Set it once: Settings → Global → *Your name* (`[user] name` in `config.toml`). With a name set,
+  every hand edit (`by` in `edits.json`, from the desktop Studio, `omniscan edit` or the web Studio), every step
+  you mark and every note you leave records it. An edit you change again is signed again; one you leave alone
+  keeps its signature, and undo brings back the earlier signatures. With no name nothing is recorded. Names
+  never go into a contribution.
+- **Steps and hand-overs** (`chapter_status.json`). The steps are *translated*, *proofread*, *cleaned*,
+  *lettered* and *QC passed*. In the desktop app: select a chapter on the Library page, then **Workflow** → tick a
+  step (untick to take it back), or **Hand over…** to name who works on it next, with an optional note for them.
+  The **Workflow** column shows each chapter's last step done, how many of the five, and who has it. Every change
+  is kept with who made it and when.
+- **Notes** (`notes.json`). A note sits on a region without changing it: a proofreader's question, a remark for
+  the typesetter. In the Studio, select a line and press **Note…**. Open notes show in the Issues column
+  (`note n0001 (Ana): …`) until someone presses **Resolve notes**. A note follows its region when a re-run
+  renumbers the regions.
+- **What each role has left.** The Studio's role filter (next to *Only lines with issues*) shows only:
+  - the translator's lines without English;
+  - the proofreader's lines with English that nobody checked;
+  - the cleaner's lines whose original text or watermark still shows on the finished pages (after *Read finished
+    pages*);
+  - the typesetter's lettering that does not fit;
+  - for the quality check, all of those issues.
+
+  Every role also sees the lines with an open note.
+
+The same from the command line:
+
+```bash
+uv run omniscan workflow status "Solo Leveling"                       # one line per chapter
+uv run omniscan workflow status "Solo Leveling" "Chapter 1"           # with its history
+uv run omniscan workflow done "Solo Leveling" "Chapter 1" translated  # --undo takes it back, --note adds a remark
+uv run omniscan workflow hand "Solo Leveling" "Chapter 1" "Ben" --note "page 3 needs cleaning"
+uv run omniscan workflow todo "Solo Leveling" "Chapter 1" --role proofreader
+uv run omniscan workflow note "Solo Leveling" "Chapter 1" r0004 "Too formal for him?"
+uv run omniscan workflow notes "Solo Leveling" "Chapter 1"            # --all shows resolved ones too
+uv run omniscan workflow resolve "Solo Leveling" "Chapter 1" n0001
+```
 
 ## Speakers and character voices
 
