@@ -50,16 +50,6 @@ class CoverSize(enum.StrEnum):
     SMALL = "small"
 
 
-def _echo_text(text: str) -> None:
-    """Echo text that may hold Korean/Japanese; Windows pipes (cp1252) must not crash on it."""
-    import sys
-
-    reconfigure = getattr(sys.stdout, "reconfigure", None)
-    if reconfigure is not None and (sys.stdout.encoding or "").lower().replace("-", "") != "utf8":
-        reconfigure(encoding="utf-8", errors="replace")
-    typer.echo(text)
-
-
 def _candidate_json(candidate: Candidate, score: float) -> dict[str, Any]:
     """The machine-readable form of one candidate list entry."""
     return {
@@ -95,7 +85,7 @@ def _json_payload(
 def _print_list(scored: list[tuple[Candidate, float]], result: SearchResult) -> None:
     """The numbered candidate list (score against the query) plus one line per provider error."""
     for number, (candidate, score) in enumerate(scored, 1):
-        _echo_text(
+        typer.echo(
             f"{number}. {candidate.provider:<9}{candidate.title}"
             f"  {candidate.year if candidate.year is not None else '?'}"
             f"  {candidate.country or '?'}  {score:.3f}"
@@ -193,6 +183,6 @@ def info(
         typer.echo(json.dumps(meta, indent=2, ensure_ascii=False))
         return
     for key in ("title", "provider", "year", "country", "status", "credit"):
-        _echo_text(f"{key}: {meta.get(key)}")
+        typer.echo(f"{key}: {meta.get(key)}")
     cover_path = find_cover(mdir)
-    _echo_text(f"cover: {cover_path if cover_path is not None else '-'}")
+    typer.echo(f"cover: {cover_path if cover_path is not None else '-'}")

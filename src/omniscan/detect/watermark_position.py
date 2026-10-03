@@ -7,6 +7,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from omniscan.core.schemas import BBox, Region, Slice
+from omniscan.detect.postprocess import next_region_id
 
 _MIN_OVERLAP_IOA = 0.5  # a region needs at least half its own area inside a stored watermark zone
 
@@ -60,7 +61,7 @@ def add_watermark_zone_regions(
             continue
         out.append(
             Region(
-                id=f"r{len(out) + 1:04d}",
+                id=next_region_id(out),
                 slice_index=owner.index,
                 kind="watermark",
                 bbox=box,

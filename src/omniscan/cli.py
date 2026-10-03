@@ -4,6 +4,7 @@ import enum
 import json
 import os
 import shutil
+import sys
 from collections.abc import Callable, Sequence
 from dataclasses import asdict
 from pathlib import Path
@@ -67,6 +68,16 @@ app = typer.Typer(help="OmniScan — manhwa/manga translator", invoke_without_co
 STATUS_STYLES = {"OK": "green", "WARN": "yellow", "FAIL": "red"}
 
 
+def utf8_streams() -> None:
+    """Write stdout and stderr as UTF-8. Piped or redirected on Windows they default to the ANSI code page
+    (cp1252), which cannot hold the Korean/Chinese/Japanese text many commands print: `omniscan edit ocr ... >
+    file` stopped with UnicodeEncodeError. A console window is unaffected (Python writes it as UTF-16)."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None and (stream.encoding or "").lower().replace("-", "") != "utf8":
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
@@ -74,6 +85,7 @@ def main(
     quiet: Annotated[bool, typer.Option("--quiet", "-q", help="Warnings only.")] = False,
 ) -> None:
     """OmniScan global options. No subcommand: opens the interactive menu."""
+    utf8_streams()
     setup_logging("DEBUG" if verbose else "WARNING" if quiet else "INFO")
     if ctx.invoked_subcommand is None:
         from omniscan.menu import run_menu
@@ -145,25 +157,25 @@ def hardware(
 
         for name, info in PROFILES.items():
             gpu = info.gpus[0].name if info.gpus else "no GPU"
-            _echo_text(
+            typer.echo(
                 f"{name:18} {info.os}/{info.arch}  {gpu}  RAM {info.ram_gb:g} GB  torch {info.torch_build}"
             )
         return
     hw = _simulated_hardware(simulate)
     if as_json:
-        _echo_text(json.dumps(asdict(hw), indent=2, ensure_ascii=False))
+        typer.echo(json.dumps(asdict(hw), indent=2, ensure_ascii=False))
         return
-    _echo_text(f"OS: {hw.os} / {hw.arch}")
-    _echo_text(f"CPU: {hw.cpu_name} ({hw.cpu_cores_physical} physical, {hw.cpu_cores_logical} logical)")
-    _echo_text(f"RAM: {hw.ram_gb:.1f} GB")
-    _echo_text(f"torch build: {hw.torch_build}")
-    _echo_text(f"best device: {hw.best_device}")
+    typer.echo(f"OS: {hw.os} / {hw.arch}")
+    typer.echo(f"CPU: {hw.cpu_name} ({hw.cpu_cores_physical} physical, {hw.cpu_cores_logical} logical)")
+    typer.echo(f"RAM: {hw.ram_gb:.1f} GB")
+    typer.echo(f"torch build: {hw.torch_build}")
+    typer.echo(f"best device: {hw.best_device}")
     for gpu in hw.gpus:
         mark = "  (integrated)" if gpu.integrated else ""
-        _echo_text(f"#{gpu.index} {gpu.name}  {gpu.vram_gb:.1f} GB  {gpu.backend}  device {gpu.device}{mark}")
+        typer.echo(f"#{gpu.index} {gpu.name}  {gpu.vram_gb:.1f} GB  {gpu.backend}  device {gpu.device}{mark}")
     providers = ", ".join(hw.onnxruntime_providers) if hw.onnxruntime_providers else "none"
-    _echo_text(f"onnxruntime providers: {providers}")
-    _echo_text(f"free disk at the models folder: {hw.disk_free_gb:.1f} GB")
+    typer.echo(f"onnxruntime providers: {providers}")
+    typer.echo(f"free disk at the models folder: {hw.disk_free_gb:.1f} GB")
 
 
 @app.command()
@@ -182,10 +194,10 @@ def tune(
 
     plan = plan_for(_simulated_hardware(simulate))
     if as_json:
-        _echo_text(json.dumps(plan_json(plan), indent=2))
+        typer.echo(json.dumps(plan_json(plan), indent=2))
     else:
         for line in describe(plan):
-            _echo_text(line)
+            typer.echo(line)
     if not apply:
         return
     from omniscan.core.config import set_user_setting
@@ -193,7 +205,7 @@ def tune(
     written = None
     for (section, key), value in plan.overrides.items():
         written = set_user_setting(section, key, value)
-    _echo_text(f"wrote {len(plan.overrides)} setting(s) to {written}")
+    typer.echo(f"wrote {len(plan.overrides)} setting(s) to {written}")
 
 
 def cmd_import(
@@ -609,9 +621,9 @@ def cmd_qa(
         report[name] = [issue.model_dump(mode="json") for issue in issues]
         if not as_json:
             for issue in issues:
-                _echo_text(f"qa: {name}: {issue.region_id} {issue.kind}: {issue.message}")
+                typer.echo(f"qa: {name}: {issue.region_id} {issue.kind}: {issue.message}")
     if as_json:
-        _echo_text(json.dumps(report, ensure_ascii=False, indent=2))
+        typer.echo(json.dumps(report, ensure_ascii=False, indent=2))
     else:
         typer.echo(f"qa: {sum(len(v) for v in report.values())} issue(s) in {len(report)} chapter(s)")
 
@@ -648,14 +660,14 @@ def cmd_consistency(
     split, missing = divergences(lines), term_misses(lines, glossary(series_paths))
     if as_json:
         report = {"divergences": [asdict(d) for d in split], "term_misses": [asdict(m) for m in missing]}
-        _echo_text(json.dumps(report, ensure_ascii=False, indent=2))
+        typer.echo(json.dumps(report, ensure_ascii=False, indent=2))
         return
     for item in split:
-        _echo_text(f"consistency: {item.source!r} is translated {len(item.renderings)} ways:")
+        typer.echo(f"consistency: {item.source!r} is translated {len(item.renderings)} ways:")
         for rendering in item.renderings:
-            _echo_text(f"  {rendering.english!r} ×{len(rendering.places)}: {_places(rendering.places)}")
+            typer.echo(f"  {rendering.english!r} ×{len(rendering.places)}: {_places(rendering.places)}")
     for miss in missing:
-        _echo_text(
+        typer.echo(
             f"consistency: {miss.chapter} {miss.region_id}: {miss.term} should read {miss.target!r}: {miss.english}"
         )
     typer.echo(
@@ -685,7 +697,7 @@ def cmd_status(
         raise typer.Exit(2)
     chapters = series_progress(paths)
     if as_json:
-        _echo_text(json.dumps([asdict(progress) for progress in chapters], ensure_ascii=False, indent=2))
+        typer.echo(json.dumps([asdict(progress) for progress in chapters], ensure_ascii=False, indent=2))
         return
     table = Table(title=f"status: {series} ({len(chapters)} chapter(s))")
     for column in ("Chapter", "Pipeline", "English", "Checked", "Problems", "Export"):
@@ -704,16 +716,6 @@ def cmd_status(
 
 
 app.command("status")(cmd_status)
-
-
-def _echo_text(text: str) -> None:
-    """Echo text that may hold Korean/Japanese; Windows pipes (cp1252) must not crash on it."""
-    import sys
-
-    reconfigure = getattr(sys.stdout, "reconfigure", None)
-    if reconfigure is not None and (sys.stdout.encoding or "").lower().replace("-", "") != "utf8":
-        reconfigure(encoding="utf-8", errors="replace")
-    typer.echo(text)
 
 
 def _ratio(value: float | None, numerator: int, denominator: int, suffix: str = "") -> str:
@@ -818,9 +820,9 @@ def cmd_eval(
         report = score_chapter(series, chap, ingest, regions, final, truth, english, stats)
         (work / "eval.json").write_text(report.to_json(), encoding="utf-8")
         if as_json:
-            _echo_text(to_json_lines([report]))
+            typer.echo(to_json_lines([report]))
         else:
-            _echo_text(_eval_block(report, with_translation=final is not None))
+            typer.echo(_eval_block(report, with_translation=final is not None))
     if missing:
         raise typer.Exit(1)
 
@@ -1035,7 +1037,7 @@ def cmd_usage(
         typer.echo(json.dumps(payload, indent=2))
         return
     for line in _usage_lines(rows):
-        _echo_text(line)
+        typer.echo(line)
 
 
 def cmd_inpaint(

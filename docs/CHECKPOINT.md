@@ -3,6 +3,32 @@
 > **Development paused on 2026-09-25** (owner's decision; back in some years or when the program is needed).
 > Start with the "Development paused" section at the top of `docs/HANDOFF.md` — it has the state and the resume steps.
 
+## 2026-10-03 session (director, on the owner's PC — the reference machine, #40)
+Owner: "work on the pull requests, then the issues, then what the project still needs". Done here:
+1. **Environment back.** `uv sync --extra rocm-gfx1201 --extra gui` installed as pinned (torch 2.13.0+rocm10.0.0);
+   `omniscan models download --required inpaint-big-lama ocr-vl-1.6 sfx-detector-craft` came from the mirror;
+   `omniscan tune`: tier gaming, `cuda:1` (RX 9070 XT, 15.9 GB), budget 14.4 GiB, PaddleOCR-VL, LaMa on.
+2. **Suites on the RX 9070 XT.** CPU suite green; GPU suite 25 passed, 2 skipped (the perf test without `--perf`,
+   manga-ocr not installed), the e2e golden test included. `pytest --perf-update` recorded this GPU's stage
+   baselines (`tests/perf/baselines.json`: ocr 1.45 s, detect 0.19 s, everything else under 0.1 s, measured with
+   nothing else running). A Claude Code hook on this PC ("jobcap") stops a command tree at 8 GB: the GPU suite,
+   the perf test and `omniscan run` need `JOBCAP_MEM_MB=24576` (or more) on the command line.
+3. **Real chapter** (Pepper&Carrot in Korean, CC BY, `scripts/fetch_pepper_carrot.py --lang kr --episodes 1-3`):
+   ingest → OCR ran; **the LaMa stage crashed** (`The size of tensor a (125) must match the size of tensor b (72)`).
+   Cause: the OCR stage drops unreadable detections before the SFX sweep, and the sweep numbered its regions
+   `r{len + 1}`, reusing the id of a region that survived; two inpaint items with one id share one mask (and would
+   share one translation). Fixed with `detect.postprocess.next_region_id` (one past the highest id; the watermark
+   zones use it too), `ocr` v6; OCR → inpaint → LaMa then ran clean on the same chapter.
+4. **Not done:** translate onwards. Ollama Cloud is at the weekly limit again (429), and the local Ollama server
+   stopped answering during the session (nothing listens on 11434 any more). The Ollama app's own log from 15:31
+   shows it found no GPU (llama-server GPU discovery watchdog timed out, 0 B VRAM): worth checking before local
+   translation is timed. Looking at the cleaned and lettered pages is still the owner's step (the director session
+   cannot read `data/`).
+5. **Noticed:** `paths.models_dir` defaults to the *source checkout's* `models/` (`REPO_ROOT`), so running a
+   worktree's code by hand (`PYTHONPATH=<worktree>/src`) downloads LaMa and CRAFT again into the worktree — point
+   `OMNISCAN_PATHS__MODELS_DIR`/`[paths] models_dir` at the main checkout's folder for such runs, or delete the
+   copy afterwards. `torch.jit.load` (LaMa) is deprecated on Python 3.14.
+
 ## 2026-10-02, second round (same cloud session): every GPU without owning one, and the packaged app
 Owner: "test otherwise — simulate other GPUs — create tests and workflows; make sure the program is later an
 exe most people can run, user-friendly, hardware agnostic: it scans the hardware and optimises for it; ask

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from omniscan.core.schemas import Slice
+from omniscan.core.schemas import BBox, Region, Slice
 from omniscan.detect.postprocess import (
     Det,
     area,
@@ -10,6 +10,7 @@ from omniscan.detect.postprocess import (
     ioa,
     iou,
     merge_detections,
+    next_region_id,
     reading_order,
     tile_det_to_strip,
 )
@@ -102,6 +103,16 @@ def _slices() -> list[Slice]:
         Slice(index=1, y0=1000, y1=2000, blank=True),
         Slice(index=2, y0=2000, y1=3000),
     ]
+
+
+def test_next_region_id_follows_the_highest_id_not_the_count() -> None:
+    def region(rid: str) -> Region:
+        return Region(id=rid, slice_index=0, kind="bubble_text", bbox=BBox(x0=0, y0=0, x1=10, y1=10))
+
+    assert next_region_id([]) == "r0001"
+    assert next_region_id([region("r0001"), region("r0003")]) == "r0004"  # r0002 was dropped
+    assert next_region_id([region("r0002"), region("m0007")]) == "r0003"  # hand-added ids are not counted
+    assert next_region_id([region("r9999")]) == "r10000"
 
 
 def test_build_regions_pairs_text_with_bubble_and_drops_blank_slices() -> None:

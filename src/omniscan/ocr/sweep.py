@@ -28,7 +28,7 @@ import torch
 import torch.nn.functional as F  # noqa: N812 — torch's standard alias
 
 from omniscan.core.schemas import BBox, Lang, OcrLine, Region, RegionKind, Slice
-from omniscan.detect.postprocess import Box, ioa
+from omniscan.detect.postprocess import Box, ioa, next_region_id
 from omniscan.detect.tiles import Tile
 from omniscan.inpaint.glyph_mask import find_glyphs, letters_only
 from omniscan.ocr.crop_readers import TextReader
@@ -343,7 +343,7 @@ def sweep_regions(
         counts["sweep_sfx" if best.kind == "sfx" else "sweep_watermarks"] += 1
         out.append(
             Region(
-                id=f"r{len(out) + 1:04d}",
+                id=next_region_id(out),
                 slice_index=owner.index,
                 kind=best.kind,
                 bbox=box,

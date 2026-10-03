@@ -190,6 +190,21 @@ def test_known_effects_and_watermarks_become_regions() -> None:
     assert stamp.text == "구글검색 사이트"
 
 
+def test_new_ids_follow_the_highest_id_when_the_ocr_dropped_regions() -> None:
+    # the OCR drops unreadable detections (ocr.drop_conf) before the sweep: r0002 is gone, r0003 is not. A new
+    # region numbered by the count (r0003) shared r0003's id, and the inpaint stage kept one mask for both
+    # boxes, which crashed the LaMa stage on a real chapter (size of tensor a (125) must match ... (72)).
+    regions = [
+        detected("r0001", BBox(x0=0, y0=0, x1=50, y1=50)),
+        detected("r0003", BBox(x0=400, y0=0, x1=450, y1=50)),
+    ]
+    readings = [[("쾅", 0.9)], [("쿵쿵", 0.9)]]
+    out, _ = sweep_regions(
+        regions, [cand(100, 100, 200, 160), cand(100, 300, 200, 360)], readings, SLICES, RULES, (600, 1000)
+    )
+    assert [r.id for r in out] == ["r0001", "r0003", "r0004", "r0005"]
+
+
 def test_unsure_or_foreign_readings_and_hidden_slices_add_nothing() -> None:
     hidden = [Slice(index=0, y0=0, y1=500, blank=True), Slice(index=1, y0=500, y1=1000, filtered=True)]
     two = [cand(10, 10, 90, 60), cand(10, 600, 90, 660)]
