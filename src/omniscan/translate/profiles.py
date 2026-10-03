@@ -1,8 +1,10 @@
 """Translation profiles: a model + prompt style + request knobs, loaded from TOML files.
 
 Later files in the load order replace an earlier profile of the same name entirely (no field-level
-merge). All shipped profiles use `endpoint = "local"` — the local Windows Ollama daemon also proxies
-the `*-cloud` models, so no API key is needed for them.
+merge). The shipped Ollama profiles use `endpoint = "local"` — the local Ollama daemon also proxies the
+`*-cloud` models, so no API key is needed for them. `endpoint = "openai"` (any OpenAI-compatible server, with
+`base_url`) and `"anthropic"` send the requests to that API instead (llm/api.py), with the key named by
+`api_key_env` (default OPENAI_API_KEY / ANTHROPIC_API_KEY) from the environment or secrets.env.
 """
 
 from __future__ import annotations
@@ -18,6 +20,27 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from omniscan.core.config import DEFAULT_TOML, USER_TOML
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_ENV_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+Endpoint = Literal["local", "cloud", "openai", "anthropic"]
+API_ENDPOINTS: tuple[Endpoint, ...] = ("openai", "anthropic")
+
+
+def unkeyed_fields(settings: BaseModel) -> set[str]:
+    """The provider fields a profile's or the judge's fingerprint leaves out: where the API key lives never
+    changes a translation, and an unset base URL keeps every key made before API endpoints existed."""
+    return {"api_key_env"} | ({"base_url"} if getattr(settings, "base_url", None) is None else set())
+
+
+def check_provider(endpoint: str, base_url: str | None, api_key_env: str | None) -> None:
+    """ValueError when `base_url` or `api_key_env` is set for an Ollama endpoint, or the variable name is invalid."""
+    if endpoint not in API_ENDPOINTS and (base_url is not None or api_key_env is not None):
+        raise ValueError(
+            f'base_url and api_key_env need endpoint = "openai" or "anthropic", not {endpoint!r}'
+        )
+    if base_url is not None and not base_url.startswith(("http://", "https://")):
+        raise ValueError(f"base_url must start with http:// or https://, not {base_url!r}")
+    if api_key_env is not None and not _ENV_RE.fullmatch(api_key_env):
+        raise ValueError(f"api_key_env must be an environment variable name, not {api_key_env!r}")
 
 
 class TranslationProfile(BaseModel):
@@ -27,7 +50,7 @@ class TranslationProfile(BaseModel):
 
     name: str  # file stem of the run; the [profiles.<name>] table key
     enabled: bool = True  # part of the default set of `omniscan translate` without --profile
-    endpoint: Literal["local", "cloud"]
+    endpoint: Endpoint
     model: str
     style: Literal["chat_json", "translategemma"]
     temperature: float = Field(default=0.3, ge=0.0, le=2.0)
@@ -42,11 +65,25 @@ class TranslationProfile(BaseModel):
     images: bool = False
     image_side: int = Field(default=1280, ge=256, le=4096)
     images_per_request: int = Field(default=3, ge=1, le=16)
+    base_url: str | None = (
+        None  # openai/anthropic: another server speaking that API (default: the vendor's own)
+    )
+    api_key_env: str | None = (
+        None  # openai/anthropic: the variable holding the key (default OPENAI_API_KEY / ...)
+    )
 
     @model_validator(mode="after")
     def _images_need_chat_json(self) -> Self:
         if self.images and self.style != "chat_json":
             raise ValueError(f'profile {self.name!r}: images need style = "chat_json"')
+        return self
+
+    @model_validator(mode="after")
+    def _provider_fields(self) -> Self:
+        try:
+            check_provider(self.endpoint, self.base_url, self.api_key_env)
+        except ValueError as exc:
+            raise ValueError(f"profile {self.name!r}: {exc}") from exc
         return self
 
     @field_validator("name")

@@ -707,3 +707,20 @@ def test_the_lama_stage_follows_the_config_default_unless_told(
     calls.clear()
     assert run_pipeline(cfg, SERIES, ["A"], client=FakeClient(), gpu=FakeScheduler(), force=True).ok
     assert "inpaint_lama(A)" in calls
+
+
+def test_run_pipeline_counts_cloud_requests_against_the_series_budget(
+    cfg: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """[translate] cloud_request_budget (series.toml applied) is active while the stages run, and only then."""
+    from omniscan.llm.budget import cloud_requests_spent
+
+    write_series_toml(cfg, "[translate]\ncloud_request_budget = 5\n")
+    spy = ConfigSpyStage("detect", lambda _stage_cfg: cloud_requests_spent())
+    monkeypatch.setattr(runner_module, "build_stage", spy_build_stage(spy))
+    assert run_pipeline(cfg, SERIES, ["A"], stages=["detect"], gpu=FakeScheduler()).ok
+    assert spy.seen == [0] and cloud_requests_spent() is None
+    toml = cfg.paths.library_root / SERIES / "series.toml"
+    toml.write_text("[translate]\ncloud_request_budget = 0\n", encoding="utf-8")
+    run_pipeline(cfg, SERIES, ["A"], stages=["detect"], gpu=FakeScheduler(), force=True)
+    assert spy.seen == [0, None]  # 0: no budget, nothing counted

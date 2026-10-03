@@ -31,7 +31,7 @@ from PIL import Image
 from omniscan.cleanup.strip import strip_crop
 from omniscan.core.paths import ChapterPaths
 from omniscan.core.schemas import BBox, IngestArtifact, Region, Slice, SlicesArtifact
-from omniscan.translate.profiles import TranslationProfile
+from omniscan.translate.profiles import TranslationProfile, unkeyed_fields
 
 log = logging.getLogger(__name__)
 
@@ -72,7 +72,9 @@ class PageImage:
 def stage_profile(profile: TranslationProfile) -> dict[str, object]:
     """A profile as the translate stage hashes it: with the page-image settings only when images are on, so a
     profile without them hashes as before images existed."""
-    return profile.model_dump(exclude=None if profile.images else set(IMAGE_FIELDS))
+    return profile.model_dump(
+        exclude=unkeyed_fields(profile) | (set() if profile.images else set(IMAGE_FIELDS))
+    )
 
 
 def image_key(profile: TranslationProfile, page: str | None) -> dict[str, object]:

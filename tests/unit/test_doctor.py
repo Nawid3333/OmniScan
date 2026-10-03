@@ -27,6 +27,7 @@ REQUIRED_NAMES = (
     "ollama_models",
     "ollama_cloud",
     "secrets",
+    "api_keys",
     "paths",
     "models",
     "codec",
@@ -145,12 +146,12 @@ def _use_config(
 
 def test_required_models_shipped_files_pinned() -> None:
     """Regression against the real shipped config (no mocking): enabled profile, then its fallback."""
-    assert doctor.required_ollama_models() == ["gemma4:31b-cloud", "translategemma:12b"]
+    assert doctor.required_ollama_models() == ["gemma4:31b-cloud", "translategemma:27b"]
 
 
 def test_required_models_constant_is_shipped_defaults() -> None:
     """The module constant is derived from the shipped files only, so it is machine-independent."""
-    assert doctor.REQUIRED_OLLAMA_MODELS == ("gemma4:31b-cloud", "translategemma:12b")
+    assert doctor.REQUIRED_OLLAMA_MODELS == ("gemma4:31b-cloud", "translategemma:27b")
 
 
 def test_required_models_disabled_profile_vs_disabled_fallback(
@@ -421,3 +422,54 @@ def test_torch_gpu_real() -> None:
         assert device_name(device) in result.detail
     if torch.version.hip:  # AMD also names the architecture (the reference PC: gfx1201)
         assert torch.cuda.get_device_properties(device).gcnArchName in result.detail
+
+
+_API_PROFILES_TOML = """\
+[profiles.gpt]
+endpoint = "openai"
+model = "gpt-5.4-mini"
+style = "chat_json"
+fallback = "local-fb"
+
+[profiles.local-fb]
+enabled = false
+endpoint = "local"
+model = "translategemma:27b"
+style = "translategemma"
+
+[profiles.router]
+endpoint = "openai"
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "ROUTER_KEY"
+model = "deepseek/deepseek-chat"
+style = "chat_json"
+"""
+
+
+def test_api_profiles_need_keys_not_ollama_models(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A model behind an API endpoint is not Ollama's; doctor checks its key instead (never its value)."""
+    _use_config(
+        tmp_path,
+        monkeypatch,
+        _API_PROFILES_TOML,
+        '[judge]\nmodel = "claude-sonnet-5-5"\nendpoint = "anthropic"\n',
+    )
+    assert doctor.required_ollama_models() == ["translategemma:27b"]
+    assert doctor.required_api_keys() == {
+        "OPENAI_API_KEY": ["gpt"],
+        "ROUTER_KEY": ["router"],
+        "ANTHROPIC_API_KEY": ["judge"],
+    }
+    monkeypatch.setattr(doctor, "api_key", lambda name: "set" if name == "OPENAI_API_KEY" else None)
+    result = doctor.check_api_keys()
+    assert result.status == "FAIL"
+    assert result.detail == "not set: ROUTER_KEY (for router); ANTHROPIC_API_KEY (for judge)"
+    monkeypatch.setattr(doctor, "api_key", lambda name: "set")
+    assert doctor.check_api_keys() == CheckResult(
+        "api_keys", "OK", "set: OPENAI_API_KEY, ROUTER_KEY, ANTHROPIC_API_KEY"
+    )
+
+
+def test_no_api_profile_means_no_key_to_check(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _use_config(tmp_path, monkeypatch)
+    assert doctor.check_api_keys() == CheckResult("api_keys", "OK", "no profile uses an API endpoint")

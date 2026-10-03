@@ -2,8 +2,10 @@
 
 Global rows come from `gui.services.settings.GLOBAL_FIELDS`; every commit goes through the
 validated service writers (`set_global` / `clear_global` / `set_series_override` /
-`set_profile_enabled`) and a refusal shows inline while the editor reverts. Hardware detection
-runs on a pool thread (it imports torch).
+`set_profile_enabled`) and a refusal shows inline while the editor reverts. The Profiles tab also adds
+your own translation model — an Ollama model, or OpenAI / Claude / an OpenAI-compatible server with your
+API key, which goes into secrets.env (`add_profile`, `save_api_key`). Hardware detection runs on a pool
+thread (it imports torch).
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QScrollArea,
+    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -55,7 +58,7 @@ from omniscan.hw.tune import Plan, describe
 # words that find a whole tab in the search (its own rows are matched one by one)
 _TAB_KEYWORDS = {
     "series": "per-series override series.toml section key value",
-    "profiles": "translation profiles model endpoint ollama cloud llm enable",
+    "profiles": "translation profiles model endpoint ollama cloud llm enable openai chatgpt claude anthropic api key",
     "hardware": "hardware gpu graphics card vram memory detect fit models",
 }
 
@@ -93,6 +96,7 @@ class SettingsView(QWidget):
         hardware: HardwareService | None = None,
         config_path: Path | None = None,
         profiles_path: Path | None = None,
+        secrets_path: Path | None = None,
         qsettings: QSettings | None = None,
         parent: QWidget | None = None,
     ) -> None:
@@ -102,6 +106,7 @@ class SettingsView(QWidget):
         self._hardware_service = hardware or HardwareService(cfg)
         self._config_path = config_path
         self._profiles_path = profiles_path
+        self._secrets_path = secrets_path  # where a typed API key goes (None: ~/.config/omniscan/secrets.env)
         self._last_good: dict[tuple[str, str], Any] = {}
         self._fields: dict[tuple[str, str], SettingField] = {}
         self._editors: dict[tuple[str, str], QWidget] = {}
@@ -278,6 +283,11 @@ class SettingsView(QWidget):
             editor: QWidget = QCheckBox()
             editor.setChecked(bool(value))
             editor.toggled.connect(lambda checked, f=field: self._commit_global(f, checked))
+        elif field.kind == "int":
+            editor = QSpinBox()
+            editor.setRange(int(field.low), int(field.high))
+            editor.setValue(int(value))
+            editor.editingFinished.connect(lambda f=field, e=editor: self._commit_global(f, e.value()))
         elif field.kind == "float":
             editor = QDoubleSpinBox()
             editor.setRange(field.low, field.high)
@@ -360,6 +370,8 @@ class SettingsView(QWidget):
             editor.setChecked(bool(value))
         elif isinstance(editor, QDoubleSpinBox):
             editor.setValue(float(value))
+        elif isinstance(editor, QSpinBox):
+            editor.setValue(int(value))
         elif isinstance(editor, QComboBox):
             if field.kind == "model" and value is None:
                 editor.setCurrentIndex(0)
@@ -479,7 +491,7 @@ class SettingsView(QWidget):
     # ------------------------------------------------------------------ translation tab
 
     def _build_profiles(self) -> QWidget:
-        """The translation profiles with per-profile `enabled` toggles."""
+        """The translation profiles with per-profile `enabled` toggles, and a form to add your own model."""
         page = QWidget()
         layout = QVBoxLayout(page)
         note = QLabel(
@@ -493,31 +505,204 @@ class SettingsView(QWidget):
         set_role(self.profiles_error, "error")
         self.profiles_error.setWordWrap(True)
         layout.addWidget(self.profiles_error)
+        self._profile_rows: list[QWidget] = []
         self._profile_boxes: list[QCheckBox] = []
+        self._profiles_page, self._profiles_layout = page, layout
+        layout.addWidget(self._build_add_model(page))
         layout.addStretch(1)
         self._reload_profiles(page, layout)
         return page
 
+    def _build_add_model(self, page: QWidget) -> QWidget:
+        """The "Use your own model" form: provider, model, server, key, profile name."""
+        box = QWidget(page)
+        grid = QGridLayout(box)
+        grid.setContentsMargins(0, 12, 0, 0)
+        title = QLabel("Use your own model", box)
+        set_role(title, "section")
+        self.provider_combo = QComboBox(box)
+        for label, *_rest in settings.PROVIDERS:
+            self.provider_combo.addItem(label)
+        self.model_combo = QComboBox(box)
+        self.model_combo.setEditable(True)
+        self.model_combo.setToolTip(
+            "The model's name as the provider writes it (gpt-5.4-mini, claude-sonnet-5-5, gemma4:12b)"
+        )
+        self.list_models_button = QPushButton("List Ollama models", box)
+        self.base_url_edit = QLineEdit(box)
+        self.base_url_edit.setPlaceholderText("https://openrouter.ai/api/v1")
+        self.key_env_edit = QLineEdit(box)
+        self.key_env_edit.setPlaceholderText("OPENROUTER_API_KEY")
+        self.key_edit = QLineEdit(box)
+        self.key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.key_edit.setPlaceholderText("paste your API key (saved in secrets.env, never shown again)")
+        self.key_state = QLabel("", box)
+        self.profile_name_edit = QLineEdit(box)
+        self.only_check = QCheckBox("Use only this model (switch the other profiles off)", box)
+        self.only_check.setChecked(True)
+        self.add_profile_button = QPushButton("Add model", box)
+        set_role(self.add_profile_button, "primary")
+        self.add_model_status = QLabel("", box)
+        self.add_model_status.setWordWrap(True)
+        rows: list[tuple[str, QWidget]] = [
+            ("Where it runs", self.provider_combo),
+            ("Model", _row_widget(self.model_combo, self.list_models_button, stretch_first=True)),
+            ("Server address", self.base_url_edit),
+            ("Key variable", self.key_env_edit),
+            ("API key", _row_widget(self.key_edit, self.key_state, stretch_first=True)),
+            ("Profile name", self.profile_name_edit),
+        ]
+        grid.addWidget(title, 0, 0, 1, 2)
+        self._provider_rows: dict[str, tuple[QLabel, QWidget]] = {}
+        for row, (label, widget) in enumerate(rows, start=1):
+            caption = QLabel(label, box)
+            grid.addWidget(caption, row, 0)
+            grid.addWidget(widget, row, 1)
+            self._provider_rows[label] = (caption, widget)
+        grid.addWidget(self.only_check, len(rows) + 1, 1)
+        grid.addWidget(
+            _row_widget(self.add_profile_button, self.add_model_status, stretch_first=False), len(rows) + 2, 1
+        )
+        grid.setColumnStretch(1, 1)
+        self.provider_combo.currentIndexChanged.connect(lambda _index: self._on_provider())
+        self.model_combo.currentTextChanged.connect(lambda _text: self._suggest_profile_name())
+        self.key_env_edit.textChanged.connect(lambda _text: self._show_key_state())
+        self.list_models_button.clicked.connect(self.list_ollama_models)
+        self.add_profile_button.clicked.connect(self.add_model)
+        self._on_provider()
+        return box
+
+    def _provider(self) -> tuple[str, str | None, str | None]:
+        """(endpoint, key variable or None, base URL or None) of the picked provider and the typed fields."""
+        _label, endpoint, key_env, base_url = settings.PROVIDERS[self.provider_combo.currentIndex()]
+        if key_env == "":  # an OpenAI-compatible server: its address and key variable are typed
+            key_env = self.key_env_edit.text().strip() or None
+        if base_url == "":
+            base_url = self.base_url_edit.text().strip() or None
+        return endpoint, key_env, base_url
+
+    def _on_provider(self) -> None:
+        """Show the fields the picked provider needs."""
+        _label, endpoint, key_env, base_url = settings.PROVIDERS[self.provider_combo.currentIndex()]
+        api = endpoint != "local"
+        for label, visible in (
+            ("Server address", base_url == ""),
+            ("Key variable", key_env == ""),
+            ("API key", api),
+        ):
+            caption, widget = self._provider_rows[label]
+            caption.setVisible(visible)
+            widget.setVisible(visible)
+        self.list_models_button.setVisible(not api)
+        self._suggest_profile_name()
+        self._show_key_state()
+
+    def _suggest_profile_name(self) -> None:
+        """Name the new profile after its model (until the user types a name of their own)."""
+        endpoint, _key_env, _base_url = self._provider()
+        self.profile_name_edit.setText(
+            settings.suggest_profile_name(endpoint, self.model_combo.currentText())
+        )
+
+    def _show_key_state(self) -> None:
+        """Say whether the provider's key is already set (never its value)."""
+        _endpoint, key_env, _base_url = self._provider()
+        if key_env is None:
+            self.key_state.setText("")
+            return
+        self.key_state.setText(
+            f"{key_env} is set"
+            if settings.has_api_key(key_env, env_file=self._secrets_path)
+            else f"{key_env} not set yet"
+        )
+
+    def list_ollama_models(self) -> list[str]:
+        """Fill the model list with what the local Ollama has; the error inline when it does not answer."""
+        try:
+            names = settings.ollama_models(self._cfg)
+        except SettingError as error:
+            self.add_model_status.setText(str(error))
+            return []
+        current = self.model_combo.currentText()
+        self.model_combo.clear()
+        self.model_combo.addItems(names)
+        if current:
+            self.model_combo.setCurrentText(current)
+        self.add_model_status.setText(f"{len(names)} model(s) installed")
+        return names
+
+    def add_model(self) -> bool:
+        """Save the typed API key (if any) and add the profile; False with the reason inline when refused."""
+        endpoint, key_env, base_url = self._provider()
+        _label, _endpoint, default_env, _base = settings.PROVIDERS[self.provider_combo.currentIndex()]
+        name = self.profile_name_edit.text().strip()
+        try:
+            if endpoint != "local" and key_env is None:
+                raise SettingError("name the variable that holds this server's key (e.g. OPENROUTER_API_KEY)")
+            if self.key_edit.text().strip() and key_env is not None:
+                settings.save_api_key(key_env, self.key_edit.text(), env_file=self._secrets_path)
+            settings.add_profile(
+                name,
+                endpoint=endpoint,
+                model=self.model_combo.currentText(),
+                base_url=base_url,
+                api_key_env=key_env if key_env != default_env else None,
+                only=self.only_check.isChecked(),
+                user_path=self._profiles_path,
+            )
+        except SettingError as error:
+            self.add_model_status.setText(str(error))
+            return False
+        self.key_edit.clear()
+        self._show_key_state()
+        missing = key_env is not None and not settings.has_api_key(key_env, env_file=self._secrets_path)
+        self.add_model_status.setText(
+            f"added {name}" + (f" — set {key_env} before translating" if missing else "")
+        )
+        self._reload_profiles(self._profiles_page, self._profiles_layout)
+        self.settings_changed.emit()
+        return True
+
     def _reload_profiles(self, page: QWidget, layout: QVBoxLayout) -> None:
-        """(Re)fill the profile checkboxes from the service."""
-        for box in self._profile_boxes:
-            layout.removeWidget(box)
-            box.deleteLater()
+        """(Re)fill the profile checkboxes from the service; a profile you added also gets a Remove button."""
+        for row in self._profile_rows:
+            layout.removeWidget(row)
+            row.deleteLater()
+        self._profile_rows.clear()
         self._profile_boxes.clear()
         try:
-            profiles = settings.translation_profiles()
+            profiles = settings.translation_profiles(settings.profile_paths(self._profiles_path))
+            yours = settings.user_profile_names(self._profiles_path)
         except ValueError as error:  # pydantic/TOML errors: a broken user profile file
             self.profiles_error.setText(f"cannot load translation profiles: {error}")
             return
         self.profiles_error.setText("")
-        for profile in profiles:
+        for index, profile in enumerate(profiles):
             box = QCheckBox(f"{profile.name} — {profile.model} @ {profile.endpoint}", page)
             box.setChecked(profile.enabled)
             box.toggled.connect(
                 lambda checked, name=profile.name, b=box: self._commit_profile(name, checked, b)
             )
             self._profile_boxes.append(box)
-            layout.insertWidget(layout.count() - 1, box)  # before the stretch
+            widgets: list[QWidget] = [box]
+            if profile.name in yours:
+                remove = QPushButton("Remove", page)
+                remove.clicked.connect(lambda _checked=False, name=profile.name: self.remove_profile(name))
+                widgets.append(remove)
+            row = _row_widget(*widgets, stretch_first=True)
+            self._profile_rows.append(row)
+            layout.insertWidget(2 + index, row)  # after the note and the error line
+
+    def remove_profile(self, name: str) -> bool:
+        """Remove a profile you added; False with the reason inline when refused."""
+        try:
+            settings.remove_profile(name, user_path=self._profiles_path)
+        except SettingError as error:
+            self.profiles_error.setText(str(error))
+            return False
+        self._reload_profiles(self._profiles_page, self._profiles_layout)
+        self.settings_changed.emit()
+        return True
 
     def _commit_profile(self, name: str, enabled: bool, box: QCheckBox) -> None:
         """Enable/disable one profile in the user's translation_profiles.toml."""

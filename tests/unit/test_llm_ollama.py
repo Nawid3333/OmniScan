@@ -10,7 +10,14 @@ import pytest
 from pydantic import SecretStr
 
 from omniscan.core.config import OllamaConfig, Secrets
-from omniscan.llm.ollama import ChatResponse, OllamaClient, OllamaError, OllamaRateLimitError, RunningModel
+from omniscan.llm.ollama import (
+    ChatResponse,
+    OllamaClient,
+    OllamaError,
+    OllamaRateLimitError,
+    RunningModel,
+    backoff_delay,
+)
 
 API_KEY = "test-key-123"
 CHAT_BODY = {
@@ -276,11 +283,11 @@ def test_backoff_delay_curve_matches_spec() -> None:
     for attempt in range(6):
         low, high = backoff_bounds(attempt)
         for _ in range(50):
-            delay = OllamaClient._backoff_delay(attempt)
+            delay = backoff_delay(attempt)
             assert low <= delay <= high
     capped_low, capped_high = backoff_bounds(10)
     for _ in range(50):
-        assert capped_low <= OllamaClient._backoff_delay(10, None) <= capped_high
+        assert capped_low <= backoff_delay(10, None) <= capped_high
     for _ in range(50):
-        delay = OllamaClient._backoff_delay(0, 7.0)
+        delay = backoff_delay(0, 7.0)
         assert 7.0 <= delay <= 7.0 * 1.25

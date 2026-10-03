@@ -261,3 +261,56 @@ def test_optimise_for_this_pc_writes_the_plan(qapp: QApplication, cfg: Config, t
     assert data["gpu"]["device"] == "cuda:0" and data["gpu"]["vram_budget_gib"] == 2.5
     assert data["ocr"]["engine"] == "ppocr" and data["inpaint"]["lama"] is True
     assert emitted == [1] and view.plan_status_label.text().startswith("wrote 7 setting(s)")
+
+
+def test_add_your_own_model_with_an_api_key(
+    qapp: QApplication, cfg: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pick Anthropic, type a model and a key: the key goes to the injected secrets file, the profile to the
+    user file (the others switched off), and it lists with a Remove button."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    user, secrets = tmp_path / "profiles.toml", tmp_path / "secrets.env"
+    view = SettingsView(cfg, profiles_path=user, secrets_path=secrets)
+
+    def shown(label: str) -> bool:
+        return not view._provider_rows[label][1].isHidden()
+
+    assert not shown("API key") and not view.list_models_button.isHidden()
+    view.provider_combo.setCurrentIndex(2)  # Anthropic (Claude)
+    assert shown("API key") and view.list_models_button.isHidden()
+    assert not shown("Server address") and not shown("Key variable")
+    assert view.key_state.text() == "ANTHROPIC_API_KEY not set yet"
+    view.model_combo.setCurrentText("claude-sonnet-5-5")
+    assert view.profile_name_edit.text() == "my-claude-sonnet-5-5-anthropic"
+    view.key_edit.setText("sk-ant-test")
+    changed: list[bool] = []
+    view.settings_changed.connect(lambda: changed.append(True))
+    assert view.add_model()
+    assert secrets.read_text(encoding="utf-8") == "ANTHROPIC_API_KEY=sk-ant-test\n"
+    assert view.key_edit.text() == "" and view.key_state.text() == "ANTHROPIC_API_KEY is set"
+    data = tomllib.loads(user.read_text(encoding="utf-8"))["profiles"]
+    assert data["my-claude-sonnet-5-5-anthropic"]["endpoint"] == "anthropic"
+    assert data["gemma4-31b-cloud"]["enabled"] is False and changed == [True]
+    assert view.add_model_status.text() == "added my-claude-sonnet-5-5-anthropic"
+    assert any(box.text().startswith("my-claude-sonnet-5-5-anthropic") for box in view._profile_boxes)
+    assert view.remove_profile("my-claude-sonnet-5-5-anthropic")
+    assert not any(box.text().startswith("my-claude") for box in view._profile_boxes)
+
+
+def test_an_openai_compatible_server_needs_its_key_variable(
+    qapp: QApplication, cfg: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    view = SettingsView(cfg, profiles_path=tmp_path / "profiles.toml", secrets_path=tmp_path / "secrets.env")
+    view.provider_combo.setCurrentIndex(3)
+    assert not view._provider_rows["Server address"][1].isHidden()
+    assert not view._provider_rows["Key variable"][1].isHidden()
+    view.model_combo.setCurrentText("deepseek/deepseek-chat")
+    view.base_url_edit.setText("https://openrouter.ai/api/v1")
+    assert not view.add_model() and "name the variable" in view.add_model_status.text()
+    view.key_env_edit.setText("OPENROUTER_API_KEY")
+    assert view.add_model()
+    assert view.add_model_status.text().endswith("set OPENROUTER_API_KEY before translating")
+    data = tomllib.loads((tmp_path / "profiles.toml").read_text(encoding="utf-8"))["profiles"]
+    added = data["my-deepseek-deepseek-chat-openai"]
+    assert (added["base_url"], added["api_key_env"]) == ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY")

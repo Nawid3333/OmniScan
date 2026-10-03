@@ -1,26 +1,49 @@
 # Translation profiles for `omniscan translate`. One table per profile: the table key IS the profile
 # name (it becomes the file stem of the run, `translations/<name>.json`). Override per machine in
-# ~/.config/omniscan/translation_profiles.toml — a profile there replaces the same-named one here.
+# ~/.config/omniscan/translation_profiles.toml — a profile there replaces the same-named one here
+# (the desktop app's Settings → Profiles writes that file).
 #
-# Every profile uses `endpoint = "local"`: the local Windows Ollama daemon also proxies the
-# `*-cloud` models (verified in docs/benchmarks/translation-probe.md), so no OLLAMA_API_KEY is
-# needed for them. `think = false` keeps thinking models from spending the whole budget reasoning;
-# translategemma rejects `think: true`, so its profile sends nothing.
+# The Ollama profiles use `endpoint = "local"`: the local Ollama daemon also proxies the `*-cloud`
+# models (verified in docs/benchmarks/translation-probe.md), so no OLLAMA_API_KEY is needed for them.
+# `think = false` keeps thinking models from spending the whole budget reasoning; translategemma
+# rejects `think: true`, so its profiles send nothing.
 #
 # `images = true` (chat_json only, vision models only) also sends the page images the regions sit on;
 # `image_side = 1280` is the most pixels an image has on either side (a tall slice is cut into tiles that
-# size), `images_per_request = 3` the images per request.
-
+# size), `images_per_request = 3` the images per request. Models that accept images: docs/USER_GUIDE.md,
+# "Translation profiles".
 #
-# Default: gemma4-31b-cloud alone, with translategemma-12b-local as its fallback when the cloud tokens
-# are exhausted (rate limit). Measured in docs/benchmarks/translation-model-comparison.md: the cloud
-# model alone scores as well as every judged ensemble and is the fastest; translategemma is the best
-# local model per second but reverses some meanings, so it only runs when the cloud cannot.
+# Default (owner, 2026-10-03, #41): gemma4-31b-cloud on Ollama Cloud, with the biggest local translation
+# model, translategemma-27b-local, as its fallback when the cloud is rate-limited or the run's
+# `[translate] cloud_request_budget` is spent. translategemma:27b is 17 GB: on a 16 GB card a few layers
+# run on the CPU; on a smaller GPU set `fallback = "translategemma-12b-local"` (9 GB) or the 4b one.
+# Measured in docs/benchmarks/translation-model-comparison.md: the cloud model alone scores as well as
+# every judged ensemble and is the fastest; translategemma reverses some meanings, so it only runs when
+# the cloud cannot.
+
+[profiles.gemma4-31b-cloud]
+endpoint = "local"
+model = "gemma4:31b-cloud"
+style = "chat_json"
+think = false
+fallback = "translategemma-27b-local"
+
+[profiles.translategemma-27b-local]
+enabled = false
+endpoint = "local"
+model = "translategemma:27b"
+style = "translategemma"
 
 [profiles.translategemma-12b-local]
 enabled = false
 endpoint = "local"
 model = "translategemma:12b"
+style = "translategemma"
+
+[profiles.translategemma-4b-local]
+enabled = false
+endpoint = "local"
+model = "translategemma:4b"
 style = "translategemma"
 
 [profiles.gemma4-12b-local]
@@ -29,13 +52,6 @@ endpoint = "local"
 model = "gemma4:12b"
 style = "chat_json"
 think = false
-
-[profiles.gemma4-31b-cloud]
-endpoint = "local"
-model = "gemma4:31b-cloud"
-style = "chat_json"
-think = false
-fallback = "translategemma-12b-local"
 
 [profiles.glm-5-3-flash-cloud]
 enabled = false
@@ -50,3 +66,28 @@ endpoint = "local"
 model = "kimi-k3:cloud"
 style = "chat_json"
 think = false
+
+# Your own model. Any model the local Ollama has (`ollama list`) works as an endpoint = "local" profile.
+# A hosted API takes your own key: endpoint = "openai" (OpenAI, or any OpenAI-compatible server — OpenRouter,
+# Groq, DeepSeek, Mistral, LM Studio, vLLM … — with `base_url`) or endpoint = "anthropic" (Claude). The key
+# comes from the environment or ~/.config/omniscan/secrets.env: OPENAI_API_KEY / ANTHROPIC_API_KEY, or the
+# variable `api_key_env` names. Settings → Profiles in the desktop app adds such a profile and saves the key.
+#
+# [profiles.openrouter-deepseek]
+# endpoint = "openai"
+# base_url = "https://openrouter.ai/api/v1"
+# api_key_env = "OPENROUTER_API_KEY"
+# model = "deepseek/deepseek-chat"
+# style = "chat_json"
+
+[profiles.openai-gpt]
+enabled = false
+endpoint = "openai"
+model = "gpt-5.4-mini"
+style = "chat_json"
+
+[profiles.claude-sonnet]
+enabled = false
+endpoint = "anthropic"
+model = "claude-sonnet-5-5"
+style = "chat_json"

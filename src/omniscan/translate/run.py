@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from omniscan.core.schemas import Candidate, CandidateRun, GlossaryEntry, Region
+from omniscan.llm.api import provider_client
 from omniscan.llm.ollama import ChatResponse
 from omniscan.translate.parse import parse_translations
 from omniscan.translate.profiles import TranslationProfile
@@ -114,8 +115,10 @@ def run_profile(
     `characters` (the series' voices.toml): each request shows the voices of the characters who speak or are
     named in it (chat_json). `images` (the chapter's pages) are attached to each request when the profile asks
     for them (`images = true`, chat_json); the requests are then cut to at most `images_per_request` images.
-    `target` is the release language the regions are translated into (`[translate] target_lang`)."""
+    `target` is the release language the regions are translated into (`[translate] target_lang`). A profile with
+    an API endpoint (openai, anthropic) sends its requests there instead of to `client` (llm/api.py)."""
     start = clock()
+    client = provider_client(client, profile.endpoint, base_url=profile.base_url, key_env=profile.api_key_env)
     targets = translatable(regions)
     target_ids = {r.id for r in targets}
     by_id: dict[str, Candidate] = {}

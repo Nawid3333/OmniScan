@@ -17,6 +17,7 @@ IDS = (
     "ocr-det-ppocrv5-server",
     "ocr-rec-korean-ppocrv5-mobile",
     "inpaint-big-lama",
+    "llm-translategemma-27b",
     "llm-translategemma-12b",
     "llm-gemma4-12b",
     "llm-gemma4-31b",

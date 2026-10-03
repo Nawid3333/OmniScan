@@ -11,11 +11,12 @@ from __future__ import annotations
 import tomllib
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Self
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from omniscan.core.config import DEFAULT_TOML, USER_TOML
+from omniscan.translate.profiles import Endpoint, check_provider
 
 
 class JudgeConfig(BaseModel):
@@ -24,7 +25,7 @@ class JudgeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     model: str = "gemma4:31b-cloud"
-    endpoint: Literal["local", "cloud"] = "local"
+    endpoint: Endpoint = "local"
     think: bool | None = False  # None = do not send the parameter at all
     temperature: float = Field(default=0.2, ge=0.0, le=2.0)
     chunk_regions: int = Field(default=20, ge=1)  # max regions per judge request
@@ -32,6 +33,13 @@ class JudgeConfig(BaseModel):
     agree_threshold: float = Field(default=0.9, ge=0.0, le=1.0)
     always_judge: bool = False  # True: ask the judge about every region with >= 2 unique candidates
     prefer: list[str] = Field(default_factory=list)  # run ids in priority order
+    base_url: str | None = None  # openai/anthropic endpoint: another server speaking that API
+    api_key_env: str | None = None  # openai/anthropic endpoint: the variable holding the key
+
+    @model_validator(mode="after")
+    def _provider_fields(self) -> Self:
+        check_provider(self.endpoint, self.base_url, self.api_key_env)
+        return self
 
 
 def default_judge_paths() -> list[Path]:

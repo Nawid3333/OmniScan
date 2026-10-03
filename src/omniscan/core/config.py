@@ -8,12 +8,14 @@ Secrets come only from the environment or ~/.config/omniscan/secrets.env.
 from __future__ import annotations
 
 import json
+import os
 import tomllib
 from collections.abc import Mapping, Sequence
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
+from dotenv import dotenv_values
 from pydantic import BaseModel, Field, SecretStr, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -132,6 +134,9 @@ class TranslateConfig(BaseModel):
     """The release: which language the translation, the judge and the lettering are in (X5 in docs/ROADMAP.md)."""
 
     target_lang: TargetLang = "en"
+    # most requests to cloud models (Ollama Cloud, the OpenAI/Anthropic APIs) one pipeline run of a series may send;
+    # past it, profiles switch to their fallback as on a rate limit (llm/budget.py). 0: no limit
+    cloud_request_budget: int = Field(default=0, ge=0)
 
 
 class InpaintConfig(BaseModel):
@@ -448,3 +453,14 @@ def get_config() -> Config:
 def get_secrets() -> Secrets:
     """Process-wide cached secrets (never log these)."""
     return Secrets()
+
+
+def api_key(name: str, *, env_file: Path | None = None) -> SecretStr | None:
+    """A provider's API key by its variable name (OPENAI_API_KEY, ...): the environment first, then secrets.env
+    (`env_file`), read again on every call so a key saved in Settings counts at once; None when unset or empty.
+    Never log it."""
+    value = os.environ.get(name)
+    path = env_file if env_file is not None else SECRETS_ENV
+    if not value and path.is_file():
+        value = dotenv_values(path).get(name)
+    return SecretStr(value) if value else None

@@ -5,7 +5,8 @@ Retries cover transport errors, HTTP 429 and HTTP 5xx with exponential backoff, 
 other HTTP status fails fast after exactly one attempt. Ollama Cloud's account-wide
 session-usage cap answers with HTTP 429 for the rest of the session, so when retries on
 a 429 are exhausted this client raises `OllamaRateLimitError` — a distinct, loud failure
-that callers must surface, never swallow (a past run lost 71 turns to exactly that).
+that callers must surface, never swallow (a past run lost 71 turns to exactly that). A request to a cloud model
+counts against the run's cloud request budget (llm/budget.py) before it is sent.
 """
 
 from __future__ import annotations
@@ -23,6 +24,17 @@ import httpx
 from PIL import Image
 
 from omniscan.core.config import OllamaConfig, Secrets
+from omniscan.llm.budget import spend_cloud_request
+from omniscan.llm.errors import OllamaError, OllamaRateLimitError
+
+__all__ = [
+    "ChatResponse",
+    "OllamaClient",
+    "OllamaError",
+    "OllamaRateLimitError",
+    "RunningModel",
+    "is_cloud_model",
+]
 
 _MAX_BACKOFF_S = 30.0
 _BACKOFF_BASE_S = 1.0
@@ -52,17 +64,9 @@ class RunningModel:
     expires_at: str | None
 
 
-class OllamaError(RuntimeError):
-    """Ollama request failed (non-retryable status, or retryable failures exhausted)."""
-
-    def __init__(self, message: str, *, status_code: int | None = None, body: str | None = None) -> None:
-        super().__init__(message)
-        self.status_code = status_code
-        self.body = body
-
-
-class OllamaRateLimitError(OllamaError):
-    """Raised only when retries are exhausted on an HTTP 429. status_code is always 429."""
+def is_cloud_model(model: str) -> bool:
+    """True for an Ollama Cloud model the local daemon proxies (`x:cloud`, `x:31b-cloud`)."""
+    return model.endswith((":cloud", "-cloud"))
 
 
 class OllamaClient:
@@ -95,6 +99,8 @@ class OllamaClient:
     ) -> ChatResponse:
         """Send one non-streaming /api/chat request and lift the fields callers use."""
         base, headers = self._endpoint(cloud)
+        if cloud or is_cloud_model(model):
+            spend_cloud_request(model)
         body: dict[str, Any] = {"model": model, "messages": messages, "stream": False}
         if format is not None:
             body["format"] = format
@@ -150,7 +156,7 @@ class OllamaClient:
         num_ctx changes); for the same reason a request with images never gets less than an earlier one with
         images of the same model (the number of pages per request varies)."""
         floor = self._cfg.num_ctx
-        if floor == 0 or cloud or model.endswith((":cloud", "-cloud")):
+        if floor == 0 or cloud or is_cloud_model(model):
             return options
         if options is not None and "num_ctx" in options:
             return options
@@ -193,15 +199,14 @@ class OllamaClient:
             except httpx.TransportError as exc:
                 if attempt == max_retries - 1:
                     raise OllamaError(f"Ollama unreachable after {max_retries} attempts: {exc}") from exc
-                self._sleep(self._backoff_delay(attempt))
+                self._sleep(backoff_delay(attempt))
                 continue
             if response.status_code == 429 or response.status_code >= 500:
                 status = response.status_code
                 body = response.text[:_BODY_TRUNC_CHARS]
                 if attempt == max_retries - 1:
                     break
-                retry_after = self._retry_after_s(response)
-                self._sleep(self._backoff_delay(attempt, retry_after))
+                self._sleep(backoff_delay(attempt, retry_after_s(response)))
                 continue
             if response.is_success:
                 return dict(response.json())
@@ -223,24 +228,24 @@ class OllamaClient:
             body=body,
         )
 
-    @staticmethod
-    def _retry_after_s(response: httpx.Response) -> float | None:
-        """Parse a 429's Retry-After header as whole seconds; anything else means no hint."""
-        value = response.headers.get("Retry-After")
-        if value is None:
-            return None
-        try:
-            return float(int(value))
-        except ValueError:
-            return None
 
-    @staticmethod
-    def _backoff_delay(attempt: int, retry_after_s: float | None = None) -> float:
-        """Exponential backoff with jitter; a 429's Retry-After takes precedence over the curve."""
-        delay = min(_BACKOFF_BASE_S * (2**attempt), _MAX_BACKOFF_S)
-        if retry_after_s is not None:
-            delay = max(delay, retry_after_s)
-        return delay + random.uniform(0, delay * _JITTER_FRACTION)
+def retry_after_s(response: httpx.Response) -> float | None:
+    """Parse a 429's Retry-After header as whole seconds; anything else means no hint."""
+    value = response.headers.get("Retry-After")
+    if value is None:
+        return None
+    try:
+        return float(int(value))
+    except ValueError:
+        return None
+
+
+def backoff_delay(attempt: int, retry_after: float | None = None) -> float:
+    """Exponential backoff with jitter; a 429's Retry-After takes precedence over the curve."""
+    delay = min(_BACKOFF_BASE_S * (2**attempt), _MAX_BACKOFF_S)
+    if retry_after is not None:
+        delay = max(delay, retry_after)
+    return delay + random.uniform(0, delay * _JITTER_FRACTION)
 
 
 def _image_tokens(data: str) -> int:
