@@ -1759,7 +1759,7 @@ The first start opens a **setup checklist** (also Settings → Hardware → `Set
 and the tuning plan for it with `Optimise for this PC` (the same as `omniscan tune --apply`), a button to the
 Models page for the required downloads, and whether Ollama answers. Nothing is changed without a click.
 
-The window has eight pages in the left sidebar (also `Ctrl+1`…`Ctrl+8`; Quick mode hides Models, Studio and Queue). The status bar shows the
+The window has nine pages in the left sidebar (also `Ctrl+1`…`Ctrl+9`; Quick mode hides Models, Studio, Queue and Glossary). The status bar shows the
 configured GPU device and the job state; window size and the last open page are remembered across
 restarts.
 
@@ -1884,6 +1884,17 @@ and the status bar shows `job: running` meanwhile; `Pause` / `Resume` / `Cancel`
 job and `Clear finished` deletes the done and cancelled ones (failed jobs stay so you can retry them). Jobs
 survive restarts. Exactly one worker per queue: do not run `omniscan queue run` or `omniscan serve` on the
 same library while the page is draining.
+
+**Glossary** is a series' term list, edited by hand — the same edits as `omniscan glossary add` / `set` / `lock`
+/ `reject` / `remove` and the web Studio's Glossary tab. Pick a series; the table lists every term with its
+English, type, status (`proposed`, `locked`, `rejected`), origin (`llm`, `reference`, `user`), how often it was
+seen, aliases and notes. `All terms` / a status narrows the list, and the search box matches the source, the
+English and the aliases. Type a source and its English above the table and press `Add term` (or Enter): the term
+is locked at once. Double-click a Source, English, Aliases (comma-separated) or Notes cell to correct it; `Lock`,
+`Reject`, `Back to proposed`, `Type…` and `Remove` act on every selected row. Words you type make the term yours
+(`origin = user`), so a later proposal pass never overwrites it; every change writes the series' `glossary.yaml`
+again, and the next translate run redoes only the lines that hold a changed term. The page reads the glossary
+again each time you open it, so terms a run proposed meanwhile show up.
 
 ## Studio: editing by hand
 

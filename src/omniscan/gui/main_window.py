@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from omniscan.core.config import Config, load_config
+from omniscan.gui.glossary_view import GlossaryView
 from omniscan.gui.import_view import ImportView
 from omniscan.gui.library_view import LibraryView
 from omniscan.gui.models_view import ModelsView
@@ -40,7 +41,7 @@ from omniscan.gui.theme import MODE_PAGES, Appearance, set_role
 from omniscan.gui.welcome_dialog import OllamaCheck, WelcomeDialog
 
 # new pages go last so the first five keep their indices (scripts/gui_screenshots.py hard-codes them).
-PAGES = ("Library", "Reader", "Run", "Models", "Settings", "Import", "Studio", "Queue")
+PAGES = ("Library", "Reader", "Run", "Models", "Settings", "Import", "Studio", "Queue", "Glossary")
 # the platform's own icon set (Segoe Fluent on Windows, SF Symbols on macOS, the icon theme on Linux)
 _ICONS = {
     "Library": QIcon.ThemeIcon.FolderOpen,
@@ -51,6 +52,7 @@ _ICONS = {
     "Import": QIcon.ThemeIcon.DocumentOpen,
     "Studio": QIcon.ThemeIcon.InsertText,
     "Queue": QIcon.ThemeIcon.ListAdd,
+    "Glossary": QIcon.ThemeIcon.ToolsCheckSpelling,
 }
 _SIDEBAR_WIDTH = 190
 _CONTENT_MARGINS = (24, 16, 24, 12)
@@ -90,6 +92,7 @@ class MainWindow(QMainWindow):
         self.import_view = ImportView(importer_service or ImporterService(self._cfg))
         self.studio_view = StudioView(self._cfg)
         self.queue_view = QueueView(self._cfg)
+        self.glossary_view = GlossaryView(self._cfg)
 
         self.stack = QStackedWidget()
         for view in (
@@ -101,6 +104,7 @@ class MainWindow(QMainWindow):
             self.import_view,
             self.studio_view,
             self.queue_view,
+            self.glossary_view,
         ):
             self.stack.addWidget(view)
         self.sidebar = QListWidget()
@@ -195,6 +199,8 @@ class MainWindow(QMainWindow):
         if row >= 0:
             if row != PAGES.index("Reader"):
                 self.reader_view.set_reading(False)
+            if row == PAGES.index("Glossary"):
+                self.glossary_view.refresh()  # a run or the CLI may have proposed or changed terms meanwhile
             self.stack.setCurrentIndex(row)
             self.title_label.setText(PAGES[row])
 
@@ -232,6 +238,7 @@ class MainWindow(QMainWindow):
         self.import_view.reconfigure(ImporterService(self._cfg))
         self.studio_view.reconfigure(self._cfg)
         self.queue_view.reconfigure(self._cfg)
+        self.glossary_view.reconfigure(self._cfg)
         self._show_device()
 
     # ------------------------------------------------------------------ internals
