@@ -1835,6 +1835,13 @@ issues. Click a box to jump to its row, or a row to jump to its box. Several row
   lettering that does not fit its balloon, lines the judge was unsure about or that miss a locked glossary term,
   English far longer than the source, and typos (`Not a typo` accepts the selected lines' unknown words for the
   series). `Only lines with issues` hides the rest.
+- `Find & replace…` (`Ctrl+H`) finds text in this chapter's or the whole series' English lines (or source
+  texts) — literal, whole words, a regular expression, with or without matching case (without, the replacement
+  takes each match's case: `JINWOO` → `JIN-WOO`) — and lists every line it would change; `Replace ticked` records
+  the ticked ones as hand edits, one undo step per chapter (the same as `omniscan edit replace`). Unsaved edits are
+  saved first.
+- `Consistency…` checks the whole series (as `omniscan consistency` does): source lines translated in more than one
+  way, and lines that miss a locked glossary term. Double-click a row to open that line here.
 - `Preview` shows, between the strip and the table, the current page as the release will look — cleaned,
   hand cleanup and the lettering with every saved edit — rendered on the spot (CPU) and scrolling with the raw
   strip. It re-renders after a save, undo, redo or re-letter.
