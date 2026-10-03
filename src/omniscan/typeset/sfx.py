@@ -193,8 +193,10 @@ def layout_sfx_subtitle(
     *,
     body_px: int | None,
     font_factory: FontFactory = load_font,
+    lang: str = "en",
 ) -> LayoutItem:
-    """A small outlined translation centred just below the original effect (which stays on the page)."""
+    """A small outlined translation centred just below the original effect (which stays on the page); `lang` is
+    the release language whose line-breaking rules apply."""
     size_cap = min(_SUBTITLE_MAX_PX, round(body_px * _SUBTITLE_SHARE)) if body_px else _SUBTITLE_MAX_PX
     size_cap = max(cfg.min_px, size_cap)
     width = max(region.bbox.width, 8 * size_cap)
@@ -215,6 +217,7 @@ def layout_sfx_subtitle(
         line_spacing=cfg.line_spacing,
         hyphenate=cfg.hyphenate,
         font_factory=font_factory,
+        lang=lang,
     )
     x0 = round(cx - fit.width / 2)
     return LayoutItem(

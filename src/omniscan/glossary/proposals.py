@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from omniscan.core.config import Config
+from omniscan.core.config import Config, series_config
 from omniscan.core.paths import SeriesPaths
 from omniscan.core.schemas import GlossaryEntry, RegionsArtifact
 from omniscan.glossary.proposal_prompts import proposal_messages
@@ -44,14 +44,15 @@ def chapter_lines(sp: SeriesPaths, chapter: str) -> list[str]:
 
 
 def extract_proposals(
-    client: ChatClient, model: str, chapter: str, lines: Sequence[str], lang: str = "ko"
+    client: ChatClient, model: str, chapter: str, lines: Sequence[str], lang: str = "ko", target: str = "en"
 ) -> list[TermCandidate]:
-    """[] for no lines; else one chat call over the chapter's lines -> its TermCandidate list."""
+    """[] for no lines; else one chat call over the chapter's lines -> its TermCandidate list (terms rendered
+    in the release language `target`)."""
     if not lines:
         return []
     response = client.chat(
         model,
-        proposal_messages(lines, lang),
+        proposal_messages(lines, lang, target),
         cloud=False,
         format=TERMS_SCHEMA,
         options={"temperature": 0.0},
@@ -85,6 +86,7 @@ def run_proposals(
 ) -> ProposalSummary:
     """Propose glossary terms from the chosen chapters' OCR text; see the module docstring."""
     sp = SeriesPaths.from_config(cfg, series)
+    target = series_config(cfg, sp.library_dir).translate.target_lang
     names = list(chapters) if chapters is not None else sp.chapters()
     candidates: list[TermCandidate] = []
     lines_scanned = 0
@@ -96,7 +98,9 @@ def run_proposals(
             continue
         chapters_with_lines += 1
         candidates.extend(
-            extract_proposals(client, model, chapter, lines, lang=chapter_language(sp.chapter(chapter)))
+            extract_proposals(
+                client, model, chapter, lines, lang=chapter_language(sp.chapter(chapter)), target=target
+            )
         )
     aggregated = [term for term in aggregate(candidates) if term.chapters >= min_chapters]
     report = _merge_proposals(sp, aggregated, dry_run=dry_run)

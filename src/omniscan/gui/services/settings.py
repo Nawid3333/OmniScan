@@ -17,7 +17,7 @@ import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 import httpx
 from pydantic import ValidationError
@@ -33,6 +33,7 @@ from omniscan.core.config import (
     set_series_setting,
     set_user_setting,
 )
+from omniscan.core.schemas import TargetLang
 
 type FieldKind = Literal["path", "bool", "choice", "model", "float", "int"]
 
@@ -107,6 +108,15 @@ GLOBAL_FIELDS: tuple[SettingField, ...] = (
         high=1.0,
         label="Promo match strictness",
         help="Higher skips less",
+    ),
+    SettingField(
+        "translate",
+        "target_lang",
+        "choice",
+        choices=get_args(TargetLang),
+        label="Release language",
+        help="The language of the translation and lettering: en English, de German, es Spanish "
+        "(a series' own setting wins)",
     ),
     SettingField(
         "translate",

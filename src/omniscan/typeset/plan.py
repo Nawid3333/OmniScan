@@ -161,8 +161,10 @@ def plan_layout(
     sfx: SfxConfig | None = None,
     erased: Collection[str] | None = None,
     font_factory: FontFactory = load_font,
+    lang: str = "en",
 ) -> list[LayoutItem]:
-    """Letter every translatable region's final English line (reading order); empty lines are skipped.
+    """Letter every translatable region's final line (reading order, release language `lang`, whose
+    line-breaking rules apply); empty lines are skipped.
 
     Dialogue and free text are shaped to their balloon or box, then capped chapter-wide by
     `size_spread` (`shout_spread` for shouted lines) x `typical_size`. Sound effects follow `sfx.mode`:
@@ -185,14 +187,14 @@ def plan_layout(
         lettered = text.upper() if use_uppercase(style, cfg) else text
         font = role_font(role, style, cfg)
         shape = lettering_shape(region, cfg)
-        fit = _fit(lettered, shape, font, cfg, None, font_factory)
+        fit = _fit(lettered, shape, font, cfg, None, font_factory, lang)
         jobs.append(_Job(region, lettered, role, font, shape, fit))
     typical = typical_size([job.fit for job in jobs if job.role == "dialogue"])
     items: dict[str, LayoutItem] = {}
     for job in jobs:
         cap = _size_cap(job.role, typical, cfg)
         if cap is not None and job.fit.size_px > cap:
-            job.fit = _fit(job.text, job.shape, job.font, cfg, cap, font_factory)
+            job.fit = _fit(job.text, job.shape, job.font, cfg, cap, font_factory, lang)
         items[job.region.id] = _item(job, fills.get(job.region.id), cfg)
     for region, text in effects:
         if sfx_cfg.mode == "keep":
@@ -209,7 +211,7 @@ def plan_layout(
         else:
             font = role_font("free", lettering_style(region, cfg), cfg)
             items[region.id] = layout_sfx_subtitle(
-                region, text, cfg, font, body_px=typical, font_factory=font_factory
+                region, text, cfg, font, body_px=typical, font_factory=font_factory, lang=lang
             )
     return [items[region.id] for region in translatable(regions) if region.id in items]
 
@@ -223,9 +225,15 @@ def _size_cap(role: FontRole, typical: int | None, cfg: TypesetConfig) -> int | 
 
 
 def _fit(
-    text: str, shape: Shape, font: Path, cfg: TypesetConfig, cap: int | None, font_factory: FontFactory
+    text: str,
+    shape: Shape,
+    font: Path,
+    cfg: TypesetConfig,
+    cap: int | None,
+    font_factory: FontFactory,
+    lang: str = "en",
 ) -> Fit:
-    """`fit_shape` with the configured sizes, spacing and hyphenation."""
+    """`fit_shape` with the configured sizes, spacing and hyphenation, in release language `lang`."""
     return fit_shape(
         text,
         shape,
@@ -236,6 +244,7 @@ def _fit(
         line_spacing=cfg.line_spacing,
         hyphenate=cfg.hyphenate,
         font_factory=font_factory,
+        lang=lang,
     )
 
 
