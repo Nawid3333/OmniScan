@@ -8,6 +8,7 @@ in place; several rows can be selected at once and the actions apply to all of t
 revert English, kind, lettering styles, translate). `Find missed text` runs the detector again on the page in
 view and offers what no region covers, to add as hand-drawn regions. `Find & replace…` and `Consistency…`
 (gui/series_dialogs.py) work across the chapter or the whole series; a line in the report opens here.
+`Output cuts` shows where the exported images split and edits that on the strip (each change its own undo step).
 
 Everything goes through `omniscan.edits.session.StudioSession`: changes stay in memory until Save, which
 records them in edits.json (one undo step; Undo/Redo walk the chapter's shared history) and applies them to
@@ -59,7 +60,7 @@ from omniscan.gui.services import studio as services
 from omniscan.gui.services.library import Tile
 from omniscan.gui.services.runs import RunController, RunOutcome, RunSpec
 from omniscan.gui.services.series_check import Consistency
-from omniscan.gui.services.studio import CleanMethod, PagePreview, PageStroke, Suggested
+from omniscan.gui.services.studio import CleanMethod, CutsState, PagePreview, PageStroke, Suggested
 from omniscan.gui.strip_view import StripView
 from omniscan.gui.theme import set_role
 from omniscan.gui.workers import WorkerSignals, run_task
@@ -184,6 +185,7 @@ class StudioView(QWidget):
         self._page_rows: list[tuple[int, int, int]] = []  # (page, y0, y1) of the raw pages (ingest.json)
         self._rendered: set[int] = set()  # pages the preview holds (or is rendering)
         self._syncing = False  # True while this view itself aligns the two strips
+        self._cuts: CutsState | None = None  # the chapter's output cuts while Output cuts is on
 
         # ---- navigation
         self.series_combo = QComboBox(self)
@@ -286,6 +288,23 @@ class StudioView(QWidget):
         self.brush_size.setToolTip("The brush radius, in strip pixels")
         self.take_back_button = QPushButton("Take back stroke", self)
         self.take_back_button.setToolTip("Remove the last stroke cleaned here")
+
+        # ---- output cuts
+        self.cuts_button = QPushButton("Output cuts", self)
+        self.cuts_button.setCheckable(True)
+        self.cuts_button.setToolTip(
+            "Show where the exported images split and change it: click the strip to add a cut, drag one to move "
+            "it, right-click one to remove it"
+        )
+        self.snap_check = QCheckBox("Snap to calm rows", self)
+        self.snap_check.setChecked(True)
+        self.snap_check.setToolTip(
+            f"A new or moved cut jumps into a uniform band within {services.SNAP_ROWS} rows (a clean place between "
+            "panels)"
+        )
+        self.reset_cuts_button = QPushButton("One image per slice", self)
+        self.reset_cuts_button.setToolTip("Drop the cuts set by hand: export one image per slice again")
+        self.cuts_label = QLabel(self)
         self.preview_button = QPushButton("Preview", self)
         self.preview_button.setCheckable(True)
         self.preview_button.setToolTip("Show the page as the release will look, with the saved edits")
@@ -370,6 +389,10 @@ class StudioView(QWidget):
         clean.addWidget(QLabel("Clean", self))
         for widget in (self.brush_button, self.clean_combo, self.brush_size, self.take_back_button):
             clean.addWidget(widget)
+        clean.addSpacing(24)
+        clean.addWidget(QLabel("Export", self))
+        for widget in (self.cuts_button, self.snap_check, self.reset_cuts_button, self.cuts_label):
+            clean.addWidget(widget)
         clean.addStretch(1)
 
         root = QVBoxLayout(self)
@@ -406,6 +429,11 @@ class StudioView(QWidget):
         )
         self.strip.stroke_painted.connect(self.clean_stroke)
         self.take_back_button.clicked.connect(self.take_back_stroke)
+        self.cuts_button.toggled.connect(self.set_cut_mode)
+        self.reset_cuts_button.clicked.connect(lambda: self.change_cuts(None))
+        self.strip.cut_added.connect(self._on_cut_added)
+        self.strip.cut_moved.connect(self._on_cut_moved)
+        self.strip.cut_removed.connect(self._on_cut_removed)
         self.remove_button.clicked.connect(self.remove_selected)
         self.find_button.clicked.connect(self.find_missed)
         self.replace_button.clicked.connect(self.find_replace)
@@ -728,6 +756,7 @@ class StudioView(QWidget):
         """Turn the cleanup brush on (draw mode off, the Preview shown to see the result) or off."""
         if on:
             self.draw_button.setChecked(False)
+            self.cuts_button.setChecked(False)
         self.brush_button.setChecked(on)
         self.strip.set_brush(self.brush_size.value() if on else None)
         if on and not self.preview.isVisible():
@@ -756,6 +785,36 @@ class StudioView(QWidget):
             lambda _progress: (stroke.page, self._clean_fn(cfg, paths, stroke, method)),
             self._on_cleaned,
             f"cleaning a stroke on page {stroke.page + 1} ({method})...",
+        )
+        return True
+
+    def set_cut_mode(self, on: bool) -> None:
+        """Show the chapter's output cuts on the strip and edit them with the mouse (Draw box and the brush go
+        off), or hide them."""
+        if on:
+            self.draw_button.setChecked(False)
+            self.brush_button.setChecked(False)
+        self.cuts_button.setChecked(on)
+        self.strip.set_cut_mode(on)
+        self._show_cuts()
+
+    def change_cuts(self, cuts: list[int] | None) -> bool:
+        """Store where the exported images split (strip rows; None: one image per slice) as its own undo step
+        (unsaved edits are saved first); False when no chapter is open or the cuts are refused."""
+        session = self._session
+        if session is None or self._worker is not None:
+            return False
+        try:
+            stored = session.set_cuts(cuts, max_height=services.cut_max_height(self._cfg, session.paths))
+        except (LookupError, OSError, ValueError) as error:
+            self.status_label.setText(f"cuts not changed: {error}")
+            return False
+        self._refresh()
+        self._show_cuts()
+        self.status_label.setText(
+            "output cuts: one image per slice"
+            if stored is None
+            else f"output cuts saved: {len(stored) + 1} images"
         )
         return True
 
@@ -939,10 +998,58 @@ class StudioView(QWidget):
         self.status_label.setText(f"{region_id} read again: {text!r} — Save to keep it")
 
     def _on_draw_toggled(self, drawing: bool) -> None:
-        """Draw box on: the brush goes off (one tool at a time)."""
+        """Draw box on: the brush and the cut editing go off (one tool at a time)."""
         if drawing:
             self.brush_button.setChecked(False)
+            self.cuts_button.setChecked(False)
         self.strip.set_draw_mode(drawing)
+
+    def _on_cut_added(self, row: int) -> None:
+        """A click in cut mode: a new cut there (snapped), starting from the slicer's cuts when none were set."""
+        if self._cuts is not None:
+            self.change_cuts(sorted({*self._cuts.cuts, self._snapped(row)}))
+
+    def _on_cut_moved(self, old: int, new: int) -> None:
+        """A cut dragged to another row (snapped)."""
+        if self._cuts is not None:
+            self.change_cuts(sorted({*(cut for cut in self._cuts.cuts if cut != old), self._snapped(new)}))
+
+    def _on_cut_removed(self, row: int) -> None:
+        """A right-click on a cut; removing the last one goes back to one image per slice."""
+        if self._cuts is not None:
+            self.change_cuts([cut for cut in self._cuts.cuts if cut != row] or None)
+
+    def _snapped(self, row: int) -> int:
+        """`row`, moved into a nearby uniform band when snapping is on."""
+        if self._cuts is None or not self.snap_check.isChecked():
+            return row
+        return services.snap_to_band(row, self._cuts.bands)
+
+    def _show_cuts(self) -> None:
+        """Read the chapter's output cuts and draw them while Output cuts is on, with how many images they make and
+        which regions they run through."""
+        session = self._session
+        if session is None or not self.cuts_button.isChecked():
+            self._cuts = None
+            self.strip.set_cut_lines(())
+            self.cuts_label.clear()
+            self._update_buttons()
+            return
+        try:
+            state = services.load_cuts(session.paths)
+        except (LookupError, OSError, ValueError) as error:
+            self._cuts = None
+            self.strip.set_cut_lines(())
+            self.cuts_label.setText(str(error))
+            self._update_buttons()
+            return
+        self._cuts = state
+        self.strip.set_cut_lines(state.cuts, {cut for cut, _ in state.crossings})
+        text = f"{len(state.cuts) + 1} images" + (" (one per slice)" if state.hand is None else "")
+        if state.crossings:
+            text += " · cuts through " + ", ".join(sorted({region_id for _, region_id in state.crossings}))
+        self.cuts_label.setText(text)
+        self._update_buttons()
 
     def _on_cleaned(self, result: object) -> None:
         """A stroke was cleaned: remember it for Take back and show its page again."""
@@ -1102,6 +1209,7 @@ class StudioView(QWidget):
         self._page_rows = services.page_rows(ingest) if ingest is not None else []
         self._reset_preview(view.strip_width, view.strip_height)
         self._refresh()
+        self._show_cuts()
         self.run_check()
         self._set_pages()
         if voices_error is not None:  # after the check's own line, so it is the one shown
@@ -1117,6 +1225,9 @@ class StudioView(QWidget):
         self._issues, self._typos = {}, {}
         self._page_rows = []
         self.strip.set_overlays(())
+        self._cuts = None
+        self.strip.set_cut_lines(())
+        self.cuts_label.clear()
         self.preview.set_tiles((), 0, 0)
         self._rendered.clear()
         self._fill_table()
@@ -1149,6 +1260,7 @@ class StudioView(QWidget):
         done = self._session.undo() if step == "undo" else self._session.redo()
         self._issues, self._typos = {}, {}
         self._refresh()
+        self._show_cuts()
         self.run_check()
         self.status_label.setText(f"{step}: done" if done else f"nothing to {step}")
         if done:
@@ -1366,6 +1478,10 @@ class StudioView(QWidget):
         self.qa_button.setEnabled(is_open and free)
         self.brush_button.setEnabled(is_open and idle and bool(self._page_rows))
         self.take_back_button.setEnabled(is_open and idle and bool(self._strokes))
+        self.cuts_button.setEnabled(is_open and idle)
+        self.reset_cuts_button.setEnabled(
+            is_open and idle and self._cuts is not None and self._cuts.hand is not None
+        )
         self.prev_chapter_button.setEnabled(self.chapter_combo.currentIndex() > 0)
         self.next_chapter_button.setEnabled(
             self.chapter_combo.currentIndex() < self.chapter_combo.count() - 1

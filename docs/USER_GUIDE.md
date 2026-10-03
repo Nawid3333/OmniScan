@@ -1877,6 +1877,15 @@ issues. Click a box to jump to its row, or a row to jump to its box. Several row
   the brush radius in strip pixels; a stroke across two pages cleans the page under its middle. `Take back stroke`
   removes the last one cleaned here. Strokes are hand-cleanup patches (`cleanup.json`), the same as the web
   Studio's brush: export applies them after the automatic cleaning.
+- **Export** (the same row): `Output cuts` shows where the exported images split, as dashed lines across the strip;
+  a line that runs through a region's text or bubble is red, and the label next to it names those regions and
+  says how many images the cuts make. With it on, click the strip to add a cut, drag a line to move it and
+  right-click one to remove it; until you change them these are the slicer's cuts (one image per slice). With
+  `Snap to calm rows` a new or moved cut jumps into a uniform band within 60 rows, a clean place between panels.
+  `One image per slice` drops the hand-set cuts, and so does removing every cut. No image may be taller than
+  `slicer.hard_max_height`, so a change that would leave a taller one is refused. Every change is saved at once
+  as its own undo step (unsaved edits are saved first). These are the same `cuts` in `edits.json` as the web
+  Studio's Slicer view and `omniscan edit cuts`, and changing them never re-runs detection or OCR.
 - **Lettering…** sets the font, size, colour, outline, alignment, angle or hides the lettering of the selected
   regions. Only the styles you tick change, so one dialog can give twenty balloons the same size and leave their
   colours alone; *Give the lettering back to the typesetter* drops every hand-set style.

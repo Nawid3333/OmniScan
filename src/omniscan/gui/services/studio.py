@@ -1,5 +1,5 @@
 """Qt-free services behind the desktop Studio: translate, re-read or find regions now, render a page preview,
-re-read the finished pages, clean a brush stroke.
+re-read the finished pages, clean a brush stroke, read the output cuts.
 
 Each call is blocking (it waits on a model) and runs on a worker thread in the GUI; the view injects fakes
 in tests. Nothing here writes to the chapter's edits: suggestions and readings go into the Studio's session, where
@@ -22,6 +22,8 @@ from omniscan.cleanup import store as cleanup_store
 from omniscan.core.config import Config, SeriesConfigError, get_secrets, series_config
 from omniscan.core.paths import ChapterPaths, SeriesPaths, natural_key
 from omniscan.core.schemas import BBox, CleanupPatch, IngestArtifact, QaIssue
+from omniscan.edits import store as edit_store
+from omniscan.export.segments import cut_crossings
 from omniscan.qa.leftover import load_issues
 from omniscan.translate.on_demand import translate_now
 from omniscan.translate.profiles import default_profile_paths, load_profiles
@@ -34,6 +36,7 @@ if TYPE_CHECKING:
     from omniscan.detect.on_demand import Found
 
 PREVIEW_SCHEME = "preview"  # the pseudo paths of rendered preview tiles: preview/<page index>
+SNAP_ROWS = 60  # a new or moved output cut snaps into a uniform band this close (as in the web Studio)
 
 
 @dataclass(frozen=True, slots=True)
@@ -284,3 +287,49 @@ def clean_stroke(cfg: Config, paths: ChapterPaths, stroke: PageStroke, method: C
 def remove_patch(paths: ChapterPaths, patch_id: str) -> None:
     """Take a hand-cleanup patch back (cleanup.store.delete_patch)."""
     cleanup_store.delete_patch(paths, patch_id)
+
+
+@dataclass(frozen=True, slots=True)
+class CutsState:
+    """Where a chapter's exported images split."""
+
+    hand: list[int] | None  # the cuts set by hand (strip rows); None: one image per slice
+    auto: list[int]  # the slicer's own cuts (where its slices meet)
+    strip_height: int
+    bands: list[tuple[int, int]]  # the strip's uniform bands [y0, y1): calm places to cut
+    crossings: list[tuple[int, str]]  # (cut, region id) for every cut through a region's text or bubble
+
+    @property
+    def cuts(self) -> list[int]:
+        """The cuts the export applies: the ones set by hand, else the slicer's."""
+        return self.auto if self.hand is None else self.hand
+
+
+def load_cuts(paths: ChapterPaths) -> CutsState:
+    """The chapter's output cuts as the export applies them; edits.store.EditNotFoundError before slicing."""
+    slices = edit_store.load_slices(paths)
+    hand = edit_store.load_edits(paths).cuts
+    auto = [piece.y0 for piece in slices.slices[1:]]
+    return CutsState(
+        hand=hand,
+        auto=auto,
+        strip_height=slices.strip_height,
+        bands=[(band.y0, band.y1) for band in slices.bands],
+        crossings=cut_crossings(auto if hand is None else hand, edit_store.current_regions(paths)),
+    )
+
+
+def cut_max_height(cfg: Config, paths: ChapterPaths) -> int:
+    """The tallest image the output cuts may leave (the series' slicer.hard_max_height)."""
+    return _series_cfg(cfg, paths).slicer.hard_max_height
+
+
+def snap_to_band(row: int, bands: Sequence[tuple[int, int]], max_distance: int = SNAP_ROWS) -> int:
+    """`row` moved to the middle of the nearest uniform band within `max_distance` rows (a clean place to cut,
+    between panels); `row` itself when no band is that close."""
+    best, best_distance = row, max_distance
+    for y0, y1 in bands:
+        distance = y0 - row if row < y0 else row - (y1 - 1) if row >= y1 else 0
+        if distance <= best_distance:
+            best, best_distance = (y0 + y1 + 1) // 2, distance
+    return best
