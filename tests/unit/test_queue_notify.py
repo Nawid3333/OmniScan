@@ -182,4 +182,7 @@ def test_a_failed_webhook_never_logs_its_secret(handler, caplog: pytest.LogCaptu
         notifier("job_done", make_job())
 
     assert "SECRET-TOKEN" not in caplog.text and "123456" not in caplog.text
-    assert "https://discord.com/" in caplog.text
+    (record,) = caplog.records
+    assert (
+        isinstance(record.args, tuple) and record.args[0] == "https://discord.com/…"
+    )  # the host is still named
