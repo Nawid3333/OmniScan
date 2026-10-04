@@ -7,7 +7,7 @@ far; and the runner that downloads the GPU runtime without a console window, eac
 from __future__ import annotations
 
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from omniscan.core.config import Config
@@ -39,13 +39,14 @@ def time_left(done: int, total: int, elapsed_s: float) -> float | None:
     return max(0.0, (total - done) * elapsed_s / done)
 
 
-def quiet_runner(on_line: Callable[[str], None]) -> Callable[[list[str]], int]:
+def quiet_runner(on_line: Callable[[str], None]) -> Callable[[list[str], Mapping[str, str]], int]:
     """A `runtime.install` runner for the desktop app: no console window, each non-empty output line to
     `on_line`; returns the exit code."""
 
-    def run(command: list[str]) -> int:
+    def run(command: list[str], env: Mapping[str, str]) -> int:
         with subprocess.Popen(
             command,
+            env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,

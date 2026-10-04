@@ -1832,7 +1832,9 @@ downloads:
   slowly on a machine without a GPU.
 - **The GPU runtime.** The PyTorch build for your graphics card (`cuda` for NVIDIA, `rocm-gfx1201` for the AMD
   RX 9070 series on Windows, `xpu` for Intel Arc / Core Ultra) is a download of up to a few GB, so it is not in
-  the installer. The wizard's first step finds the card (also without a GPU build, from the OS's own list) and
+  the installer. Each backend gets the PyTorch version `uv.lock` pins for it; NVIDIA on Windows gets the CUDA 13.0
+  build (PyTorch's CUDA 12.9 index has no Windows wheels), which needs an NVIDIA driver from the 580 series on.
+  The wizard's first step finds the card (also without a GPU build, from the OS's own list) and
   downloads its build with the bundled `uv` into a per-user folder (`%LOCALAPPDATA%\OmniScan\runtime` on
   Windows, `~/Library/Application Support/OmniScan/runtime` on macOS, `~/.local/share/omniscan/runtime` on
   Linux; `$OMNISCAN_RUNTIME_DIR` overrides it). The next start of OmniScan loads PyTorch from there; then

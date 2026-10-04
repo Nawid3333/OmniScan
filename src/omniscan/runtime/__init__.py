@@ -4,7 +4,7 @@ start instead of shipped in the installer.
 The installer carries the CPU build of torch, so the app runs on every PC from the first start, and stays small.
 `install` uses the `uv` that ships next to the programs to download the build the hardware asks for (cuda for
 NVIDIA, rocm-gfx1201 for the RX 9070 series on Windows, xpu for Intel Arc / Core Ultra, mps on Apple Silicon) into a
-per-user folder, at the same torch version the app was built with, and marks it active. `activate` — the first
+per-user folder, at the torch version `uv.lock` pins for that backend, and marks it active. `activate` — the first
 thing the packaged programs do — then makes `torch` and `torchvision` load from that folder instead of the bundled
 CPU copy, and puts the folder on the import path for the packages they brought along (ROCm's SDK, Intel's
 runtime). A checkout picks its torch with `uv sync --extra <backend>` and never activates a runtime.
@@ -12,7 +12,6 @@ runtime). A checkout picks its torch with `uv sync --extra <backend>` and never 
 
 from __future__ import annotations
 
-import importlib.abc
 import importlib.machinery
 import importlib.metadata
 import os
@@ -20,7 +19,7 @@ import platform
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -40,6 +39,19 @@ INDEXES: dict[TorchExtra, str | None] = {
     "xpu": "https://download.pytorch.org/whl/xpu",
     "mps": None,
     "rocm-gfx1201": "https://stable.repo.amd.com/rocm/whl-next/",
+}
+# where an OS needs another index than uv.lock's: cu129 has no Windows wheels of the locked torch, cu130 has them
+# (same version; it needs an NVIDIA driver from the 580 series on)
+OS_INDEXES: dict[tuple[str, TorchExtra], str] = {("win32", "cuda"): "https://download.pytorch.org/whl/cu130"}
+# the torch and torchvision each backend installs: the versions uv.lock pins for its extra (a test keeps them
+# equal), so a runtime is the build the project tests with. The mps wheels are PyPI's macOS wheels, the same
+# release as the CPU index's.
+VERSIONS: dict[TorchExtra, tuple[str, str]] = {
+    "cpu": ("2.14.0", "0.29.0"),
+    "cuda": ("2.13.0", "0.28.0"),
+    "xpu": ("2.14.0", "0.29.0"),
+    "mps": ("2.14.0", "0.29.0"),
+    "rocm-gfx1201": ("2.13.0", "0.28.0"),
 }
 _PLATFORMS = {  # uv's --python-platform per (sys.platform, machine)
     ("win32", "amd64"): "x86_64-pc-windows-msvc",
@@ -92,21 +104,13 @@ def recommend(hw: HardwareInfo) -> Recommendation:
 
 
 def requirements(backend: TorchExtra) -> list[str]:
-    """What to install for `backend`: torch and torchvision at the versions the app was built with (the release
-    without its local `+cpu` tag, which the backend's index carries with its own)."""
-    if backend not in INDEXES:
-        raise RuntimeSetupError(f"unknown backend {backend!r} (one of {', '.join(INDEXES)})")
-    versions = {name: _base_version(name) for name in ("torch", "torchvision")}
+    """What to install for `backend`: torch and torchvision at the versions uv.lock pins for it (without the local
+    `+cu129` tag, which the backend's index adds)."""
+    if backend not in VERSIONS:
+        raise RuntimeSetupError(f"unknown backend {backend!r} (one of {', '.join(VERSIONS)})")
+    torch, torchvision = VERSIONS[backend]
     extra = "[device-gfx1201]" if backend == "rocm-gfx1201" else ""
-    return [f"{name}{extra}=={version}" for name, version in versions.items()]
-
-
-def _base_version(package: str) -> str:
-    """The installed version of `package` without its local tag (2.13.0+cpu -> 2.13.0)."""
-    try:
-        return importlib.metadata.version(package).split("+", 1)[0]
-    except importlib.metadata.PackageNotFoundError as exc:
-        raise RuntimeSetupError(f"{package} is not installed in this app") from exc
+    return [f"torch{extra}=={torch}", f"torchvision{extra}=={torchvision}"]
 
 
 def find_uv() -> Path | None:
@@ -133,25 +137,42 @@ def install_command(uv: Path, backend: TorchExtra, target: Path) -> list[str]:
         "install",
         "--target",
         str(target),
+        "--no-config",  # no uv.toml / pyproject.toml of the current folder or the user may change the indexes
         "--python-version",
         f"{sys.version_info.major}.{sys.version_info.minor}",
         "--python-platform",
         _PLATFORMS[key],
     ]
-    index = INDEXES[backend]
-    if index is not None:
-        command += ["--index-url", index, "--extra-index-url", PYPI]
+    index = OS_INDEXES.get((sys.platform, backend), INDEXES[backend])
+    if index is not None:  # an extra index comes first: torch from the backend's index, the rest from PyPI
+        command += ["--index-url", PYPI, "--extra-index-url", index]
     return [*command, *requirements(backend)]
 
 
+def install_env(*, system: str | None = None, mac_version: str | None = None) -> dict[str, str]:
+    """The environment for the uv command. On macOS it targets this Mac's version: uv assumes macOS 13 otherwise,
+    and the torch wheels need 14."""
+    env = dict(os.environ)
+    if (system or sys.platform) == "darwin":
+        release = (mac_version if mac_version is not None else platform.mac_ver()[0]).split(".")
+        if release[0]:
+            env["MACOSX_DEPLOYMENT_TARGET"] = ".".join([*release, "0"][:2])
+    return env
+
+
 def folder_name(backend: TorchExtra) -> str:
-    """The runtime's folder name: backend and torch version (a new app version brings its own)."""
-    return f"{backend}-torch{_base_version('torch')}"
+    """The runtime's folder name: backend and torch version (an app pinning another version brings its own)."""
+    if backend not in VERSIONS:
+        raise RuntimeSetupError(f"unknown backend {backend!r} (one of {', '.join(VERSIONS)})")
+    return f"{backend}-torch{VERSIONS[backend][0]}"
 
 
-def install(
-    backend: TorchExtra, *, root: Path | None = None, run: Callable[[list[str]], int] | None = None
-) -> Path:
+Runner = Callable[
+    [list[str], Mapping[str, str]], int
+]  # runs a command in an environment, returns its exit code
+
+
+def install(backend: TorchExtra, *, root: Path | None = None, run: Runner | None = None) -> Path:
     """Download `backend`'s torch into the runtime folder and make it the active runtime; returns the folder.
     `run` runs the uv command and returns its exit code (default: show its output). RuntimeSetupError when uv is
     missing or the download fails (nothing is left half-installed)."""
@@ -163,7 +184,7 @@ def install(
     partial = target.with_name(target.name + ".partial")
     shutil.rmtree(partial, ignore_errors=True)
     command = install_command(uv, backend, partial)
-    code = (run or _show)(command)
+    code = (run or _show)(command, install_env())
     if code != 0:
         shutil.rmtree(partial, ignore_errors=True)
         raise RuntimeSetupError(f"downloading the {backend} runtime failed (uv exit code {code})")
@@ -173,9 +194,9 @@ def install(
     return target
 
 
-def _show(command: list[str]) -> int:
-    """Run `command` with its output on this console; its exit code."""
-    return subprocess.run(command, check=False).returncode
+def _show(command: list[str], env: Mapping[str, str]) -> int:
+    """Run `command` in `env` with its output on this console; its exit code."""
+    return subprocess.run(command, env=env, check=False).returncode
 
 
 def use(name: str | None, *, root: Path | None = None) -> None:
@@ -221,9 +242,10 @@ def active(root: Path | None = None) -> Path | None:
     return root / name if name in installed(root) else None
 
 
-class _RuntimeFinder(importlib.abc.MetaPathFinder):
+class _RuntimeFinder(importlib.metadata.DistributionFinder):
     """Serves the overridden packages (torch, torchvision, …) and their submodules from the runtime folder, ahead
-    of the bundled copies."""
+    of the bundled copies, and their metadata too: `importlib.metadata.version("torch")` (which transformers
+    checks) reports the torch that runs, not the bundled one."""
 
     def __init__(self, folder: Path, names: frozenset[str]) -> None:
         self.folder = folder
@@ -237,6 +259,16 @@ class _RuntimeFinder(importlib.abc.MetaPathFinder):
             return None
         search = [str(self.folder)] if "." not in fullname or path is None else list(path)
         return importlib.machinery.PathFinder.find_spec(fullname, search, target)
+
+    def find_distributions(
+        self, context: importlib.metadata.DistributionFinder.Context | None = None
+    ) -> Iterable[importlib.metadata.Distribution]:
+        """The runtime's metadata for an overridden package, else none (the other finders decide)."""
+        name = context.name if context is not None else None
+        if name is None or name.replace("-", "_").lower() not in self.names:
+            return ()
+        here = importlib.metadata.DistributionFinder.Context(name=name, path=[str(self.folder)])
+        return importlib.metadata.MetadataPathFinder.find_distributions(here)
 
 
 def activate(root: Path | None = None) -> Path | None:

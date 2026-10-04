@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import tomllib
 from pathlib import Path
@@ -45,11 +46,6 @@ def test_time_left_needs_a_rate_first() -> None:
 def test_the_quiet_runner_reports_each_line_and_the_exit_code() -> None:
     lines: list[str] = []
     run = setup.quiet_runner(lines.append)
-    code = run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; print('Resolved 2 packages', flush=True); print(flush=True); print('oops', file=sys.stderr); sys.exit(3)",
-        ]
-    )
+    script = "import sys; print('Resolved 2 packages', flush=True); print(flush=True); print('oops', file=sys.stderr); sys.exit(3)"
+    code = run([sys.executable, "-c", script], os.environ)
     assert code == 3 and lines == ["Resolved 2 packages", "oops"]

@@ -6,6 +6,8 @@ import json
 import subprocess
 import sys
 import textwrap
+import tomllib
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
@@ -92,29 +94,81 @@ def test_the_recommendation_uses_the_os_cards_when_torch_sees_none(monkeypatch: 
 # ---------------------------------------------------------------- installing and choosing runtimes
 
 
-def test_the_download_asks_for_this_apps_torch_from_the_backends_index(tmp_path: Path) -> None:
-    import importlib.metadata
+def test_each_backend_installs_the_torch_uv_lock_pins_for_it() -> None:
+    """The runtime is the build the project tests with: VERSIONS follows uv.lock's torch per backend index."""
+    lock = tomllib.loads((Path(__file__).resolve().parents[2] / "uv.lock").read_text(encoding="utf-8"))
+    locked: dict[tuple[str, str], set[str]] = {}
+    for package in lock["package"]:
+        registry = package.get("source", {}).get("registry")
+        if package["name"] in ("torch", "torchvision") and registry:
+            locked.setdefault((package["name"], registry), set()).add(package["version"].split("+")[0])
+    for backend, (torch, torchvision) in runtime.VERSIONS.items():
+        index = (
+            runtime.INDEXES[backend] or runtime.INDEXES["cpu"]
+        )  # mps: PyPI's macOS wheels, the CPU index's
+        assert index is not None
+        assert locked[("torch", index)] == {torch}, backend
+        assert locked[("torchvision", index)] == {torchvision}, backend
 
-    torch_version = importlib.metadata.version("torch").split("+")[0]
-    assert runtime.requirements("cuda")[0] == f"torch=={torch_version}"
-    assert runtime.requirements("rocm-gfx1201")[0] == f"torch[device-gfx1201]=={torch_version}"
-    with pytest.raises(runtime.RuntimeSetupError, match="unknown backend"):
-        runtime.requirements("tpu")  # type: ignore[arg-type]
+
+def test_the_download_asks_for_the_locked_torch_from_the_backends_index_first(tmp_path: Path) -> None:
+    assert runtime.requirements("cuda") == [
+        f"torch=={runtime.VERSIONS['cuda'][0]}",
+        f"torchvision=={runtime.VERSIONS['cuda'][1]}",
+    ]
+    assert (
+        runtime.requirements("rocm-gfx1201")[0]
+        == f"torch[device-gfx1201]=={runtime.VERSIONS['rocm-gfx1201'][0]}"
+    )
+    assert runtime.folder_name("cuda") == f"cuda-torch{runtime.VERSIONS['cuda'][0]}"
+    for bad in (runtime.requirements, runtime.folder_name):
+        with pytest.raises(runtime.RuntimeSetupError, match="unknown backend"):
+            bad("tpu")  # type: ignore[arg-type]
     command = runtime.install_command(Path("uv"), "cuda", tmp_path / "t")
     assert command[:5] == ["uv", "pip", "install", "--target", str(tmp_path / "t")]
     assert (
         command[command.index("--python-version") + 1] == f"{sys.version_info.major}.{sys.version_info.minor}"
     )
-    assert command[command.index("--index-url") + 1] == "https://download.pytorch.org/whl/cu129"
-    assert command[command.index("--extra-index-url") + 1] == runtime.PYPI
-    assert "--index-url" not in runtime.install_command(Path("uv"), "mps", tmp_path / "t")  # PyPI itself
+    # uv asks an --extra-index-url before the --index-url: the backend's torch, not PyPI's (CPU on Windows,
+    # CUDA on Linux), whose plain version would match the pin too
+    expected = runtime.OS_INDEXES.get((sys.platform, "cuda"), runtime.INDEXES["cuda"])
+    assert command[command.index("--extra-index-url") + 1] == expected
+    assert command[command.index("--index-url") + 1] == runtime.PYPI
+    mps = runtime.install_command(Path("uv"), "mps", tmp_path / "t")
+    assert "--extra-index-url" not in mps  # PyPI itself
+    assert "--no-config" in command  # a uv.toml or pyproject.toml where the app starts changes nothing
+
+
+def test_nvidia_on_windows_downloads_from_the_index_with_windows_wheels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr("platform.machine", lambda: "AMD64")
+    command = runtime.install_command(Path("uv"), "cuda", tmp_path / "t")
+    assert command[command.index("--extra-index-url") + 1] == "https://download.pytorch.org/whl/cu130"
+    assert command[command.index("--python-platform") + 1] == "x86_64-pc-windows-msvc"
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr("platform.machine", lambda: "x86_64")
+    linux = runtime.install_command(Path("uv"), "cuda", tmp_path / "t")
+    assert linux[linux.index("--extra-index-url") + 1] == runtime.INDEXES["cuda"]  # uv.lock's cu129
+
+
+def test_a_mac_downloads_for_its_own_macos_version() -> None:
+    def target(**kwargs: str) -> str | None:
+        return runtime.install_env(**kwargs).get("MACOSX_DEPLOYMENT_TARGET")
+
+    assert target(system="darwin", mac_version="15.3.1") == "15.3"  # uv would assume 13.0; torch needs 14
+    assert target(system="darwin", mac_version="26") == "26.0"
+    assert target(system="darwin", mac_version="") is None
+    assert target(system="win32", mac_version="15.3") is None
 
 
 def test_install_use_remove(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(runtime, "find_uv", lambda: Path("uv"))
     commands: list[list[str]] = []
 
-    def download(command: list[str]) -> int:
+    def download(command: list[str], env: Mapping[str, str]) -> int:
+        assert "PATH" in env or "Path" in env  # the user's environment, plus the macOS target there
         commands.append(command)
         target = Path(command[command.index("--target") + 1])
         (target / "torch").mkdir(parents=True)
@@ -126,7 +180,7 @@ def test_install_use_remove(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     assert commands[0][commands[0].index("--target") + 1].endswith(".partial")
 
     with pytest.raises(runtime.RuntimeSetupError, match="exit code 3"):
-        runtime.install("cuda", root=tmp_path, run=lambda command: 3)
+        runtime.install("cuda", root=tmp_path, run=lambda command, env: 3)
     assert runtime.installed(tmp_path) == [folder.name]  # nothing half-installed
 
     runtime.use(None, root=tmp_path)
@@ -152,10 +206,20 @@ def test_install_use_remove(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_an_active_runtime_wins_over_the_bundled_torch(tmp_path: Path) -> None:
-    """In a fresh interpreter: a "bundled" torch first on the path, the runtime's own one served instead."""
+    """In a fresh interpreter: a "bundled" torch first on the path, the runtime's own one served instead, and
+    its metadata (the version that runs)."""
     bundled = tmp_path / "bundle" / "torch"
     bundled.mkdir(parents=True)
     (bundled / "__init__.py").write_text('WHERE = "bundled"\n', encoding="utf-8")
+    for folder, version in (
+        (tmp_path / "bundle", "2.14.0+cpu"),
+        (tmp_path / "runtime" / "cuda-torch2", "2.13.0+cu129"),
+    ):
+        info = folder / f"torch-{version}.dist-info"
+        info.mkdir(parents=True)
+        (info / "METADATA").write_text(
+            f"Metadata-Version: 2.1\nName: torch\nVersion: {version}\n", encoding="utf-8"
+        )
     root = tmp_path / "runtime"
     served = root / "cuda-torch2" / "torch"
     (served / "cuda").mkdir(parents=True)
@@ -170,8 +234,10 @@ def test_an_active_runtime_wins_over_the_bundled_torch(tmp_path: Path) -> None:
         from omniscan.runtime import activate
         from pathlib import Path
         print(activate(Path({str(root)!r})).name)
+        import importlib.metadata
         import torch, torch.cuda, helper_pkg
         print(torch.WHERE, "|", torch.cuda.WHERE, "|", helper_pkg.WHERE)
+        print(importlib.metadata.version("torch"))
         """
     )
     src = str(Path(runtime.__file__).resolve().parents[2])
@@ -183,7 +249,11 @@ def test_an_active_runtime_wins_over_the_bundled_torch(tmp_path: Path) -> None:
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert result.stdout.splitlines() == ["cuda-torch2", "runtime | runtime cuda | brought along"]
+    assert result.stdout.splitlines() == [
+        "cuda-torch2",
+        "runtime | runtime cuda | brought along",
+        "2.13.0+cu129",  # not the bundled 2.14.0+cpu
+    ]
 
 
 def test_the_install_command_is_for_the_packaged_app(monkeypatch: pytest.MonkeyPatch) -> None:
