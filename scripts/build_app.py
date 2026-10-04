@@ -3,18 +3,22 @@
     uv run --with pyinstaller python scripts/build_app.py [--out dist] [--no-zip] [--smoke]
 
 Writes `dist/omniscan/` (the folder a user unzips: `OmniScan` the desktop app, `omniscan` the command line,
-`config/`, `fonts/`, the web UI when `webui/dist` was built) and `dist/omniscan-<os>-<arch>.zip`, the asset
-name `omniscan update` looks for in a release. `--smoke` runs the packaged command line (`--help`,
-`hardware --simulate cpu-laptop`) before zipping, so a bundle that cannot start never becomes a release.
+`uv` for the GPU runtime download, `config/`, `fonts/`, the web UI when `webui/dist` was built) and
+`dist/omniscan-<os>-<arch>.zip`, the asset name `omniscan update` looks for in a release. `--smoke` runs the
+packaged command line (`--help`, `hardware --simulate cpu-laptop`, and a CPU runtime download into a temporary
+folder that the next start must import torch from) before zipping, so a bundle that cannot start never becomes a
+release.
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import platform
 import shutil
 import subprocess
 import sys
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -70,6 +74,14 @@ def copy_data(bundle: Path) -> None:
         shutil.copytree(webui, target)
 
 
+def copy_uv(bundle: Path) -> None:
+    """Put the uv of the build machine next to the programs: `omniscan runtime install` downloads with it."""
+    found = shutil.which("uv")
+    if found is None:
+        raise SystemExit("uv is not on PATH: the bundle needs it for the GPU runtime download")
+    shutil.copy2(found, bundle / Path(found).name)
+
+
 def program(bundle: Path, name: str) -> Path:
     """The packaged program's path on this OS."""
     return bundle / (f"{name}.exe" if sys.platform == "win32" else name)
@@ -89,6 +101,22 @@ def smoke(bundle: Path) -> None:
                 f"smoke test failed: omniscan {' '.join(args)}\n{result.stdout}\n{result.stderr}"
             )
         print(f"smoke ok: omniscan {' '.join(args)} ({len(result.stdout)} bytes)")
+    with tempfile.TemporaryDirectory() as runtime_dir:  # the runtime download, and torch loading from it
+        env = {**os.environ, "OMNISCAN_RUNTIME_DIR": runtime_dir}
+        for args in (["runtime", "install", "--backend", "cpu"], ["runtime", "status"]):
+            result = subprocess.run([str(cli), *args], capture_output=True, text=True, timeout=1800, env=env)
+            if result.returncode != 0:
+                raise SystemExit(
+                    f"smoke test failed: omniscan {' '.join(args)}\n{result.stdout}\n{result.stderr}"
+                )
+            print(f"smoke ok: omniscan {' '.join(args)}\n{result.stdout}")
+        if (
+            f"from {Path(runtime_dir).resolve()}" not in result.stdout
+            and f"from {runtime_dir}" not in result.stdout
+        ):
+            raise SystemExit(
+                f"smoke test failed: torch did not load from the runtime folder\n{result.stdout}"
+            )
 
 
 def zip_bundle(bundle: Path, out: Path) -> Path:
@@ -113,6 +141,7 @@ def main(argv: list[str] | None = None) -> int:
     out.mkdir(parents=True, exist_ok=True)
     bundle = run_pyinstaller(out)
     copy_data(bundle)
+    copy_uv(bundle)
     if args.smoke:
         smoke(bundle)
     if args.no_zip:

@@ -86,14 +86,18 @@ Each one ends in something a user can run. Card IDs follow the existing scheme (
   need one backend).
 
 ### X2 — Installers and first run
-- Built so far (2026-10-02): `build.yml` packages the desktop app and the CLI with PyInstaller for Windows,
-  macOS and Linux (`omniscan-<os>-<arch>.zip`, smoke-tested, attached to releases with a SHA256SUMS), carrying
-  the `cpu` torch so it runs on any PC; the first start opens a setup checklist (hardware plan with *Optimise
-  for this PC* = `omniscan tune --apply`, models, Ollama).
-- Next: the GPU runtime on demand — a bundled `uv` installs the backend extra `omniscan tune` names into a
-  per-user runtime folder (`uv pip install --target … --python-version 3.14 --python-platform …` needs no
-  interpreter; verified), and the app puts that folder first on `sys.path`. Then signed installers (`.exe`
-  setup, `.dmg`, AppImage; questions B4/B8/B11), model downloads from the checklist, and a data-folder picker.
+- Built (2026-10-04, #44): `build.yml` packages the desktop app and the CLI with PyInstaller for Windows, macOS and
+  Linux (`omniscan-<os>-<arch>.zip`, smoke-tested) and builds an installer from each (`scripts/build_installer.py`:
+  an Inno Setup `.exe` installed per user, a `.dmg`, an AppImage; each installed or mounted and its command line
+  run in CI); releases carry all of them with a SHA256SUMS. The builds carry the `cpu` torch. The GPU runtime
+  comes on demand: the bundled `uv` downloads the backend `omniscan tune` names into a per-user runtime folder
+  (`uv pip install --target … --python-version 3.14 --python-platform …`), and the launchers load torch from it
+  (`omniscan.runtime`, `omniscan runtime status|install|use|remove`); the card is found from the OS's own list
+  (`hw/os_gpus.py`) while the bundled torch sees none. The first-run wizard has five steps: this PC (plan, GPU
+  runtime), data folder, required models with the time left, translation (Ollama or another provider), sharing
+  and your name.
+- Next: code signing (questions B8), a clean-machine check on each OS (install, wizard, the synthetic chapter),
+  and an Intel / Apple GPU run of the `gpu` tests (#39).
 
 ### X3 — Translator Studio (the manual workbench)
 Built so far (2026-09-27): the Studio page with region boxes over the raw strip, editable source and English,

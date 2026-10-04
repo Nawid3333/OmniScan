@@ -1811,28 +1811,51 @@ cover saved: ~/omniscan/library/Solo Leveling/_meta/cover.jpg (anilist)
 
 ## Installing the packaged app
 
-Every release and every build of `main` produces one zip per platform — `omniscan-windows-x64.zip`,
-`omniscan-macos-arm64.zip`, `omniscan-linux-x64.zip` (the `build` workflow; `scripts/build_app.py` makes the
-same zip on your own PC with `uv run --with pyinstaller python scripts/build_app.py --smoke`). Unzip it anywhere:
-the folder holds **`OmniScan`** (the desktop app; `OmniScan.exe` on Windows, double-click it), **`omniscan`**
-(the command line, the same commands this guide describes), and the `config/` and `fonts/` folders. No Python,
-no `uv`, no Node is needed.
+Every release and every build of `main` produces an installer and a zip per platform (the `build` workflow):
 
-What the packaged app contains and what it does not:
+| OS | Installer | Zip (the same app, unzip anywhere) |
+|---|---|---|
+| Windows | `OmniScan-Setup-windows-x64.exe`: installs for your user only (no admin), with Start-menu and optional desktop shortcuts and an uninstaller | `omniscan-windows-x64.zip` |
+| macOS | `OmniScan-macos-arm64.dmg`: open it and drag the folder to Applications | `omniscan-macos-arm64.zip` |
+| Linux | `OmniScan-linux-x64.AppImage`: make it executable and run it; `--cli ARGS` runs the command line | `omniscan-linux-x64.zip` |
 
-- It runs on any PC: the build carries the CPU build of PyTorch, so every stage works everywhere, slowly on a
-  machine without a GPU. On first start open **Settings → Hardware** and press **Optimise for this PC** (or run
-  `omniscan tune --apply`): it sets the device, memory budget, OCR engine, batch sizes and the LaMa default to
-  what the machine can do.
-- GPU acceleration needs the matching PyTorch build (`omniscan tune` names it: `cuda`, `rocm-gfx1201`, `xpu`
-  or `mps`). Today that still means the developer install (`uv sync --extra <name> --extra gui`, see
-  "Requirements" in the README); downloading the GPU runtime into the packaged app on first start is the next
-  packaging step (`docs/ROADMAP.md`, X2).
-- Ollama (local or cloud) is still installed separately for translation; `omniscan doctor` says whether it is
-  reachable. The OCR, detection and inpainting models download on first use or with `omniscan models
-  download --required` (Models page).
-- The builds are not code-signed yet: Windows SmartScreen and macOS Gatekeeper warn on first start
-  ("More info → Run anyway"; on macOS right-click → Open, or `xattr -dr com.apple.quarantine OmniScan`).
+The app folder holds **`OmniScan`** (the desktop app; `OmniScan.exe` on Windows), **`omniscan`** (the command
+line, the same commands this guide describes), `uv` (for the GPU runtime download), and the `config/` and
+`fonts/` folders. No Python and no Node is needed. To build them on your own PC:
+`uv run --with pyinstaller python scripts/build_app.py --smoke`, then `python scripts/build_installer.py --smoke`
+(Windows needs Inno Setup 6).
+
+The first start opens the **setup wizard** (see "Desktop app" below). What the packaged app brings and what it
+downloads:
+
+- It runs on any PC from the first start: it carries the CPU build of PyTorch, so every stage works everywhere,
+  slowly on a machine without a GPU.
+- **The GPU runtime.** The PyTorch build for your graphics card (`cuda` for NVIDIA, `rocm-gfx1201` for the AMD
+  RX 9070 series on Windows, `xpu` for Intel Arc / Core Ultra) is a download of up to a few GB, so it is not in
+  the installer. Each backend gets the PyTorch version `uv.lock` pins for it; NVIDIA on Windows gets the CUDA 13.0
+  build (PyTorch's CUDA 12.9 index has no Windows wheels), which needs an NVIDIA driver from the 580 series on.
+  The wizard's first step finds the card (also without a GPU build, from the OS's own list) and
+  downloads its build with the bundled `uv` into a per-user folder (`%LOCALAPPDATA%\OmniScan\runtime` on
+  Windows, `~/Library/Application Support/OmniScan/runtime` on macOS, `~/.local/share/omniscan/runtime` on
+  Linux; `$OMNISCAN_RUNTIME_DIR` overrides it). The next start of OmniScan loads PyTorch from there; then
+  **Optimise for this PC** (Settings → Hardware, or `omniscan tune --apply`) sets the device, memory budget, OCR
+  engine and batch sizes for the card. On Apple Silicon the bundled build already runs on the GPU (`mps`).
+  The same from the command line:
+
+  ```bash
+  omniscan runtime status                    # which PyTorch runs now, the runtimes installed, what this PC needs
+  omniscan runtime install                   # download the build this PC needs (--backend cuda|rocm-gfx1201|xpu|cpu)
+  omniscan runtime use bundled               # back to the CPU build shipped with the app (or: use <folder name>)
+  omniscan runtime remove <folder name>      # delete a downloaded runtime
+  ```
+
+  A source checkout never uses a runtime folder: it picks its PyTorch with `uv sync --extra <backend>`.
+- The OCR, detection and inpainting models download from the wizard's Models step (with the time left), the
+  Models page, `omniscan models download --required`, or on first use.
+- Ollama (local or cloud) is installed separately for the default translator; the wizard says whether it
+  answers, and Settings → Translation takes another model or an OpenAI / Anthropic API key instead.
+- The builds are not code-signed yet (docs/OPEN_QUESTIONS.md B8): Windows SmartScreen and macOS Gatekeeper warn on
+  first start ("More info → Run anyway"; on macOS right-click → Open, or `xattr -dr com.apple.quarantine OmniScan`).
 
 ## Desktop app
 
@@ -1845,9 +1868,21 @@ uv run omniscan gui          # or: uv run python -m omniscan.gui
 
 Without the extra installed the command prints one line naming the extra and exits 2.
 
-The first start opens a **setup checklist** (also Settings → Hardware → `Setup checklist…`): what the PC offers
-and the tuning plan for it with `Optimise for this PC` (the same as `omniscan tune --apply`), a button to the
-Models page for the required downloads, and whether Ollama answers. Nothing is changed without a click.
+The first start opens the **setup wizard** (also Settings → Hardware → `Setup wizard…`). Its five steps, each
+of which can be skipped (Close stops at any step; nothing is written without a click):
+
+1. **This PC**: the processor, memory and graphics card, and the tuning plan with `Optimise for this PC` (the
+   same as `omniscan tune --apply`). In the packaged app, a card that needs another PyTorch build gets a
+   `Download the GPU runtime` button (see "Installing the packaged app"); its plan shows after the restart, so
+   the plan never pins the processor while the card waits for its build.
+2. **Data folder**: one folder for the library, work and output folders (`<folder>/library`, `work`, `output`),
+   and with `Keep the AI models there too` the models (`models`). `Use this folder` writes `paths.*`.
+3. **Models**: the required models still missing, with their size; `Download required models` shows the overall
+   progress and the time left; `Open the Models page` for the rest.
+4. **Translation**: whether Ollama answers (`Check again`), and `Use another model or an API key…` to Settings →
+   Translation.
+5. **Sharing and you**: sharing your hand corrections, stated plainly and on by default (untick to opt this PC
+   out, `share.enabled`), and your name for group work (`user.name`, optional). `Finish` writes them.
 
 The window has nine pages in the left sidebar (also `Ctrl+1`…`Ctrl+9`; Quick mode hides Models, Studio, Queue and Glossary). The status bar shows the
 configured GPU device and the job state; window size and the last open page are remembered across
@@ -1926,7 +1961,7 @@ plain name and one help line; hover the name for its config key (e.g. `gpu.devic
 - **Appearance** — OLED black (default) or light theme, the accent colour, and Quick / Standard / Pro mode.
 - **Hardware** — the machine snapshot from `hw detect`, the tuning plan for it (`omniscan tune`) with
   `Optimise for this PC`, which writes the plan's device, memory budget, OCR engine, batch sizes and LaMa
-  default to the config, `Setup checklist…` (the first-start dialog), plus one row per catalog model that does
+  default to the config, `Setup wizard…` (the first-run wizard), plus one row per catalog model that does
   not fit (level, device, why). Detection runs when you open the tab (it imports torch) or on `Re-detect`.
 
 A successful settings write reloads the config into every page (the Library re-scans, the Run page

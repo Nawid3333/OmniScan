@@ -157,5 +157,5 @@ def test_the_welcome_dialog_shows_once(qapp: QApplication, cfg: Config, tmp_path
     assert qsettings.value("welcome/shown", False, type=bool) is True
     again = _window(cfg, qsettings)
     assert again.welcome_dialog is None
-    again.settings_view.welcome_requested.emit()  # Settings → Hardware → Setup checklist…
+    again.settings_view.welcome_requested.emit()  # Settings → Hardware → Setup wizard…
     assert again.welcome_dialog is not None and again.welcome_dialog.isVisible()
