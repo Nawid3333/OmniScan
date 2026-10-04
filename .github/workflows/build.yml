@@ -1,10 +1,13 @@
 # build: the packaged desktop app for every OS (scripts/build_app.py: PyInstaller, one folder with the
-# desktop app and the command line, config and fonts next to them, one zip per platform).
+# desktop app and the command line, config and fonts next to them, one zip per platform), and the installer
+# built from it (scripts/build_installer.py: an Inno Setup .exe on Windows, a .dmg on macOS, an AppImage on Linux).
 #
 # Runs on every push to main and every pull request that touches the app, and by hand. Each build is
-# smoke-tested (the packaged command line starts and plans for a simulated machine) before it is zipped,
-# and the zips are uploaded as workflow artifacts; release.yml attaches the same zips to a release. The
-# builds carry the `cpu` torch backend: they run on every PC, and `omniscan tune` names the GPU extra.
+# smoke-tested (the packaged command line starts, plans for a simulated machine, downloads the CPU runtime with
+# its bundled uv and then imports torch from it) before it is zipped; each installer is installed (or mounted)
+# and its command line run. Zips and installers are uploaded as workflow artifacts; release.yml attaches them to
+# a release. The builds carry the `cpu` torch backend: they run on every PC, and `omniscan runtime install`
+# downloads the GPU build the hardware needs.
 
 name: build
 
@@ -15,6 +18,7 @@ on:
       - "src/**"
       - "packaging/**"
       - "scripts/build_app.py"
+      - "scripts/build_installer.py"
       - "config/**"
       - "fonts/**"
       - "pyproject.toml"
@@ -24,6 +28,8 @@ on:
     paths:
       - "packaging/**"
       - "scripts/build_app.py"
+      - "scripts/build_installer.py"
+      - "src/omniscan/runtime/**"
       - ".github/workflows/build.yml"
   workflow_dispatch:
   workflow_call:
@@ -75,5 +81,21 @@ jobs:
         with:
           name: omniscan-${{ matrix.key }}
           path: dist/omniscan-${{ matrix.key }}.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Inno Setup (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+
+      - name: Build and smoke-test the installer
+        run: uv run --no-sync python scripts/build_installer.py --smoke
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: omniscan-installer-${{ matrix.key }}
+          path: dist/OmniScan-*
           if-no-files-found: error
           retention-days: 14

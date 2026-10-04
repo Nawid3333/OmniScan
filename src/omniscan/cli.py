@@ -56,6 +56,7 @@ from omniscan.queue.executor import stage_executor
 from omniscan.queue.notify import combine, log_notifier, webhook_notifier
 from omniscan.queue.store import KNOWN_STAGES, STATUSES, JobStatus, QueueStore, queue_db_path
 from omniscan.queue.worker import run_queue
+from omniscan.runtime.cli import runtime_app
 from omniscan.share.cli import contribute_app
 from omniscan.update.download import check_for_update, download_update
 from omniscan.update.github import DEFAULT_REPO, ReleaseInfo, UpdateError, platform_key, select_asset
@@ -2412,6 +2413,7 @@ app.add_typer(project_app, name="project")
 
 app.add_typer(match_app, name="match")
 app.add_typer(workflow_app, name="workflow")
+app.add_typer(runtime_app, name="runtime")
 
 
 @app.command("gui")

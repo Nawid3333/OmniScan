@@ -46,7 +46,7 @@ before anything that needs my PC". Done in the cloud (CPU suite, ruff, pyright c
    `inpaint.lama` (the run default; `--no-lama` and the Run page checkbox still win). Settings → Hardware
    shows the plan with **Optimise for this PC**; the first start opens a **setup checklist** dialog
    (`gui/welcome_dialog.py`: hardware plan, Models page, Ollama reachability; Settings → `Setup checklist…`
-   reopens it).
+   reopens it; since #44 it is the five-step setup wizard, `Setup wizard…`).
 3. **Tests** (`tests/unit/test_hw_profiles.py`, CLI, runner, GUI): every profile's plan is pinned in a
    table, every override validates against the config model, every catalogue model is assessed on every
    profile, the env var simulation, the Run page's LaMa default, the welcome dialog and the Optimise button.

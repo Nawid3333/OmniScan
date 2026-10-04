@@ -86,7 +86,7 @@ class SettingsView(QWidget):
     """Tabbed settings editor; every successful write emits `settings_changed` once."""
 
     settings_changed = Signal()
-    welcome_requested = Signal()  # the user wants the first-run checklist again (Hardware tab button)
+    welcome_requested = Signal()  # the user wants the first-run wizard again (Hardware tab button)
     appearance_changed = Signal(object)  # the new Appearance, after it was saved and applied
 
     def __init__(
@@ -176,6 +176,10 @@ class SettingsView(QWidget):
         return count
 
     # ------------------------------------------------------------------ reconfigure
+
+    def show_tab(self, name: str) -> None:
+        """Bring the tab `name` (a _PAGE_TITLES key) to the front."""
+        self.tabs.setCurrentWidget(self._pages[name])
 
     def reconfigure(self, cfg: Config) -> None:
         """Rebuild the tabs from a reloaded config (never emits `settings_changed`)."""
@@ -746,8 +750,10 @@ class SettingsView(QWidget):
         set_role(self.plan_status_label, "muted")
         layout.addWidget(self.hardware_header_label)
         buttons = QHBoxLayout()
-        self.welcome_button = QPushButton("Setup checklist…", page)
-        self.welcome_button.setToolTip("The first-start checklist: hardware plan, models, Ollama")
+        self.welcome_button = QPushButton("Setup wizard…", page)
+        self.welcome_button.setToolTip(
+            "The first-run wizard: GPU runtime, data folder, models, translation, sharing"
+        )
         buttons.addWidget(self.hardware_button)
         buttons.addWidget(self.optimise_button)
         buttons.addWidget(self.welcome_button)

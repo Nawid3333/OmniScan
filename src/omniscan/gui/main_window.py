@@ -82,7 +82,8 @@ class MainWindow(QMainWindow):
         self.library_view = LibraryView(self._cfg)
         self.reader_view = ReaderView(self._cfg, qsettings=self._qsettings)
         self.run_view = RunView(self._cfg)
-        self.models_view = ModelsView(models_service or ModelsService(self._cfg))
+        self._models_service = models_service or ModelsService(self._cfg)
+        self.models_view = ModelsView(self._models_service)
         self._hardware_service = hardware_service or HardwareService(self._cfg)
         self._ollama_check = ollama_check
         self.welcome_dialog: WelcomeDialog | None = None
@@ -169,14 +170,27 @@ class MainWindow(QMainWindow):
             self.show_welcome()
 
     def show_welcome(self) -> WelcomeDialog:
-        """Open the first-run checklist (hardware plan, models, Ollama); remembered as shown once closed."""
-        dialog = WelcomeDialog(self._hardware_service, ollama_check=self._ollama_check, parent=self)
-        dialog.plan_applied.connect(self._reload_config)
+        """Open the first-run wizard (this PC, data folder, models, translation, sharing); remembered as shown once
+        closed."""
+        dialog = WelcomeDialog(
+            self._hardware_service,
+            cfg=self._cfg,
+            models=self._models_service,
+            ollama_check=self._ollama_check,
+            parent=self,
+        )
+        dialog.config_changed.connect(self._reload_config)
         dialog.models_requested.connect(lambda: self.show_page(PAGES.index("Models")))
+        dialog.profiles_requested.connect(self._show_profiles)
         dialog.finished.connect(lambda _result: self._qsettings.setValue("welcome/shown", True))
         self.welcome_dialog = dialog
         dialog.show()
         return dialog
+
+    def _show_profiles(self) -> None:
+        """Settings → Translation (another model, an API key)."""
+        self.show_page(PAGES.index("Settings"))
+        self.settings_view.show_tab("profiles")
 
     # ------------------------------------------------------------------ state
 

@@ -5,12 +5,13 @@
 runs this spec, then copies `config/`, `fonts/` and the built web UI next to the programs — the code finds
 them through REPO_ROOT (`Path(__file__).parents[3]`), which in the bundle is the folder holding the programs,
 exactly like the repository root is in a checkout. Torch comes from whatever backend extra the building
-environment has (the release builds use `cpu`: it runs everywhere; `omniscan tune` names the GPU extra).
+environment has (the release builds use `cpu`: it runs everywhere); `omniscan runtime install` downloads the GPU
+build later, at the version recorded here with torch's own metadata (src/omniscan/runtime/).
 """
 
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
 
 ROOT = Path(SPECPATH).resolve().parent  # noqa: F821 — SPECPATH is set by PyInstaller
 
@@ -31,7 +32,10 @@ hidden = [
 datas = [
     *collect_data_files("spellchecker"),  # the English dictionary of the typo check
     *collect_data_files("transformers", include_py_files=False),
+    *copy_metadata("torch"),  # the version `omniscan runtime install` downloads the GPU build at
+    *copy_metadata("torchvision"),
 ]
+ICON = str(ROOT / "packaging" / "omniscan.ico")
 
 gui_a = Analysis(
     [str(ROOT / "packaging" / "launch_gui.py")],
@@ -63,6 +67,7 @@ gui_exe = EXE(
     [],
     exclude_binaries=True,
     name="OmniScan",
+    icon=ICON,
     debug=False,
     strip=False,
     upx=False,
@@ -74,6 +79,7 @@ cli_exe = EXE(
     [],
     exclude_binaries=True,
     name="omniscan",
+    icon=ICON,
     debug=False,
     strip=False,
     upx=False,
