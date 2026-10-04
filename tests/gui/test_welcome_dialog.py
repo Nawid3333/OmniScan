@@ -56,7 +56,8 @@ class FakeModels:
         return [("det", None)]
 
 
-def _settle(qapp: QApplication, done: Callable[[], bool], seconds: float = 5.0) -> None:
+def _settle(qapp: QApplication, done: Callable[[], bool], seconds: float = 30.0) -> None:
+    """Process events until `done()` (a slow CI runner can take seconds to start the worker threads)."""
     deadline = time.monotonic() + seconds
     while not done() and time.monotonic() < deadline:
         qapp.processEvents()
