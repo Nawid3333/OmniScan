@@ -62,6 +62,7 @@ from omniscan.update.github import DEFAULT_REPO, ReleaseInfo, UpdateError, platf
 from omniscan.update.version import current_version
 from omniscan.usage import UsageRow, collect_usage, totals
 from omniscan.watermark.store import WatermarkStore
+from omniscan.workflow.cli import workflow_app
 
 app = typer.Typer(help="OmniScan — manhwa/manga translator", invoke_without_command=True)
 
@@ -2410,6 +2411,7 @@ app.add_typer(library_app, name="library")
 app.add_typer(project_app, name="project")
 
 app.add_typer(match_app, name="match")
+app.add_typer(workflow_app, name="workflow")
 
 
 @app.command("gui")

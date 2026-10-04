@@ -56,13 +56,15 @@ def _fail(message: str) -> typer.Exit:
 
 
 def _chapter(series: str, chapter: str) -> tuple[Config, SeriesPaths, ChapterPaths]:
-    """The series' settings (series.toml applied) and the paths of the series and the chapter."""
+    """The series' settings (series.toml applied) and the paths of the series and the chapter; the command's edits
+    are signed with `[user] name` when one is set."""
     cfg = get_config()
     paths = SeriesPaths.from_config(cfg, series)
     try:
         scfg = series_config(cfg, paths.library_dir)
     except SeriesConfigError as exc:
         raise _fail(str(exc)) from exc
+    store.set_edit_author(scfg.user.name)
     return scfg, paths, paths.chapter(chapter)
 
 

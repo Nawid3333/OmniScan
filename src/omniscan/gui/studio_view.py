@@ -9,6 +9,8 @@ revert English, kind, lettering styles, translate). `Find missed text` runs the 
 view and offers what no region covers, to add as hand-drawn regions. `Find & replace…` and `Consistency…`
 (gui/series_dialogs.py) work across the chapter or the whole series; a line in the report opens here.
 `Output cuts` shows where the exported images split and edits that on the strip (each change its own undo step).
+For a group (#38) the role filter shows only what a translator, proofreader, cleaner, typesetter or quality check
+still has to do, and `Note…` leaves a note on a region for the next person (open notes show among the issues).
 
 Everything goes through `omniscan.edits.session.StudioSession`: changes stay in memory until Save, which
 records them in edits.json (one undo step; Undo/Redo walk the chapter's shared history) and applies them to
@@ -32,6 +34,7 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QHBoxLayout,
     QHeaderView,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -55,7 +58,7 @@ from omniscan.gui.found_dialog import FoundDialog
 from omniscan.gui.lettering_dialog import LetteringDialog
 from omniscan.gui.run_worker import RunWorker
 from omniscan.gui.series_dialogs import ConsistencyDialog, ReplaceDialog
-from omniscan.gui.services import library, series_check
+from omniscan.gui.services import library, series_check, workflow
 from omniscan.gui.services import studio as services
 from omniscan.gui.services.library import Tile
 from omniscan.gui.services.runs import RunController, RunOutcome, RunSpec
@@ -89,6 +92,8 @@ ReplaceFn = Callable[[Config, str, str, QWidget], int]  # find and replace in (s
 ConsistencyFn = Callable[[Config, str], Consistency]
 QaFn = Callable[[Config, ChapterPaths], list[QaIssue]]  # re-read the finished pages: what still shows
 CleanFn = Callable[[Config, ChapterPaths, PageStroke, CleanMethod], CleanupPatch]  # clean one brush stroke
+NoteFn = Callable[[str, QWidget], str | None]  # (region id, parent) -> the note's text, None = cancelled
+ALL_ROLES = "All roles"
 CLEAN_METHODS: tuple[tuple[str, CleanMethod], ...] = (
     ("Fill with the colour around", "fill"),
     ("Inpaint", "inpaint"),
@@ -103,6 +108,12 @@ def _find_replace(cfg: Config, series: str, chapter: str, parent: QWidget) -> in
     dialog = ReplaceDialog(cfg, series, chapter, parent=parent)
     dialog.exec()
     return dialog.applied
+
+
+def _ask_note(region_id: str, parent: QWidget) -> str | None:
+    """Ask for a note on a region (a multi-line text dialog)."""
+    text, ok = QInputDialog.getMultiLineText(parent, "Note", f"A note on {region_id} for the next person:")
+    return text if ok else None
 
 
 def _pick_found(found: list[Found], page: int, parent: QWidget) -> list[Found]:
@@ -157,6 +168,7 @@ class StudioView(QWidget):
         consistency_fn: ConsistencyFn | None = None,
         qa_fn: QaFn | None = None,
         clean_fn: CleanFn | None = None,
+        note_fn: NoteFn | None = None,
         parent: QWidget | None = None,
     ) -> None:
         """Build the page; the factories replace the re-letter run, the models, the renderer, the dialog that
@@ -173,6 +185,8 @@ class StudioView(QWidget):
         self._consistency_fn: ConsistencyFn = consistency_fn or series_check.consistency
         self._qa_fn: QaFn = qa_fn or services.read_finished_pages
         self._clean_fn: CleanFn = clean_fn or services.clean_stroke
+        self._note_fn: NoteFn = note_fn or _ask_note
+        self._role_ids: set[str] | None = None  # the regions the picked role still has to look at (None: all)
         self._strokes: list[tuple[str, int]] = []  # (patch id, page) of this chapter's strokes, newest last
         self.consistency_dialog: ConsistencyDialog | None = None  # the open report, if any
         self._session: StudioSession | None = None
@@ -201,6 +215,15 @@ class StudioView(QWidget):
         self.next_page_button = QPushButton("▶", self)
         self.page_only = QCheckBox("Only this page", self)
         self.issues_only = QCheckBox("Only lines with issues", self)
+        self.role_combo = QComboBox(self)
+        self.role_combo.addItem(ALL_ROLES)
+        for role, label in workflow.ROLE_LABELS.items():
+            self.role_combo.addItem(label, role)
+        self.role_combo.setToolTip(
+            "Show only what a role still has to do: lines without English (translator), unchecked lines "
+            "(proofreader), text left on the finished pages (cleaner), lettering that does not fit (typesetter), "
+            "everything plus open notes (quality check)"
+        )
         self.progress_label = QLabel(self)
         set_role(self.progress_label, "muted")
         self.replace_button = QPushButton("Find && replace…", self)
@@ -289,6 +312,14 @@ class StudioView(QWidget):
         self.take_back_button = QPushButton("Take back stroke", self)
         self.take_back_button.setToolTip("Remove the last stroke cleaned here")
 
+        # ---- notes for the group
+        self.note_button = QPushButton("Note…", self)
+        self.note_button.setToolTip(
+            "Leave a note on the selected region for the next person (the line stays as it is)"
+        )
+        self.resolve_button = QPushButton("Resolve notes", self)
+        self.resolve_button.setToolTip("Mark the open notes of the selected regions resolved")
+
         # ---- output cuts
         self.cuts_button = QPushButton("Output cuts", self)
         self.cuts_button.setCheckable(True)
@@ -347,6 +378,7 @@ class StudioView(QWidget):
             self.next_page_button,
             self.page_only,
             self.issues_only,
+            self.role_combo,
         ):
             nav.addWidget(widget)
         nav.addStretch(1)
@@ -393,6 +425,10 @@ class StudioView(QWidget):
         clean.addWidget(QLabel("Export", self))
         for widget in (self.cuts_button, self.snap_check, self.reset_cuts_button, self.cuts_label):
             clean.addWidget(widget)
+        clean.addSpacing(24)
+        clean.addWidget(QLabel("Group", self))
+        for widget in (self.note_button, self.resolve_button):
+            clean.addWidget(widget)
         clean.addStretch(1)
 
         root = QVBoxLayout(self)
@@ -411,6 +447,9 @@ class StudioView(QWidget):
         self.next_page_button.clicked.connect(lambda: self.step_page(1))
         self.page_only.toggled.connect(lambda _checked: self._apply_filter())
         self.issues_only.toggled.connect(lambda _checked: self._apply_filter())
+        self.role_combo.currentIndexChanged.connect(lambda _index: self._apply_filter())
+        self.note_button.clicked.connect(self.add_note)
+        self.resolve_button.clicked.connect(self.resolve_notes)
         self.undo_button.clicked.connect(self.undo)
         self.redo_button.clicked.connect(self.redo)
         self.check_button.clicked.connect(self.run_check)
@@ -567,9 +606,45 @@ class StudioView(QWidget):
                 self._typos.setdefault(issue.region_id, []).append(issue.word)
         for leftover in finished:
             self._issues.setdefault(leftover.region_id, []).append(f"finished page: {leftover.message}")
-        count = len(issues) + len(finished)
+        notes = workflow.open_notes(self._session.paths)
+        for region_id, region_notes in notes.items():
+            for note in region_notes:
+                who = f" ({note.by})" if note.by else ""
+                self._issues.setdefault(region_id, []).append(f"note {note.id}{who}: {note.text}")
+        count = len(issues) + len(finished) + sum(len(region_notes) for region_notes in notes.values())
         self._fill_table()
         self.status_label.setText(f"{count} issue(s) in {len(self._issues)} line(s)")
+        return count
+
+    def add_note(self) -> bool:
+        """Ask for a note on the first selected region and leave it there; False when nothing was added."""
+        session, ids = self._session, self.selected_ids()
+        if session is None or not ids:
+            return False
+        text = self._note_fn(ids[0], self)
+        if not text or not text.strip():
+            return False
+        try:
+            note = workflow.add_region_note(self._cfg, session.paths, ids[0], text)
+        except (KeyError, OSError, ValueError) as error:
+            self.status_label.setText(f"cannot add the note: {error}")
+            return False
+        self.run_check()
+        self.status_label.setText(f"{note.id} left on {note.region_id}")
+        return True
+
+    def resolve_notes(self) -> int:
+        """Mark the open notes of the selected regions resolved; returns how many."""
+        session, ids = self._session, self.selected_ids()
+        if session is None or not ids:
+            return 0
+        try:
+            count = workflow.resolve_region_notes(session.paths, ids)
+        except (KeyError, OSError, ValueError) as error:
+            self.status_label.setText(f"cannot resolve the notes: {error}")
+            return 0
+        self.run_check()
+        self.status_label.setText(f"{count} note(s) resolved")
         return count
 
     def allow_selected_words(self) -> list[str]:
@@ -1184,7 +1259,7 @@ class StudioView(QWidget):
         paths = SeriesPaths.from_config(self._cfg, series).chapter(chapter)
         # the page's own config (not the process-wide one), with the series' series.toml applied
         direction = series_config(self._cfg, paths.raw_dir.parent).detect.reading_direction
-        session = StudioSession(paths, direction=direction)
+        session = StudioSession(paths, direction=direction, author=self._cfg.user.name)
         if not session.has_regions:
             self._close()
             self.status_label.setText(f"{chapter}: no text regions yet; run detection and OCR first")
@@ -1336,12 +1411,24 @@ class StudioView(QWidget):
                 self._filling = False
 
     def _apply_filter(self) -> None:
-        """Hide the rows the filters leave out (other pages, lines without issues)."""
+        """Hide the rows the filters leave out (other pages, lines without issues, lines the picked role has
+        nothing left to do on)."""
         only_issues = self.issues_only.isChecked()
         only_page = self.page_only.isChecked()
         page = self.page_spin.value()
+        role = self.role_combo.currentData()
+        self._role_ids = None
+        if role is not None and self._session is not None:
+            try:
+                self._role_ids = {item.region_id for item in workflow.role_todo(self._session.paths, role)}
+            except (OSError, ValueError) as error:  # a damaged artifact: show every line
+                self.status_label.setText(f"cannot list the {role}'s lines: {error}")
         for row, item in enumerate(self._rows):
-            hidden = (only_issues and item.region_id not in self._issues) or (only_page and item.page != page)
+            hidden = (
+                (only_issues and item.region_id not in self._issues)
+                or (only_page and item.page != page)
+                or (self._role_ids is not None and item.region_id not in self._role_ids)
+            )
             self.table.setRowHidden(row, hidden)
 
     def _draw_overlays(self) -> None:
@@ -1479,6 +1566,9 @@ class StudioView(QWidget):
         self.brush_button.setEnabled(is_open and idle and bool(self._page_rows))
         self.take_back_button.setEnabled(is_open and idle and bool(self._strokes))
         self.cuts_button.setEnabled(is_open and idle)
+        self.note_button.setEnabled(is_open and some)
+        self.resolve_button.setEnabled(is_open and some)
+        self.role_combo.setEnabled(is_open)
         self.reset_cuts_button.setEnabled(
             is_open and idle and self._cuts is not None and self._cuts.hand is not None
         )

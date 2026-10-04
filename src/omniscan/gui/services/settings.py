@@ -35,7 +35,7 @@ from omniscan.core.config import (
 )
 from omniscan.core.schemas import TargetLang
 
-type FieldKind = Literal["path", "bool", "choice", "model", "float", "int"]
+type FieldKind = Literal["path", "bool", "choice", "model", "float", "int", "text"]
 
 _DEVICE_RE = re.compile(r"^(auto|cpu|mps|xpu(?::\d+)?|cuda(?::\d+)?)$")
 
@@ -128,6 +128,14 @@ GLOBAL_FIELDS: tuple[SettingField, ...] = (
         help="Most requests one run sends to cloud models; then the local fallback translates (0 = no limit)",
     ),
     SettingField(
+        "user",
+        "name",
+        "text",
+        label="Your name",
+        help="Recorded with your edits, chapter steps and notes when a group passes chapters around "
+        "(never in a contribution); empty records nothing",
+    ),
+    SettingField(
         "share",
         "enabled",
         "bool",
@@ -143,6 +151,7 @@ SECTION_TITLES = {
     "slicer": "Pages",
     "filter": "Promo filter",
     "translate": "Translation",
+    "user": "You",
     "share": "Sharing",
 }
 

@@ -33,12 +33,18 @@ from omniscan.edits import store
 from omniscan.glossary.store import GlossaryStore
 from omniscan.share.contribution import (
     CONTRIBUTION_FILE,
+    LICENCE_FILE,
+    LOG_FILE,
     SALT_FILE,
     ShareOptOutError,
     build,
+    consent_text,
     digest,
+    export_log,
+    export_record,
     install_salt,
     read_archive,
+    record_export,
     summarize,
     write_archive,
 )
@@ -231,7 +237,8 @@ def test_archive_holds_the_pages_without_names_paths_or_metadata(
     assert size == archive_path.stat().st_size and not list(archive_path.parent.glob("*.tmp"))
     with zipfile.ZipFile(archive_path) as archive:
         names = archive.namelist()
-        assert names == [CONTRIBUTION_FILE, *(page.member for page in pages)]
+        assert names == [CONTRIBUTION_FILE, LICENCE_FILE, *(page.member for page in pages)]
+        assert "CC BY 4.0" in archive.read(LICENCE_FILE).decode() and contribution.licence == "CC-BY-4.0"
         assert {info.date_time for info in archive.infolist()} == {(1980, 1, 1, 0, 0, 0)}
         text = archive.read(CONTRIBUTION_FILE).decode()
         with Image.open(io.BytesIO(archive.read(pages[1].member))) as image:
@@ -387,12 +394,20 @@ def test_contribute_export_on_the_command_line(
     default = tmp_path / f"omniscan-contribution-{digest('S', install_salt(cfg.paths.work_root))}.zip"
     assert done.exit_code == 0 and done.output.startswith("contribute: wrote 1 chapter(s), 2 page(s)")
     assert f"to {default} (" in done.output and len(read_archive(default).chapters) == 1
+    receipt = read_archive(default).receipt
+    assert len(receipt) == 16 and f"contribute: receipt {receipt}\n" in done.output
+    assert "CC BY 4.0" in done.output and "has not published where to send" in done.output
     as_json = json.loads(
         runner.invoke(share_cli.contribute_app, ["export", "S", "-o", "x.zip", "--json"]).output
     )
     assert (as_json["pages"], as_json["path"]) == (5, "x.zip") and as_json["bytes"] == Path(
         "x.zip"
     ).stat().st_size
+    assert (as_json["licence"], as_json["send_to"]) == ("CC-BY-4.0", None)
+    assert as_json["receipt"] == read_archive(Path("x.zip")).receipt != receipt  # a new receipt per export
+    logged = runner.invoke(share_cli.contribute_app, ["log"]).output.splitlines()
+    assert [line.split("\t")[0] for line in logged] == [receipt, as_json["receipt"]]
+    assert logged[0].split("\t")[2:] == ["S", "2 page(s)", str(default)]
     nothing = runner.invoke(share_cli.contribute_app, ["export", "S", "-c", "Chapter 3"])
     assert nothing.output == (
         "contribute: S has no hand corrections or checked lines to share; nothing exported\n"
@@ -408,3 +423,33 @@ def test_contribute_export_on_the_command_line(
     (series.library_dir / "series.toml").write_text("[share]\nenabled = false\n", encoding="utf-8")
     out = runner.invoke(share_cli.contribute_app, ["export", "S", "-o", "y.zip"])
     assert out.exit_code == 2 and "opted out of sharing" in out.output and not Path("y.zip").exists()
+
+
+def test_names_on_signed_edits_never_leave_in_a_contribution(cfg: Config, tmp_path: Path) -> None:
+    """#38 records who made an edit; #42 shares corrections: the names stay home."""
+    chapter = make_chapter(cfg, "Chapter 1")
+    with store.edit_author("Ana Secretname"):
+        store.update_region(chapter, "r0001", direction="ltr", text="원문 하나")
+        store.set_translation(chapter, "r0002", "Typed by Ana", direction="ltr")
+        store.set_checked(chapter, ["r0003"])
+    assert {t.by for t in store.load_edits(chapter).translations} == {"Ana Secretname"}
+    contribution, pages = build(SeriesPaths.from_config(cfg, "S"), cfg)
+    write_archive(tmp_path / "c.zip", contribution, pages)
+    with zipfile.ZipFile(tmp_path / "c.zip") as archive:
+        assert all(b"Secretname" not in archive.read(name) for name in archive.namelist())
+
+
+def test_every_export_is_logged_on_this_install_only(cfg: Config, tmp_path: Path) -> None:
+    assert export_log(cfg.paths.work_root) == []
+    chapter = make_chapter(cfg, "Chapter 1")
+    store.set_checked(chapter, ["r0001"])
+    contribution, _pages = build(SeriesPaths.from_config(cfg, "S"), cfg)
+    record = export_record("S", contribution, tmp_path / "c.zip", at=datetime(2026, 10, 3, 12, tzinfo=UTC))
+    record_export(cfg.paths.work_root, record)
+    (cfg.paths.work_root / LOG_FILE).open("a", encoding="utf-8").write(
+        "not json\n"
+    )  # a damaged line is skipped
+    assert export_log(cfg.paths.work_root) == [record]
+    assert (record.at, record.pages, record.regions) == ("2026-10-03T12:00:00+00:00", 1, 2)
+    assert "Send the archive to contribute@example.org." in consent_text("contribute@example.org")
+    assert "has not published where to send" in consent_text("")

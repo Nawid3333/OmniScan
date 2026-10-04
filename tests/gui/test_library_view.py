@@ -15,15 +15,16 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QApplication, QListWidgetItem, QTableWidget, QTableWidgetItem
 
-from omniscan.core.config import Config, PathsConfig, ShareConfig
+from omniscan.core.config import Config, PathsConfig, ShareConfig, UserConfig
 from omniscan.core.paths import ChapterPaths, SeriesPaths
 from omniscan.core.schemas import BBox, FinalArtifact, FinalLine, Region, RegionsArtifact
 from omniscan.edits import store
-from omniscan.gui.library_view import LibraryView
+from omniscan.gui.library_view import WORKFLOW_COLUMN, LibraryView
 from omniscan.interchange import ballons
 from omniscan.interchange.labelplus import LabelFile, write
-from omniscan.share.contribution import read_archive
+from omniscan.share.contribution import export_log, read_archive
 from omniscan.translate.on_demand import english_lines
+from omniscan.workflow.status import load_status
 from tests.fixtures.gui_library import CHAPTERS, SERIES, _artifacts, build_library
 from tests.unit.test_share_contribution import make_chapter
 
@@ -223,7 +224,9 @@ def test_cancelled_dialogs_do_nothing(qapp: QApplication, cfg: Config) -> None:
         "Send chapter": None,
         "Export contribution": None,
     }
-    view = LibraryView(cfg, ask_open=_asking(answers), ask_save=_asking(answers))
+    view = LibraryView(
+        cfg, ask_open=_asking(answers), ask_save=_asking(answers), confirm=lambda title, text: True
+    )
     qapp.processEvents()
     before = view.status_label.text()
     _select(view, CHAPTERS[0])
@@ -243,8 +246,19 @@ def test_export_contribution_writes_the_series_archive(qapp: QApplication, tmp_p
     )
     chapter = make_chapter(cfg, "Chapter 1")
     answers: dict[str, Path | None] = {"Export contribution": tmp_path / "c.zip"}
-    view = LibraryView(cfg, ask_save=_asking(answers))
+    asked: list[str] = []
+    replies = [False, True, True, True]  # the first export is declined at the consent question
+
+    def consent(title: str, text: str) -> bool:
+        asked.append(text)
+        return replies.pop(0)
+
+    view = LibraryView(cfg, ask_save=_asking(answers), confirm=consent)
     qapp.processEvents()
+
+    view.contribute_button.click()
+    _settle(qapp, view)
+    assert "CC BY 4.0" in asked[0] and "receipt id" in asked[0] and "Export contribution name" not in answers
 
     view.contribute_button.click()
     _settle(qapp, view)
@@ -254,9 +268,15 @@ def test_export_contribution_writes_the_series_archive(qapp: QApplication, tmp_p
     view.contribute_button.click()
     _settle(qapp, view)
     assert str(answers["Export contribution name"]).startswith("omniscan-contribution-")
-    assert view.status_label.text().startswith("Exported 1 chapter(s), 1 page(s)")
-    assert view.status_label.text().endswith("1 checked line to c.zip")
-    assert read_archive(tmp_path / "c.zip").chapters[0].pages[0].regions[0].checked
+    status = view.status_label.text()
+    assert (
+        status.startswith("Exported 1 chapter(s), 1 page(s)")
+        and "1 checked line to c.zip; receipt " in status
+    )
+    assert status.endswith("keep it until the project says where to send it")
+    contribution = read_archive(tmp_path / "c.zip")
+    assert contribution.chapters[0].pages[0].regions[0].checked and contribution.receipt in status
+    assert [record.receipt for record in export_log(cfg.paths.work_root)] == [contribution.receipt]
 
     view.reconfigure(cfg.model_copy(update={"share": ShareConfig(enabled=False)}))
     view.contribute_button.click()
@@ -386,3 +406,38 @@ def test_an_import_before_ingest_and_cancelled_tool_dialogs_are_harmless(
     view.import_labelplus()
     _settle(qapp, view)
     assert view.status_label.text() == "ingest.json not found — run the ingest stage first"
+
+
+# ---------------------------------------------------------------------- group workflow (#38)
+
+
+def test_the_workflow_column_and_menu(qapp: QApplication, cfg: Config) -> None:
+    """Mark a chapter's steps done and hand it over from the Library; the Workflow column follows."""
+    me = cfg.model_copy(update={"user": UserConfig(name="Ana")})
+    texts = iter(["Ben", "please clean page 2"])
+    view = LibraryView(me, ask_text=lambda title, label, preset: next(texts))
+    qapp.processEvents()
+    chapter = CHAPTERS[0]
+    _select(view, chapter)
+    row = next(r for r in range(view.table.rowCount()) if _cell(view.table, r, 0).text() == chapter)
+    assert (
+        _cell(view.table, row, WORKFLOW_COLUMN).text() == "not started" and view.workflow_button.isEnabled()
+    )
+
+    view.step_actions["translated"].trigger()
+    view.step_actions["proofread"].trigger()
+    assert _cell(view.table, row, WORKFLOW_COLUMN).text() == "proofread (2/5)"
+    view.workflow_menu.aboutToShow.emit()
+    assert view.step_actions["proofread"].isChecked() and not view.step_actions["cleaned"].isChecked()
+    view.step_actions["proofread"].trigger()  # untick: not done any more
+    assert _cell(view.table, row, WORKFLOW_COLUMN).text() == "translated (1/5)"
+
+    view.hand_over()
+    assert _cell(view.table, row, WORKFLOW_COLUMN).text() == "translated (1/5) · with Ben"
+    assert view.status_label.text().endswith("send it with Send chapter…")
+    status = load_status(SeriesPaths.from_config(cfg, SERIES).chapter(chapter))
+    assert (status.events[-1].to, status.events[-1].by, status.events[-1].note) == (
+        "Ben",
+        "Ana",
+        "please clean page 2",
+    )

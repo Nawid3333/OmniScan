@@ -20,7 +20,16 @@ from omniscan.core.paths import SeriesPaths
 from omniscan.interchange import actions, project
 from omniscan.packaging import safe_filename
 from omniscan.share.cli import describe
-from omniscan.share.contribution import build, digest, install_salt, summarize, write_archive
+from omniscan.share.contribution import (
+    build,
+    consent_text,
+    digest,
+    export_record,
+    install_salt,
+    record_export,
+    summarize,
+    write_archive,
+)
 
 # a renamed or re-zipped file is still offered (Postel's law): unpack checks what it really is
 PROJECT_FILTER = f"OmniScan chapter project (*{project.SUFFIX});;All files (*)"
@@ -58,13 +67,25 @@ def open_project(cfg: Config, path: Path, *, force: bool = False) -> str:
 
 
 def export_contribution(cfg: Config, series: str, dest: Path) -> str:
-    """Write the contribution archive of `series` to `dest`; returns what it holds (or that it has nothing to
-    share, when no page carries a correction or a checked line: then no file is written)."""
+    """Write the contribution archive of `series` to `dest` and note it in this install's log; returns what it holds,
+    its receipt and where to send it (or that it has nothing to share, when no page carries a correction or a
+    checked line: then no file is written)."""
     contribution, pages = build(SeriesPaths.from_config(cfg, series), cfg)
     if not contribution.chapters:
         return f"{series} has no hand corrections or checked lines to share; nothing exported"
     write_archive(dest, contribution, pages)
-    return f"Exported {describe(summarize(contribution))} to {dest.name}"
+    record_export(cfg.paths.work_root, export_record(series, contribution, dest))
+    where = (
+        f"send it to {cfg.share.send_to}"
+        if cfg.share.send_to
+        else "keep it until the project says where to send it"
+    )
+    return f"Exported {describe(summarize(contribution))} to {dest.name}; receipt {contribution.receipt} — {where}"
+
+
+def contribution_consent(cfg: Config) -> str:
+    """What exporting a contribution shares and under which terms, asked before every export."""
+    return consent_text(cfg.share.send_to)
 
 
 def labelplus_path(cfg: Config, series: str, chapter: str) -> Path:
