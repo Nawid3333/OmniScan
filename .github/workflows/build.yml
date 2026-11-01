@@ -62,7 +62,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0 (no floating major tags since v8: pinned)
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.2.0 (no floating major tags since v8: pinned)
 
       - name: Qt runtime libraries (Linux)
         if: runner.os == 'Linux'
@@ -77,7 +77,7 @@ jobs:
       - name: Check the zip name
         run: test -f "dist/omniscan-${{ matrix.key }}.zip" && ls -la dist/*.zip
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: omniscan-${{ matrix.key }}
           path: dist/omniscan-${{ matrix.key }}.zip
@@ -93,7 +93,7 @@ jobs:
       - name: Build and smoke-test the installer
         run: uv run --no-sync python scripts/build_installer.py --smoke
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: omniscan-installer-${{ matrix.key }}
           path: dist/OmniScan-*
