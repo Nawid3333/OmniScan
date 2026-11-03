@@ -52,7 +52,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0 (no floating major tags since v8: pinned)
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.2.0 (no floating major tags since v8: pinned)
 
       # the workflows themselves: expression and shell mistakes fail here, not on the next scheduled run
       - name: Lint workflows
@@ -103,7 +103,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0 (no floating major tags since v8: pinned)
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.2.0 (no floating major tags since v8: pinned)
 
       # Qt's offscreen platform still links libEGL/libxkbcommon/fontconfig on Linux
       - name: Qt runtime libraries (Linux)
@@ -138,7 +138,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0 (no floating major tags since v8: pinned)
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.2.0 (no floating major tags since v8: pinned)
 
       - name: Sync (cpu)
         run: uv sync --extra cpu
@@ -164,7 +164,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0 (no floating major tags since v8: pinned)
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.2.0 (no floating major tags since v8: pinned)
 
       - name: uv.lock is up to date
         run: uv lock --check
@@ -182,7 +182,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0 (no floating major tags since v8: pinned)
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.2.0 (no floating major tags since v8: pinned)
         with:
           # its own cache: the test job on the same image saves the cpu build under the default key
           cache-suffix: rocm-gfx1201

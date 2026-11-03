@@ -24,7 +24,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0 (no floating major tags since v8: pinned)
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.2.0 (no floating major tags since v8: pinned)
 
       # --fail-on-change makes the script exit 3 on changes (without it, it exits 0 and the issue
       # step never runs); --markdown/--json write the report the issue and the artifact carry.
