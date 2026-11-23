@@ -145,6 +145,8 @@ branch. Details and gotchas: `docs/CHECKPOINT.md`.
   pytest-xdist ruff pyright` (the PyPI torch wheel stands in for the `cpu` extra), `apt-get install libegl1 libgl1 libxkbcommon0
   libfontconfig1 libdbus-1-3` for offscreen Qt, and `pyright --pythonpath .venv/bin/python`. The GPU suite, Hugging Face and
   Ollama are out of reach there: anything touching real models still has to be verified on the owner's PC.
+  Since 2026-11-23 the owner's "OmniScan" cloud environment allows `stable.repo.amd.com` and `download.pytorch.org`, so
+  there `uv lock` and `uv sync --locked --extra cpu --extra gui` work directly and none of the above is needed.
 
 ## Environment (verified)
 Windows 11, Ryzen 5 7600X, 64 GB, RX 9070 XT 16 GB (+ iGPU), Python 3.14, uv, Node 24, git + `gh` (logged in as Nawid3333), Ollama 0.34.2 on
