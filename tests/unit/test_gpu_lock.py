@@ -69,17 +69,21 @@ def test_gpu_lock_context_manager_releases_on_exception() -> None:
 
 def test_gpu_lock_context_manager_excludes_concurrent_use() -> None:
     order: list[str] = []
+    a_holds_the_lock = threading.Event()
 
-    def worker(name: str, hold: float) -> None:
+    def worker(name: str, hold: float, acquired: threading.Event | None) -> None:
         with gpu_lock(poll_seconds=0.02):
             order.append(f"{name}-start")
+            if acquired is not None:
+                acquired.set()
             time.sleep(hold)
             order.append(f"{name}-end")
 
-    t1 = threading.Thread(target=worker, args=("a", 0.15))
-    t2 = threading.Thread(target=worker, args=("b", 0.0))
+    t1 = threading.Thread(target=worker, args=("a", 0.15, a_holds_the_lock))
+    t2 = threading.Thread(target=worker, args=("b", 0.0, None))
     t1.start()
-    time.sleep(0.03)  # let t1 acquire first
+    # b starts only once a really holds the lock: a fixed sleep here lost the race on loaded CI runners
+    assert a_holds_the_lock.wait(timeout=10)
     t2.start()
     t1.join()
     t2.join()

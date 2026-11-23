@@ -36,10 +36,6 @@ permissions:
 env:
   # a stale uv.lock fails the sync instead of being re-resolved on the runner
   UV_LOCKED: "1"
-  # pytest-xdist runs the suite on every core. Pinned here rather than in the dev group only because
-  # the session that added it could not reach AMD's ROCm index to regenerate uv.lock (GitHub's runners
-  # and the owner's PC can); move it into [dependency-groups] dev with the next `uv lock`.
-  XDIST: pytest-xdist==3.8.0
 
 jobs:
   # Lint and type check once, on Linux: none of them depends on the OS the check runs on.
@@ -115,7 +111,7 @@ jobs:
 
       # --durations lists the slowest tests in the log, so a test that starts to crawl shows up
       - name: Test (non-GPU suite)
-        run: uv run --with "$XDIST" pytest -m "not gpu" -n auto --durations=15
+        run: uv run pytest -m "not gpu" -n auto --durations=15
 
   # Every GPU vendor without owning one: the planning side (device choice, memory budget, model fit, the
   # tuning plan, the settings screen) runs against each named machine profile on every OS. The tensor side
@@ -191,7 +187,7 @@ jobs:
         run: uv sync --extra rocm-gfx1201 --extra gui
 
       - name: Test (non-GPU suite)
-        run: uv run --with "$XDIST" pytest -m "not gpu" -n auto
+        run: uv run pytest -m "not gpu" -n auto
 
   # The web UI (the Studio editor and the debug views): unit tests, type check and production build.
   webui:
